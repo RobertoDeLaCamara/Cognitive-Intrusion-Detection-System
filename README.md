@@ -129,7 +129,7 @@ Base URL: `http://localhost:8000`
 | `/api/auth/token` | POST | Issue JWT token (when `JWT_SECRET` is set) |
 | `/api/auth/users` | GET / POST | User management (requires admin) |
 | `/api/auth/users/{user_id}` | DELETE | Delete user (requires admin) |
-| `/ws/alerts` | WebSocket | Real-time alert stream |
+| `/ws/alerts` | WebSocket | Real-time alert stream (`?token=JWT` when auth enabled) |
 | `/metrics` | GET | Prometheus metrics (when `PROMETHEUS_ENABLED=true`) |
 | `/docs` | GET | Swagger UI (auto-generated) |
 
@@ -166,6 +166,28 @@ curl "http://localhost:8000/api/alerts/export?format=csv&severity=high&hours=24"
 ```bash
 python scripts/pcap_replay.py data/test.pcap --labels data/labels.csv --output results.json
 ```
+
+---
+
+## Database Migrations
+
+CNDS uses [Alembic](https://alembic.sqlalchemy.org/) for schema versioning. On startup, the API automatically runs pending migrations (falling back to `create_all` for in-memory test databases).
+
+```bash
+# Generate a new migration after changing models
+alembic revision --autogenerate -m "describe your change"
+
+# Apply all pending migrations
+alembic upgrade head
+
+# Downgrade one step
+alembic downgrade -1
+
+# View current revision
+alembic current
+```
+
+Migration files live in `alembic/versions/` and are tracked in git.
 
 ---
 
@@ -263,6 +285,9 @@ Copy `.env.example` to `.env` and adjust as needed.
 ├── sonar-project.properties
 ├── requirements.txt
 ├── .env.example
+├── alembic/                     # Database migrations
+│   ├── env.py                   # Alembic config wired to CNDS models
+│   └── versions/                # Auto-generated migration scripts
 ├── scripts/
 │   ├── retrain_with_payload.py  # Retrain RF with 86 features (76 flow + 10 payload)
 │   └── pcap_replay.py          # PCAP replay for offline threat hunting / model eval
@@ -363,12 +388,14 @@ Jenkins pipeline stages (see `Jenkinsfile`):
 ### v2.0 (planned)
 
 - [x] PCAP replay mode — offline ingestion of `.pcap` files for threat hunting and model evaluation
-- [ ] Alembic DB migrations — proper schema versioning for production deployments
+- [x] Alembic DB migrations — proper schema versioning for production deployments
 - [x] Config validation — fail-fast on startup if weights don't sum to 1.0 or thresholds are out of range
 - [x] API integration tests — end-to-end endpoint testing with in-memory SQLite
 - [x] RBAC enforcement — wire `require_role()` to sensitive endpoints (suppression rules, incidents)
 - [x] Alert export — CSV/JSON bulk export endpoint for analyst reporting
 - [x] Dashboard enhancements — top talkers view, attack type breakdown, timeline visualization
+- [x] Alert deduplication — suppress duplicate alerts from same (src_ip, attack_type) within configurable window
+- [x] WebSocket authentication — JWT token required via `?token=` query parameter when `JWT_SECRET` is set
 - [ ] Model drift detection — alert when live traffic feature distributions diverge from training data
 - [ ] Feedback-driven retraining — analyst TP/FP labels → accumulated dataset → automated retraining via MLflow
 - [ ] ONNX Runtime for LSTM — 2-5x inference speedup over raw PyTorch

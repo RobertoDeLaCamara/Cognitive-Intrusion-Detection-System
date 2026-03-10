@@ -1,12 +1,18 @@
-"""WebSocket endpoint for real-time alert streaming (Phase 6)."""
+"""WebSocket endpoint for real-time alert streaming (Phase 6).
+
+When JWT auth is enabled, clients must connect with a token query parameter:
+    ws://host:8000/ws/alerts?token=<JWT>
+"""
 
 import asyncio
 import json
 import logging
-from datetime import datetime, timezone
 from typing import Set
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from starlette.websockets import WebSocketState
+
+from ..auth import is_enabled as jwt_enabled, decode_token
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["websocket"])
@@ -32,15 +38,28 @@ async def broadcast_alert(alert_data: dict) -> None:
 
 
 @router.websocket("/ws/alerts")
-async def alerts_ws(websocket: WebSocket):
-    """WebSocket endpoint — clients receive real-time alert JSON messages."""
+async def alerts_ws(websocket: WebSocket, token: str = Query(default=None)):
+    """WebSocket endpoint — clients receive real-time alert JSON messages.
+
+    When JWT_SECRET is set, requires ?token=<JWT> query parameter.
+    """
+    # Authenticate if JWT is enabled
+    if jwt_enabled():
+        if not token:
+            await websocket.close(code=4001, reason="Missing token")
+            return
+        try:
+            decode_token(token)
+        except Exception:
+            await websocket.close(code=4003, reason="Invalid or expired token")
+            return
+
     await websocket.accept()
     async with _lock:
         _clients.add(websocket)
     logger.info("WebSocket client connected (%d total)", len(_clients))
     try:
         while True:
-            # Keep connection alive; client can send pings
             await websocket.receive_text()
     except WebSocketDisconnect:
         pass

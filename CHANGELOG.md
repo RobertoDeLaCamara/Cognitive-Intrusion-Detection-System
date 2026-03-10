@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.2] - 2026-03-10
+
+### Added
+
+- **Alembic DB migrations** — schema versioning with auto-migration on API startup; falls back to `create_all` for in-memory test databases. Initial migration captures all existing tables (alerts, incidents, suppression_rules, users)
+- **Alert deduplication in capture pipeline** — duplicate alerts from the same `(src_ip, attack_type)` pair are suppressed within the `DEDUP_WINDOW_SECS` window (default 300s), reducing alert fatigue from persistent scanners
+- **WebSocket authentication** — `/ws/alerts` now requires a `?token=<JWT>` query parameter when `JWT_SECRET` is configured; unauthenticated connections are rejected with close code 4001/4003
+
+### Changed
+
+- `alembic` added to `requirements.txt`
+- `src/api/database.py` — `init_db()` runs Alembic `upgrade head` instead of `create_all`
+
 ## [1.0.1] - 2026-03-10
 
 ### Fixed

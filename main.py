@@ -18,7 +18,7 @@ import threading
 import numpy as np
 from typing import List, Optional
 
-from src.config import CAPTURE_INTERFACE, MIN_PACKETS_FOR_ML, DATABASE_URL
+from src.config import CAPTURE_INTERFACE, MIN_PACKETS_FOR_ML, DATABASE_URL, DEDUP_WINDOW_SECS
 from src.capture.packet_capture import PacketCapture, PacketProcessor
 from src.capture.dispatcher import Dispatcher
 from src.engines.registry import supervised, iforest, lstm, rules, ensemble
@@ -111,6 +111,11 @@ def _persist_alert(record, scores, result, severity, triggered):
         logger.warning("Alert queue full — dropping alert for %s", record.src_ip)
 
 
+# ── Alert deduplication ────────────────────────────────────────────────────────
+_dedup_cache: dict = {}  # (src_ip, attack_type) -> last_fired_timestamp
+_dedup_lock = threading.Lock()
+
+
 def on_flow_complete(
     record: FlowRecord,
     flow_vec: np.ndarray,
@@ -144,6 +149,22 @@ def on_flow_complete(
 
     if result.is_anomaly:
         severity = severity_from_score(result.score, scores.attack_type)
+
+        # Deduplication: skip if same (src_ip, attack_type) fired recently
+        dedup_key = (record.src_ip, scores.attack_type or "unknown")
+        now = time.time()
+        with _dedup_lock:
+            last_fired = _dedup_cache.get(dedup_key, 0.0)
+            if now - last_fired < DEDUP_WINDOW_SECS:
+                return
+            _dedup_cache[dedup_key] = now
+            # Prune stale entries periodically
+            if len(_dedup_cache) > 10000:
+                cutoff = now - DEDUP_WINDOW_SECS
+                stale = [k for k, t in _dedup_cache.items() if t < cutoff]
+                for k in stale:
+                    del _dedup_cache[k]
+
         parts = [
             f"src={record.src_ip}",
             f"dst={record.dst_ip}",

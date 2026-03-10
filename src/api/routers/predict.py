@@ -12,7 +12,7 @@ from ..schemas import PredictRequest, PredictResponse, EngineScoresOut
 from .websocket import broadcast_alert
 from ..metrics import inc_alert
 from ...engines.registry import supervised as _supervised, iforest as _iforest, lstm as _lstm, rules as _rules, ensemble as _ensemble
-from ...ensemble.scorer import EngineScores
+from ...ensemble.scorer import EngineScores, severity_from_score
 from ...features.flow_extractor import FlowRecord
 from ...enrichment import geoip
 from ...enrichment.correlation import correlate_alert
@@ -20,23 +20,10 @@ from ...enrichment.suppression import is_suppressed
 from ...enrichment.notifications import notify_alert
 from ...enrichment.confidence_decay import apply_decay
 from ...enrichment.ip_lists import is_allowlisted, is_blocklisted
+from ...config import ENSEMBLE_THRESHOLD
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["predict"])
-
-
-def _severity_from_score(score: float, attack_type: str | None) -> SeverityLevel:
-    if attack_type and attack_type not in ("BENIGN", None):
-        critical_types = {"DDoS", "DoS", "Infiltration", "Web Attack"}
-        if any(t in attack_type for t in critical_types):
-            return SeverityLevel.CRITICAL
-    if score >= 0.85:
-        return SeverityLevel.CRITICAL
-    if score >= 0.70:
-        return SeverityLevel.HIGH
-    if score >= 0.55:
-        return SeverityLevel.MEDIUM
-    return SeverityLevel.LOW
 
 
 @router.post("/predict", response_model=PredictResponse)
@@ -108,9 +95,9 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
     # Confidence decay for repeated alerts
     decayed_score = apply_decay(body.src_ip, result.score)
     result.score = decayed_score
-    result.is_anomaly = decayed_score >= 0.55  # re-evaluate with decayed score
+    result.is_anomaly = decayed_score >= ENSEMBLE_THRESHOLD
 
-    severity = _severity_from_score(result.score, scores.attack_type)
+    severity = severity_from_score(result.score, scores.attack_type)
 
     # GeoIP enrichment
     geo = geoip.lookup(body.src_ip)
@@ -158,7 +145,7 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
                 "src_ip": body.src_ip,
                 "dst_ip": body.dst_ip,
                 "ensemble_score": result.score,
-                "severity": severity.value,
+                "severity": severity,
                 "attack_type": scores.attack_type,
                 "triggered_rules": scores.triggered_rules,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -166,13 +153,13 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
             }
             await broadcast_alert(alert_payload)
             await notify_alert(alert_payload)
-            inc_alert(severity.value)
+            inc_alert(severity)
 
     return PredictResponse(
         src_ip=body.src_ip,
         ensemble_score=result.score,
         is_anomaly=result.is_anomaly,
-        severity=severity.value,
+        severity=severity,
         attack_type=scores.attack_type,
         engine_scores=EngineScoresOut(
             supervised=scores.supervised,

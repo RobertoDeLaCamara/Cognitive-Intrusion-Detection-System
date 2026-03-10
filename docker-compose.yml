@@ -8,7 +8,7 @@ services:
       - "8000:8000"
     volumes:
       - ./models:/app/models:ro
-      - cnds_db:/app
+      - cnds_db:/app/data
     env_file: .env
     restart: unless-stopped
 
@@ -21,8 +21,14 @@ services:
     network_mode: host
     volumes:
       - ./models:/app/models:ro
-      - cnds_db:/app
+      # Detector does NOT mount the DB volume — only the API writes to the DB.
+      # The detector persists alerts via the API when --api is not used,
+      # or writes to its own local DB. For production, use PostgreSQL:
+      #   DATABASE_URL=postgresql+asyncpg://user:pass@db:5432/cnds
     env_file: .env
+    environment:
+      # Point detector at the API for alert persistence instead of direct DB
+      - CNDS_API_URL=http://api:8000
     restart: unless-stopped
 
   dashboard:

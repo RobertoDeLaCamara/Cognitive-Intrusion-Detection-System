@@ -6,12 +6,19 @@ decay to the ensemble score based on recent alert count.
 
 import threading
 import time
-from collections import defaultdict
+from collections import OrderedDict
 
-from ..config import CONFIDENCE_DECAY_FACTOR, CONFIDENCE_DECAY_WINDOW
+from ..config import CONFIDENCE_DECAY_FACTOR, CONFIDENCE_DECAY_WINDOW, MAX_TRACKED_IPS
 
-_hits: dict = defaultdict(list)  # ip -> [timestamp, ...]
+_hits: OrderedDict = OrderedDict()  # ip -> [timestamp, ...]
 _lock = threading.Lock()
+_MAX_ENTRIES = MAX_TRACKED_IPS
+
+
+def _cleanup_locked():
+    """Remove stale IPs when dict exceeds capacity."""
+    while len(_hits) > _MAX_ENTRIES:
+        _hits.popitem(last=False)
 
 
 def apply_decay(ip: str, score: float) -> float:
@@ -20,9 +27,13 @@ def apply_decay(ip: str, score: float) -> float:
     cutoff = now - CONFIDENCE_DECAY_WINDOW
 
     with _lock:
-        _hits[ip] = [t for t in _hits[ip] if t > cutoff]
-        repeat_count = len(_hits[ip])
-        _hits[ip].append(now)
+        timestamps = _hits.get(ip, [])
+        timestamps = [t for t in timestamps if t > cutoff]
+        repeat_count = len(timestamps)
+        timestamps.append(now)
+        _hits[ip] = timestamps
+        _hits.move_to_end(ip)
+        _cleanup_locked()
 
     if repeat_count == 0:
         return score

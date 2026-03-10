@@ -2,7 +2,8 @@
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+import ipaddress
 
 
 # ── Prediction ────────────────────────────────────────────────────────────────
@@ -18,6 +19,17 @@ class PredictRequest(BaseModel):
     host_features: Optional[List[float]] = Field(None, description="18 host-level features", min_length=18, max_length=18)
     payload_features: Optional[List[float]] = Field(None, description="10 payload features", min_length=10, max_length=10)
     payload_matches: Optional[List[str]] = Field(default_factory=list)
+
+    @field_validator("src_ip", "dst_ip", mode="before")
+    @classmethod
+    def validate_ip(cls, v):
+        if v is None:
+            return v
+        try:
+            ipaddress.ip_address(v)
+        except ValueError:
+            raise ValueError(f"Invalid IP address: {v}")
+        return v
 
 
 class EngineScoresOut(BaseModel):
@@ -109,7 +121,7 @@ class SuppressionRuleCreate(BaseModel):
     src_ip: Optional[str] = None
     dst_ip: Optional[str] = None
     attack_type: Optional[str] = None
-    min_severity: Optional[str] = None
+    min_severity: Optional[str] = Field(None, description="Suppress alerts at or below this severity level")
     reason: Optional[str] = None
     duration_minutes: int = Field(120, ge=1, le=10080, description="Duration in minutes (max 7 days)")
 

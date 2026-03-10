@@ -14,6 +14,7 @@ from typing import Dict, List, Optional
 from scapy.all import IP, TCP, UDP, ICMP, Raw
 
 from ..config import HOST_WINDOW_SIZE, MAX_TRACKED_IPS, COMMON_PORTS
+from .utils import byte_entropy
 
 HOST_FEATURE_NAMES = [
     # Statistical (6)
@@ -31,12 +32,8 @@ HOST_FEATURE_NAMES = [
 
 
 def _entropy(data: bytes) -> float:
-    if not data:
-        return 0.0
-    counts = np.bincount(np.frombuffer(data, dtype=np.uint8), minlength=256)
-    probs = counts / counts.sum()
-    probs = probs[probs > 0]
-    return float(-np.sum(probs * np.log2(probs)))
+    """Shannon entropy — delegates to shared utility."""
+    return byte_entropy(data)
 
 
 @dataclass
@@ -188,7 +185,8 @@ class HostExtractor:
     def _evict_least_active(self) -> None:
         if not self._data:
             return
-        oldest = min(self._data, key=lambda k: self._data[k].total_packets)
+        # Evict IP with oldest last-seen timestamp (least recently active)
+        oldest = min(self._data, key=lambda k: self._data[k].timestamps[-1] if self._data[k].timestamps else 0.0)
         del self._data[oldest]
 
     def tracked_ips(self) -> List[str]:

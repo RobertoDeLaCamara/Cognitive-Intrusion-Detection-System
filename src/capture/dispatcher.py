@@ -12,6 +12,7 @@ the full detection pipeline (engines + ensemble) for each completed flow.
 import time
 import logging
 import threading
+from collections import OrderedDict
 from typing import Callable, Optional
 
 from ..features.flow_extractor import FlowExtractor, FlowRecord
@@ -47,8 +48,8 @@ class Dispatcher:
         self._flusher: Optional[threading.Thread] = None
         self._stop = threading.Event()
 
-        # Track latest payload matches per src_ip for correlation at flow emit
-        self._payload_hits: dict[str, list[str]] = {}
+        # Track latest payload matches per src_ip (LRU eviction)
+        self._payload_hits: OrderedDict[str, list[str]] = OrderedDict()
         self._payload_lock = threading.Lock()
         self._max_payload_entries = MAX_ACTIVE_FLOWS
 
@@ -67,13 +68,14 @@ class Dispatcher:
         extract_dns_query(packet)
         if matches and src_ip:
             with self._payload_lock:
-                # Cap entries to prevent unbounded growth from evicted flows
+                # LRU eviction: remove oldest entry when at capacity
                 if src_ip not in self._payload_hits and len(self._payload_hits) >= self._max_payload_entries:
-                    self._payload_hits.pop(next(iter(self._payload_hits)), None)
+                    self._payload_hits.popitem(last=False)
                 existing = self._payload_hits.get(src_ip, [])
                 # Keep last 20 unique matches per IP
                 combined = list(set(existing + matches))[-20:]
                 self._payload_hits[src_ip] = combined
+                self._payload_hits.move_to_end(src_ip)
 
     def _flush_loop(self) -> None:
         while not self._stop.is_set():

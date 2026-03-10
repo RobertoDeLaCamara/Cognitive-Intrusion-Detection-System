@@ -9,6 +9,7 @@ import threading
 import numpy as np
 from typing import List
 from scapy.all import Raw
+from .utils import byte_entropy
 
 
 # Compiled patterns: (name, regex)
@@ -30,6 +31,9 @@ PAYLOAD_FEATURE_NAMES = [
 ]
 
 MATCH_TIMEOUT_SECS = 1
+
+# Quick pre-screen bytes to avoid spawning threads for clearly benign payloads
+_PRESCREEN = re.compile(rb"(?:select|union|script|javascript|onerror|\.\.\/|jndi|\(\s*\)\s*\{|;\s*(?:ls|cat|wget))", re.IGNORECASE)
 
 
 def _match_with_timeout(pattern: re.Pattern, data: bytes) -> bool:
@@ -54,6 +58,9 @@ def analyze_payload(packet) -> List[str]:
         return []
     # Limit to first 4KB to bound matching time
     sample = payload[:4096]
+    # Quick pre-screen: skip expensive per-pattern matching if no suspicious bytes
+    if not _PRESCREEN.search(sample):
+        return []
     matches = []
     for name, pattern in _PATTERNS:
         try:
@@ -65,13 +72,8 @@ def analyze_payload(packet) -> List[str]:
 
 
 def _entropy(data: bytes) -> float:
-    """Shannon entropy of a byte sequence."""
-    if not data:
-        return 0.0
-    counts = np.bincount(np.frombuffer(data, dtype=np.uint8), minlength=256)
-    probs = counts / counts.sum()
-    probs = probs[probs > 0]
-    return float(-np.sum(probs * np.log2(probs)))
+    """Shannon entropy — delegates to shared utility."""
+    return byte_entropy(data)
 
 
 def _suspicious_char_ratio(data: bytes) -> float:

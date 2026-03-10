@@ -10,6 +10,7 @@ Usage:
 
 import argparse
 import logging
+import queue
 import signal
 import sys
 import time
@@ -21,7 +22,7 @@ from src.config import CAPTURE_INTERFACE, MIN_PACKETS_FOR_ML, DATABASE_URL
 from src.capture.packet_capture import PacketCapture, PacketProcessor
 from src.capture.dispatcher import Dispatcher
 from src.engines.registry import supervised, iforest, lstm, rules, ensemble
-from src.ensemble.scorer import EngineScores
+from src.ensemble.scorer import EngineScores, severity_from_score
 from src.features.flow_extractor import FlowRecord
 
 logging.basicConfig(
@@ -30,9 +31,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("cnds")
 
-# ── Alert persistence (sync wrapper for the async DB) ─────────────────────────
+# ── Alert persistence (async writer thread for the capture pipeline) ───────
 _db_engine = None
 _SessionLocal = None
+_alert_queue: queue.Queue = queue.Queue(maxsize=1000)
+_writer_thread: Optional[threading.Thread] = None
+_writer_stop = threading.Event()
 
 
 def _init_db():
@@ -50,35 +54,61 @@ def _init_db():
     _SessionLocal = sessionmaker(bind=_db_engine)
 
 
-def _persist_alert(record, scores, result, severity, triggered):
-    """Write alert to DB. Best-effort — errors are logged, not raised."""
-    try:
-        _init_db()
-        from datetime import datetime, timezone
-        from src.api.models import Alert
-        session = _SessionLocal()
+def _writer_loop():
+    """Dedicated thread that drains the alert queue and writes to DB."""
+    while not _writer_stop.is_set():
         try:
-            alert = Alert(
-                timestamp=datetime.now(timezone.utc),
-                src_ip=record.src_ip,
-                dst_ip=record.dst_ip,
-                attack_type=scores.attack_type,
-                severity=severity,
-                ensemble_score=result.score,
-                engine_scores={
-                    "supervised": scores.supervised,
-                    "isolation_forest": scores.isolation_forest,
-                    "lstm": scores.lstm,
-                    "rules": scores.rules,
-                },
-                triggered_rules=triggered,
-            )
-            session.add(alert)
-            session.commit()
+            item = _alert_queue.get(timeout=0.5)
+        except queue.Empty:
+            continue
+        try:
+            _init_db()
+            from datetime import datetime, timezone
+            from src.api.models import Alert
+            record, scores, result, severity, triggered = item
+            session = _SessionLocal()
+            try:
+                alert = Alert(
+                    timestamp=datetime.now(timezone.utc),
+                    src_ip=record.src_ip,
+                    dst_ip=record.dst_ip,
+                    attack_type=scores.attack_type,
+                    severity=severity,
+                    ensemble_score=result.score,
+                    engine_scores={
+                        "supervised": scores.supervised,
+                        "isolation_forest": scores.isolation_forest,
+                        "lstm": scores.lstm,
+                        "rules": scores.rules,
+                    },
+                    triggered_rules=triggered,
+                )
+                session.add(alert)
+                session.commit()
+            finally:
+                session.close()
+        except Exception as e:
+            logger.error("Failed to persist alert: %s", e)
         finally:
-            session.close()
-    except Exception as e:
-        logger.error("Failed to persist alert: %s", e)
+            _alert_queue.task_done()
+
+
+def _start_writer():
+    global _writer_thread
+    if _writer_thread is not None:
+        return
+    _writer_stop.clear()
+    _writer_thread = threading.Thread(target=_writer_loop, daemon=True, name="alert-writer")
+    _writer_thread.start()
+
+
+def _persist_alert(record, scores, result, severity, triggered):
+    """Enqueue alert for async DB write. Non-blocking."""
+    _start_writer()
+    try:
+        _alert_queue.put_nowait((record, scores, result, severity, triggered))
+    except queue.Full:
+        logger.warning("Alert queue full — dropping alert for %s", record.src_ip)
 
 
 def on_flow_complete(
@@ -113,9 +143,7 @@ def on_flow_complete(
     result = ensemble.score(scores)
 
     if result.is_anomaly:
-        severity = "critical" if result.score >= 0.85 else \
-                   "high" if result.score >= 0.70 else \
-                   "medium" if result.score >= 0.55 else "low"
+        severity = severity_from_score(result.score, scores.attack_type)
         parts = [
             f"src={record.src_ip}",
             f"dst={record.dst_ip}",
@@ -159,9 +187,10 @@ def main():
 
     # Expose capture stats to API /health endpoint
     if args.api:
+        _api_app = api_app  # captured from import above
         def _update_stats():
             while not capture._stop.is_set():
-                api_app.state.capture_stats = {**processor.stats, **dispatcher.stats}
+                _api_app.state.capture_stats = {**processor.stats, **dispatcher.stats}
                 time.sleep(5)
         threading.Thread(target=_update_stats, daemon=True, name="stats-updater").start()
 

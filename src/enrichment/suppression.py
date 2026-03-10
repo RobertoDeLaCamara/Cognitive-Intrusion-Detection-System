@@ -35,7 +35,8 @@ async def is_suppressed(alert: Alert, db: AsyncSession) -> bool:
             severity_order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
             alert_sev = severity_order.get(alert.severity.value if hasattr(alert.severity, 'value') else alert.severity, 0)
             rule_sev = severity_order.get(rule.min_severity, 0)
-            if alert_sev >= rule_sev:
+            # Skip this rule if alert severity exceeds the suppression ceiling
+            if alert_sev > rule_sev:
                 continue
         logger.debug("Alert suppressed by rule #%d: %s", rule.id, rule.reason)
         return True

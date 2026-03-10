@@ -58,9 +58,17 @@ async def notify_alert(alert_data: Dict) -> None:
     message = _format_message(alert_data)
 
     async with httpx.AsyncClient(timeout=10.0) as client:
-        # Webhooks (Slack, generic)
+        # Webhooks (Slack, generic) — only send safe summary fields
         if has_webhooks:
-            payload = {"text": message, **alert_data}
+            payload = {
+                "text": message,
+                "src_ip": alert_data.get("src_ip"),
+                "dst_ip": alert_data.get("dst_ip"),
+                "severity": alert_data.get("severity"),
+                "attack_type": alert_data.get("attack_type"),
+                "ensemble_score": alert_data.get("ensemble_score"),
+                "timestamp": alert_data.get("timestamp"),
+            }
             for url in WEBHOOK_URLS:
                 try:
                     resp = await client.post(

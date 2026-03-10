@@ -105,6 +105,18 @@ class FlowRecord:
     idle_periods: List[float] = field(default_factory=list)
     _current_active_start: float = 0.0
 
+    # Bulk transfer tracking (consecutive data packets without idle gaps)
+    _fwd_bulk_bytes: List[int] = field(default_factory=list)
+    _fwd_bulk_pkts: List[int] = field(default_factory=list)
+    _bwd_bulk_bytes: List[int] = field(default_factory=list)
+    _bwd_bulk_pkts: List[int] = field(default_factory=list)
+    _cur_fwd_bulk_bytes: int = 0
+    _cur_fwd_bulk_pkts: int = 0
+    _cur_bwd_bulk_bytes: int = 0
+    _cur_bwd_bulk_pkts: int = 0
+    _last_fwd_time: float = 0.0
+    _last_bwd_time: float = 0.0
+
     def add_packet(self, packet, timestamp: float, is_forward: bool) -> None:
         pkt_len = len(packet)
         ip = packet[IP]
@@ -131,11 +143,31 @@ class FlowRecord:
             self.fwd_times.append(timestamp)
             hdr_len = ip.ihl * 4 if hasattr(ip, 'ihl') else 20
             self.fwd_header_len += hdr_len
+            # Bulk transfer tracking
+            if self._last_fwd_time > 0 and (timestamp - self._last_fwd_time) > ACTIVE_IDLE_THRESH:
+                if self._cur_fwd_bulk_pkts > 1:
+                    self._fwd_bulk_bytes.append(self._cur_fwd_bulk_bytes)
+                    self._fwd_bulk_pkts.append(self._cur_fwd_bulk_pkts)
+                self._cur_fwd_bulk_bytes = 0
+                self._cur_fwd_bulk_pkts = 0
+            self._cur_fwd_bulk_bytes += pkt_len
+            self._cur_fwd_bulk_pkts += 1
+            self._last_fwd_time = timestamp
         else:
             self.bwd_lengths.append(pkt_len)
             self.bwd_times.append(timestamp)
             hdr_len = ip.ihl * 4 if hasattr(ip, 'ihl') else 20
             self.bwd_header_len += hdr_len
+            # Bulk transfer tracking
+            if self._last_bwd_time > 0 and (timestamp - self._last_bwd_time) > ACTIVE_IDLE_THRESH:
+                if self._cur_bwd_bulk_pkts > 1:
+                    self._bwd_bulk_bytes.append(self._cur_bwd_bulk_bytes)
+                    self._bwd_bulk_pkts.append(self._cur_bwd_bulk_pkts)
+                self._cur_bwd_bulk_bytes = 0
+                self._cur_bwd_bulk_pkts = 0
+            self._cur_bwd_bulk_bytes += pkt_len
+            self._cur_bwd_bulk_pkts += 1
+            self._last_bwd_time = timestamp
 
         # TCP flags
         if TCP in packet:
@@ -166,6 +198,14 @@ class FlowRecord:
                 self.fwd_act_data_pkts += 1
                 if len(self.fwd_payloads) < MAX_PAYLOAD_SAMPLES:
                     self.fwd_payloads.append(bytes(tcp.payload)[:PAYLOAD_SAMPLE_BYTES])
+
+        # UDP payload capture
+        if UDP in packet and is_forward:
+            udp_payload = bytes(packet[UDP].payload) if packet[UDP].payload else b""
+            if udp_payload:
+                self.fwd_act_data_pkts += 1
+                if len(self.fwd_payloads) < MAX_PAYLOAD_SAMPLES:
+                    self.fwd_payloads.append(udp_payload[:PAYLOAD_SAMPLE_BYTES])
 
     def to_feature_vector(self) -> Optional[np.ndarray]:
         """Compute all 76 features. Returns None if insufficient data."""
@@ -224,6 +264,27 @@ class FlowRecord:
 
         fwd_seg_min = float(min(self.fwd_lengths)) if self.fwd_lengths else 0.0
 
+        # Finalize bulk transfer segments
+        fwd_bulks_b = self._fwd_bulk_bytes[:]
+        fwd_bulks_p = self._fwd_bulk_pkts[:]
+        if self._cur_fwd_bulk_pkts > 1:
+            fwd_bulks_b.append(self._cur_fwd_bulk_bytes)
+            fwd_bulks_p.append(self._cur_fwd_bulk_pkts)
+        bwd_bulks_b = self._bwd_bulk_bytes[:]
+        bwd_bulks_p = self._bwd_bulk_pkts[:]
+        if self._cur_bwd_bulk_pkts > 1:
+            bwd_bulks_b.append(self._cur_bwd_bulk_bytes)
+            bwd_bulks_p.append(self._cur_bwd_bulk_pkts)
+
+        n_fwd_bulk = len(fwd_bulks_b) or 1
+        n_bwd_bulk = len(bwd_bulks_b) or 1
+        fwd_byts_b_avg = sum(fwd_bulks_b) / n_fwd_bulk if fwd_bulks_b else 0.0
+        fwd_pkts_b_avg = sum(fwd_bulks_p) / n_fwd_bulk if fwd_bulks_p else 0.0
+        fwd_blk_rate_avg = n_fwd_bulk / duration if fwd_bulks_b else 0.0
+        bwd_byts_b_avg = sum(bwd_bulks_b) / n_bwd_bulk if bwd_bulks_b else 0.0
+        bwd_pkts_b_avg = sum(bwd_bulks_p) / n_bwd_bulk if bwd_bulks_p else 0.0
+        bwd_blk_rate_avg = n_bwd_bulk / duration if bwd_bulks_b else 0.0
+
         features = [
             duration,
             float(n_fwd), float(n_bwd),
@@ -245,8 +306,8 @@ class FlowRecord:
             float(n_bwd) / max(n_fwd, 1),               # down_up_ratio
             pkt_mean,                                    # pkt_size_avg
             fwd_mean, bwd_mean,                          # seg_size_avg
-            float(tot_fwd_bytes), float(n_fwd), tot_fwd_bytes / duration,   # bulk fwd
-            float(tot_bwd_bytes), float(n_bwd), tot_bwd_bytes / duration,   # bulk bwd
+            fwd_byts_b_avg, fwd_pkts_b_avg, fwd_blk_rate_avg,   # bulk fwd
+            bwd_byts_b_avg, bwd_pkts_b_avg, bwd_blk_rate_avg,   # bulk bwd
             float(n_fwd), float(tot_fwd_bytes),          # subflow fwd
             float(n_bwd), float(tot_bwd_bytes),          # subflow bwd
             float(max(self.init_fwd_win, 0)),
@@ -277,6 +338,8 @@ class FlowExtractor:
     def __init__(self):
         self._flows: Dict[FlowKey, FlowRecord] = {}
         self._lock = threading.RLock()
+        # Min-heap of (last_time, flow_key) for efficient expiry
+        self._expiry_heap: List[Tuple[float, FlowKey]] = []
 
     def process_packet(self, packet) -> None:
         if IP not in packet:
@@ -305,19 +368,37 @@ class FlowExtractor:
                     self._evict_oldest()
                 self._flows[fwd_key] = FlowRecord(key=fwd_key)
                 self._flows[fwd_key].add_packet(packet, ts, True)
+                import heapq
+                heapq.heappush(self._expiry_heap, (ts, fwd_key))
 
     def collect_expired(self) -> List[Tuple[FlowRecord, np.ndarray]]:
         """Return (record, features) for flows that have timed out."""
+        import heapq
         now = time.time()
-        # Snapshot keys under lock, then process outside to minimise hold time
+        cutoff = now - FLOW_TIMEOUT
+        expired_records = []
+
         with self._lock:
-            expired_keys = [
-                k for k, rec in self._flows.items()
-                if rec.start_time > 0 and (now - rec.last_time) > FLOW_TIMEOUT
-            ]
-            expired_records = []
-            for key in expired_keys:
+            # Heap-based fast path
+            while self._expiry_heap and self._expiry_heap[0][0] <= cutoff:
+                _, key = heapq.heappop(self._expiry_heap)
+                rec = self._flows.get(key)
+                if rec is None:
+                    continue  # already evicted
+                if rec.last_time > cutoff:
+                    # Flow got new packets since heap entry — re-push
+                    heapq.heappush(self._expiry_heap, (rec.last_time, key))
+                    continue
                 expired_records.append(self._flows.pop(key))
+
+            # Fallback: catch any flows not in the heap (e.g. manually inserted)
+            if not self._expiry_heap and self._flows:
+                fallback_keys = [
+                    k for k, rec in self._flows.items()
+                    if rec.start_time > 0 and rec.last_time <= cutoff
+                ]
+                for key in fallback_keys:
+                    expired_records.append(self._flows.pop(key))
 
         results = []
         for rec in expired_records:

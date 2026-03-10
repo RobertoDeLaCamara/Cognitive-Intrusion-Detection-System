@@ -1,17 +1,19 @@
 """DNS query logging from captured packets (Phase 8)."""
 
 import logging
+from collections import OrderedDict
 from typing import Optional, Dict
 
 from scapy.all import IP, UDP, DNS, DNSQR
 
-from ..config import DNS_LOGGING_ENABLED
+from ..config import DNS_LOGGING_ENABLED, MAX_TRACKED_IPS
 
 logger = logging.getLogger(__name__)
 
-# Recent DNS queries: {src_ip: [(timestamp, domain), ...]}
-_dns_log: dict = {}
+# Recent DNS queries: {src_ip: [domain, ...]}
+_dns_log: OrderedDict = OrderedDict()
 _MAX_PER_IP = 100
+_MAX_IPS = MAX_TRACKED_IPS
 
 
 def extract_dns_query(packet) -> Optional[Dict]:
@@ -34,13 +36,17 @@ def extract_dns_query(packet) -> Optional[Dict]:
         "qtype": qtype,
     }
 
-    # Store in memory log
-    if src_ip not in _dns_log:
-        _dns_log[src_ip] = []
-    log = _dns_log[src_ip]
+    # Store in memory log with LRU eviction
+    if src_ip in _dns_log:
+        _dns_log.move_to_end(src_ip)
+    elif len(_dns_log) >= _MAX_IPS:
+        _dns_log.popitem(last=False)
+
+    log = _dns_log.get(src_ip, [])
     log.append(domain)
     if len(log) > _MAX_PER_IP:
-        _dns_log[src_ip] = log[-_MAX_PER_IP:]
+        log = log[-_MAX_PER_IP:]
+    _dns_log[src_ip] = log
 
     return entry
 

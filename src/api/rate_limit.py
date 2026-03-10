@@ -1,5 +1,6 @@
 """Simple in-memory rate limiter middleware (Phase 8)."""
 
+import asyncio
 import time
 import logging
 from collections import defaultdict
@@ -21,6 +22,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self._requests = requests
         self._window = window
         self._hits: dict = defaultdict(list)
+        self._lock = asyncio.Lock()
 
     async def dispatch(self, request: Request, call_next):
         # Skip rate limiting for health/docs/metrics
@@ -31,15 +33,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         now = time.time()
         cutoff = now - self._window
 
-        # Prune old entries
-        self._hits[client_ip] = [t for t in self._hits[client_ip] if t > cutoff]
+        async with self._lock:
+            # Prune old entries
+            self._hits[client_ip] = [t for t in self._hits[client_ip] if t > cutoff]
 
-        if len(self._hits[client_ip]) >= self._requests:
-            return JSONResponse(
-                status_code=429,
-                content={"detail": "Rate limit exceeded"},
-                headers={"Retry-After": str(self._window)},
-            )
+            if len(self._hits[client_ip]) >= self._requests:
+                return JSONResponse(
+                    status_code=429,
+                    content={"detail": "Rate limit exceeded"},
+                    headers={"Retry-After": str(self._window)},
+                )
 
-        self._hits[client_ip].append(now)
+            self._hits[client_ip].append(now)
+
         return await call_next(request)

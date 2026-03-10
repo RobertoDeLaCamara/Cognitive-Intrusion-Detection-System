@@ -1,4 +1,4 @@
-# Contributing to unified-ids
+# Contributing to CNDS
 
 Thank you for your interest in contributing! This guide will help you get started.
 
@@ -7,14 +7,14 @@ Thank you for your interest in contributing! This guide will help you get starte
 1. Fork the repository
 2. Clone your fork:
    ```bash
-   git clone https://github.com/your-username/unified-ids.git
-   cd unified-ids
+   git clone https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System.git
+   cd Cognitive-Intrusion-Detection-System
    ```
 3. Set up the development environment:
    ```bash
    python3 -m venv venv && source venv/bin/activate
    pip install -r requirements.txt
-   cp .env.example .env  # if applicable
+   cp .env.example .env
    ```
 4. Start the infrastructure:
    ```bash
@@ -55,6 +55,8 @@ All new code should include tests. Aim to maintain or improve coverage.
 - Follow PyTorch best practices (proper device handling, no silent shape mismatches)
 - Use Scapy best practices for packet capture and parsing
 - Use clear, descriptive variable names
+- Place shared utilities in `src/features/utils.py` (e.g. `byte_entropy`) — avoid duplicating helper functions across modules
+- Bound all in-memory dicts/caches with `MAX_TRACKED_IPS` or similar limits — never allow unbounded growth
 
 ## Commit Messages
 

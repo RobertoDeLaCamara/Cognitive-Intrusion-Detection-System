@@ -113,3 +113,18 @@ class EnsembleScorer:
             active_engines=list(available.keys()),
             calibrated_score=calibrated,
         )
+
+
+def severity_from_score(score: float, attack_type: str | None = None) -> str:
+    """Unified severity classification used by both capture pipeline and API."""
+    if attack_type and attack_type not in ("BENIGN", None):
+        critical_types = {"DDoS", "DoS", "Infiltration", "Web Attack"}
+        if any(t in attack_type for t in critical_types) and score >= 0.70:
+            return "critical"
+    if score >= 0.85:
+        return "critical"
+    if score >= 0.70:
+        return "high"
+    if score >= 0.55:
+        return "medium"
+    return "low"

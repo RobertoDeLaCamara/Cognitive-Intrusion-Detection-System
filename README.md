@@ -39,7 +39,7 @@
 | **Supervised** | 76 CICFlowMeter flow features (+ 10 payload features if retrained) | Random Forest (sklearn Pipeline) | Named attacks: DoS, PortScan, Brute-force, Web attacks, Infiltration |
 | **Isolation Forest** | 18 per-IP host features | IsolationForest + StandardScaler | Novel / zero-day volumetric anomalies |
 | **LSTM Autoencoder** | 18-feature time-series per IP | PyTorch sequence AE | Slow attacks, temporal behaviour drift |
-| **Rules** | Flow metadata + payload bytes | Threshold rules | ICMP floods, SYN scans, SQLi, XSS, LFI, large payloads, asymmetric upload |
+| **Rules** | Flow metadata + payload bytes (TCP + UDP) | Threshold rules | ICMP floods, SYN scans, SQLi, XSS, LFI, large payloads, asymmetric upload |
 
 Default ensemble weights: Supervised 40 %, Isolation Forest 30 %, LSTM 20 %, Rules 10 %.
 Any missing engine has its weight redistributed proportionally across the active engines.
@@ -96,6 +96,10 @@ uvicorn src.api.main:app --host 0.0.0.0 --port 8000
 sudo venv/bin/python main.py --duration 60
 
 # Docker Compose (API + detector + Streamlit dashboard)
+# NOTE: The default SQLite backend does not support concurrent writers.
+# In docker-compose, only the API service writes to the DB.
+# For production multi-container setups, use PostgreSQL:
+#   DATABASE_URL=postgresql+asyncpg://user:pass@db:5432/cnds
 docker-compose up -d
 # API:       http://localhost:8000
 # Dashboard: http://localhost:8501
@@ -260,7 +264,8 @@ Copy `.env.example` to `.env` and adjust as needed.
 ├── requirements.txt
 ├── .env.example
 ├── scripts/
-│   └── retrain_with_payload.py  # Retrain RF with 86 features (76 flow + 10 payload)
+│   ├── retrain_with_payload.py  # Retrain RF with 86 features (76 flow + 10 payload)
+│   └── pcap_replay.py          # PCAP replay for offline threat hunting / model eval
 ├── dashboard/
 │   └── app.py                   # Streamlit real-time dashboard
 ├── models/                      # ML model files (binaries not committed)
@@ -278,7 +283,8 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   ├── features/
 │   │   ├── flow_extractor.py    # 76 CICFlowMeter-compatible features per flow
 │   │   ├── host_extractor.py    # 18 per-IP host features
-│   │   └── payload_analyzer.py  # Regex pattern matching + numeric payload features
+│   │   ├── payload_analyzer.py  # Regex pattern matching + numeric payload features
+│   │   └── utils.py             # Shared utilities (byte entropy, etc.)
 │   ├── engines/
 │   │   ├── registry.py          # Shared engine singletons
 │   │   ├── supervised.py        # Random Forest wrapper
@@ -293,6 +299,8 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   │   ├── adaptive_weights.py  # Feedback-driven engine weight tuning
 │   │   ├── suppression.py       # Temporary alert suppression rules
 │   │   ├── notifications.py     # Webhook/Slack alert notifications
+│   │   ├── confidence_decay.py  # Exponential score decay for repeat alerts
+│   │   ├── ip_lists.py          # IP allowlist / blocklist
 │   │   └── dns_logger.py        # DNS query logging from captured traffic
 │   └── api/
 │       ├── main.py              # FastAPI application
@@ -308,11 +316,17 @@ Copy `.env.example` to `.env` and adjust as needed.
 │           ├── auth.py          # POST /api/auth/token
 │           └── websocket.py     # WebSocket /ws/alerts
 └── tests/
+    ├── conftest.py              # Shared fixtures (in-memory DB, mock features)
+    ├── test_api.py              # API integration tests
+    ├── test_auth.py             # JWT authentication and RBAC tests
+    ├── test_config.py           # Configuration validation tests
+    ├── test_engines.py          # Engine unit tests
+    ├── test_enrichment.py       # Enrichment module tests
+    ├── test_ensemble.py         # Ensemble scorer tests
     ├── test_flow_extractor.py
     ├── test_host_extractor.py
     ├── test_payload_features.py
-    ├── test_rules_engine.py
-    └── test_ensemble.py
+    └── test_rules_engine.py
 ```
 
 ---

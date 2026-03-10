@@ -66,4 +66,5 @@ pytest-cov>=4.1.0
 pytest-mock>=3.12.0
 
 # Pin anyio to 3.x for pytest-asyncio compatibility
+# (pytest-asyncio <0.24 requires anyio 3.x; remove this pin when upgrading)
 anyio>=3.7.0,<4.0.0

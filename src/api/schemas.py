@@ -51,6 +51,8 @@ class PredictResponse(BaseModel):
     active_engines: List[str]
     alert_id: Optional[int] = None
     src_geo: Optional[Dict[str, Any]] = None
+    mitre_techniques: Optional[List[Dict[str, str]]] = None
+    ja3_hash: Optional[str] = None
 
 
 # ── Alerts ─────────────────────────────────────────────────────────────────────
@@ -71,6 +73,8 @@ class AlertOut(BaseModel):
     notes: Optional[str]
     incident_id: Optional[int]
     src_geo: Optional[Dict[str, str]] = None
+    mitre_techniques: Optional[List[Dict[str, str]]] = None
+    ja3_hash: Optional[str] = None
 
     class Config:
         from_attributes = True

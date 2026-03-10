@@ -152,6 +152,10 @@ IP_BLOCKLIST = set(filter(None, os.getenv("IP_BLOCKLIST", "").split(",")))
 # ── Logging ────────────────────────────────────────────────────────────────────
 LOG_FORMAT = os.getenv("LOG_FORMAT", "text")  # "text" or "json"
 
+# ── JA3 TLS fingerprinting ────────────────────────────────────────────────────
+JA3_ENABLED = os.getenv("JA3_ENABLED", "true").lower() == "true"
+MALICIOUS_JA3_FILE = os.getenv("MALICIOUS_JA3_FILE", "")  # path to known-bad hashes
+
 
 def setup_logging():
     """Configure logging. Call once at startup."""

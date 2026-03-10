@@ -18,7 +18,7 @@ import threading
 import numpy as np
 from typing import List, Optional
 
-from src.config import CAPTURE_INTERFACE, MIN_PACKETS_FOR_ML, DATABASE_URL, DEDUP_WINDOW_SECS, setup_logging
+from src.config import CAPTURE_INTERFACE, MIN_PACKETS_FOR_ML, DATABASE_URL, DEDUP_WINDOW_SECS, setup_logging, MALICIOUS_JA3_FILE
 from src.capture.packet_capture import PacketCapture, PacketProcessor
 from src.capture.dispatcher import Dispatcher
 from src.engines.registry import supervised, iforest, lstm, rules, ensemble
@@ -66,10 +66,11 @@ def _writer_loop():
             _init_db()
             from datetime import datetime, timezone
             from src.api.models import Alert
-            record, scores, result, severity, triggered = item
+            record, scores, result, severity, triggered, ja3_info = item
             session = _SessionLocal()
             try:
                 from src.enrichment.geoip import lookup as geoip_lookup
+                from src.enrichment.mitre import enrich as mitre_enrich
                 alert = Alert(
                     timestamp=datetime.now(timezone.utc),
                     src_ip=record.src_ip,
@@ -85,6 +86,9 @@ def _writer_loop():
                     },
                     triggered_rules=triggered,
                     src_geo=geoip_lookup(record.src_ip),
+                    mitre_techniques=mitre_enrich(scores.attack_type, triggered),
+                    ja3_hash=ja3_info["hash"] if ja3_info else None,
+                    ja3_string=ja3_info["string"] if ja3_info else None,
                 )
                 session.add(alert)
                 session.commit()
@@ -105,11 +109,11 @@ def _start_writer():
     _writer_thread.start()
 
 
-def _persist_alert(record, scores, result, severity, triggered):
+def _persist_alert(record, scores, result, severity, triggered, ja3_info=None):
     """Enqueue alert for async DB write. Non-blocking."""
     _start_writer()
     try:
-        _alert_queue.put_nowait((record, scores, result, severity, triggered))
+        _alert_queue.put_nowait((record, scores, result, severity, triggered, ja3_info))
     except queue.Full:
         logger.warning("Alert queue full — dropping alert for %s", record.src_ip)
 
@@ -125,6 +129,7 @@ def on_flow_complete(
     host_vec: Optional[np.ndarray],
     payload_matches: List[str],
     payload_features: Optional[np.ndarray] = None,
+    ja3_info: Optional[dict] = None,
 ) -> None:
     """Called by the Dispatcher when a flow expires."""
     scores = EngineScores()
@@ -144,7 +149,7 @@ def on_flow_complete(
             lstm.update(record.src_ip, host_vec)
             scores.lstm = lstm.anomaly_score(record.src_ip)
 
-    rule_score, triggered = rules.evaluate(record, flow_vec, payload_matches)
+    rule_score, triggered = rules.evaluate(record, flow_vec, payload_matches, ja3_info)
     scores.rules = rule_score
     scores.triggered_rules = triggered
 
@@ -178,6 +183,8 @@ def on_flow_complete(
             parts.append(f"type={scores.attack_type}")
         if triggered:
             parts.append(f"rules={triggered}")
+        if ja3_info:
+            parts.append(f"ja3={ja3_info['hash']}")
 
         logger.warning("[ALERT] %s", " | ".join(parts), extra={
             "src_ip": record.src_ip,
@@ -186,8 +193,9 @@ def on_flow_complete(
             "attack_type": scores.attack_type,
             "triggered_rules": triggered,
             "active_engines": result.active_engines,
+            "ja3_hash": ja3_info["hash"] if ja3_info else None,
         })
-        _persist_alert(record, scores, result, severity, triggered)
+        _persist_alert(record, scores, result, severity, triggered, ja3_info)
 
 
 def main():
@@ -199,6 +207,11 @@ def main():
 
     logger.info("Engines: supervised=%s  iforest=%s  lstm=%s  rules=True",
                 supervised.is_available, iforest.is_available, lstm.is_available)
+
+    # Load malicious JA3 hashes if configured
+    if MALICIOUS_JA3_FILE:
+        from src.features.ja3 import load_malicious_ja3
+        load_malicious_ja3(MALICIOUS_JA3_FILE)
 
     # Optional API server
     if args.api:

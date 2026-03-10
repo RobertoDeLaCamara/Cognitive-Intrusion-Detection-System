@@ -270,3 +270,48 @@ async def test_export_alerts_with_filters(client, test_session):
 
     resp = await client.get("/api/alerts/export?format=json&severity=high")
     assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_alert_includes_mitre_and_ja3(client, test_session):
+    """Alerts with MITRE and JA3 data should serialize correctly."""
+    from datetime import datetime, timezone
+    alert = Alert(
+        timestamp=datetime.now(timezone.utc),
+        src_ip="10.0.0.99",
+        severity=SeverityLevel.HIGH,
+        attack_type="DoS Hulk",
+        mitre_techniques=[{"id": "T1498", "name": "Network Denial of Service", "tactic": "Impact"}],
+        ja3_hash="abcdef1234567890abcdef1234567890",
+        ja3_string="771,49196-49195,0-23,29-23,0",
+    )
+    test_session.add(alert)
+    await test_session.commit()
+
+    resp = await client.get("/api/alerts")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["mitre_techniques"][0]["id"] == "T1498"
+    assert data[0]["ja3_hash"] == "abcdef1234567890abcdef1234567890"
+
+
+@pytest.mark.asyncio
+async def test_export_json_includes_mitre(client, test_session):
+    """JSON export should include mitre_techniques."""
+    from datetime import datetime, timezone
+    import json as _json
+    alert = Alert(
+        timestamp=datetime.now(timezone.utc),
+        src_ip="10.0.0.88",
+        severity=SeverityLevel.MEDIUM,
+        mitre_techniques=[{"id": "T1046", "name": "Network Service Scanning", "tactic": "Discovery"}],
+    )
+    test_session.add(alert)
+    await test_session.commit()
+
+    resp = await client.get("/api/alerts/export?format=json")
+    assert resp.status_code == 200
+    data = _json.loads(resp.text)
+    assert len(data) == 1
+    assert data[0]["mitre_techniques"][0]["id"] == "T1046"

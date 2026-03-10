@@ -15,6 +15,7 @@ from ...engines.registry import supervised as _supervised, iforest as _iforest, 
 from ...ensemble.scorer import EngineScores, severity_from_score
 from ...features.flow_extractor import FlowRecord
 from ...enrichment import geoip
+from ...enrichment.mitre import enrich as mitre_enrich
 from ...enrichment.correlation import correlate_alert
 from ...enrichment.suppression import is_suppressed
 from ...enrichment.notifications import notify_alert
@@ -106,6 +107,9 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
     # GeoIP enrichment
     geo = geoip.lookup(body.src_ip)
 
+    # MITRE ATT&CK mapping
+    mitre = mitre_enrich(scores.attack_type, scores.triggered_rules)
+
     # --- Persist alert if anomaly (with dedup) ---
     alert_id = None
     if result.is_anomaly:
@@ -125,6 +129,7 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
                         attack_type=scores.attack_type, triggered_rules=scores.triggered_rules,
                     ),
                     active_engines=result.active_engines, alert_id=None, src_geo=geo,
+                    mitre_techniques=mitre,
                 )
             _api_dedup[dedup_key] = now
         alert = Alert(
@@ -148,6 +153,7 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
             host_features=body.host_features,
             payload_matches=payload,
             src_geo=geo,
+            mitre_techniques=mitre,
         )
         db.add(alert)
         await db.flush()
@@ -194,4 +200,5 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
         active_engines=result.active_engines,
         alert_id=alert_id,
         src_geo=geo,
+        mitre_techniques=mitre,
     )

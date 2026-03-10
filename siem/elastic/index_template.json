@@ -1,0 +1,52 @@
+{
+  "index_patterns": ["cnds-alerts-*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 1,
+      "index.lifecycle.name": "cnds-alerts-policy",
+      "index.lifecycle.rollover_alias": "cnds-alerts"
+    },
+    "mappings": {
+      "properties": {
+        "timestamp":        { "type": "date" },
+        "src_ip":           { "type": "ip" },
+        "dst_ip":           { "type": "ip" },
+        "src_port":         { "type": "integer" },
+        "dst_port":         { "type": "integer" },
+        "protocol":         { "type": "integer" },
+        "attack_type":      { "type": "keyword" },
+        "severity":         { "type": "keyword" },
+        "ensemble_score":   { "type": "float" },
+        "engine_scores": {
+          "properties": {
+            "supervised":       { "type": "float" },
+            "isolation_forest": { "type": "float" },
+            "lstm":             { "type": "float" },
+            "rules":            { "type": "float" }
+          }
+        },
+        "triggered_rules":  { "type": "keyword" },
+        "acknowledged":     { "type": "boolean" },
+        "notes":            { "type": "text" },
+        "incident_id":      { "type": "integer" },
+        "ja3_hash":         { "type": "keyword" },
+        "src_geo": {
+          "properties": {
+            "country":   { "type": "keyword" },
+            "city":      { "type": "keyword" },
+            "location":  { "type": "geo_point" }
+          }
+        },
+        "mitre_techniques": {
+          "type": "nested",
+          "properties": {
+            "id":     { "type": "keyword" },
+            "name":   { "type": "keyword" },
+            "tactic": { "type": "keyword" }
+          }
+        }
+      }
+    }
+  }
+}

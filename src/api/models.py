@@ -58,6 +58,13 @@ class Alert(Base):
     # GeoIP enrichment (Phase 8)
     src_geo          = Column(JSON, nullable=True)   # {country, city, latitude, longitude}
 
+    # MITRE ATT&CK mapping
+    mitre_techniques = Column(JSON, nullable=True)   # [{id, name, tactic}, ...]
+
+    # JA3 TLS fingerprint
+    ja3_hash         = Column(String(32), nullable=True, index=True)
+    ja3_string       = Column(Text, nullable=True)
+
     incident         = relationship("Incident", back_populates="alerts")
 
 

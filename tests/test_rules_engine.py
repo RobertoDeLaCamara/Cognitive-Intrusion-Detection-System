@@ -75,3 +75,24 @@ def test_asymmetric_upload_triggers(engine):
     score, triggered = engine.evaluate(rec, _zero_flow_vec(), [])
     assert score == 1.0
     assert "asymmetric_upload" in triggered
+
+
+def test_malicious_ja3_triggers(engine):
+    rec = _FakeRecord(fwd_lengths=[100])
+    ja3 = {"hash": "abc123", "string": "771,49196-49195", "malicious": True}
+    score, triggered = engine.evaluate(rec, _zero_flow_vec(), [], ja3_info=ja3)
+    assert score == 1.0
+    assert "malicious_ja3" in triggered
+
+
+def test_benign_ja3_no_trigger(engine):
+    rec = _FakeRecord(fwd_lengths=[100])
+    ja3 = {"hash": "abc123", "string": "771,49196-49195", "malicious": False}
+    score, triggered = engine.evaluate(rec, _zero_flow_vec(), [], ja3_info=ja3)
+    assert "malicious_ja3" not in triggered
+
+
+def test_no_ja3_no_trigger(engine):
+    rec = _FakeRecord(fwd_lengths=[100])
+    score, triggered = engine.evaluate(rec, _zero_flow_vec(), [], ja3_info=None)
+    assert "malicious_ja3" not in triggered

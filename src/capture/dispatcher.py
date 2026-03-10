@@ -18,6 +18,7 @@ from typing import Callable, Optional
 from ..features.flow_extractor import FlowExtractor, FlowRecord
 from ..features.host_extractor import HostExtractor
 from ..features.payload_analyzer import analyze_payload, extract_payload_features
+from ..features.ja3 import extract_ja3, is_malicious_ja3
 from ..enrichment.dns_logger import extract_dns_query
 from ..config import MAX_ACTIVE_FLOWS
 
@@ -53,6 +54,10 @@ class Dispatcher:
         self._payload_lock = threading.Lock()
         self._max_payload_entries = MAX_ACTIVE_FLOWS
 
+        # Track JA3 fingerprints per src_ip (LRU eviction)
+        self._ja3_hits: OrderedDict[str, dict] = OrderedDict()
+        self._ja3_lock = threading.Lock()
+
     def dispatch(self, packet) -> None:
         """Process one packet through all pipelines."""
         # 1. Flow-level features
@@ -66,6 +71,17 @@ class Dispatcher:
 
         # 4. DNS query logging (Phase 8)
         extract_dns_query(packet)
+
+        # 5. JA3 fingerprinting
+        ja3_result = extract_ja3(packet)
+        if ja3_result and src_ip:
+            ja3_hash, ja3_str = ja3_result
+            with self._ja3_lock:
+                if src_ip not in self._ja3_hits and len(self._ja3_hits) >= self._max_payload_entries:
+                    self._ja3_hits.popitem(last=False)
+                self._ja3_hits[src_ip] = {"hash": ja3_hash, "string": ja3_str, "malicious": is_malicious_ja3(ja3_hash)}
+                self._ja3_hits.move_to_end(src_ip)
+
         if matches and src_ip:
             with self._payload_lock:
                 # LRU eviction: remove oldest entry when at capacity
@@ -88,9 +104,11 @@ class Dispatcher:
             host_vec = self._host_extractor.extract_features(record.src_ip)
             with self._payload_lock:
                 payload_matches = self._payload_hits.pop(record.src_ip, [])
+            with self._ja3_lock:
+                ja3_info = self._ja3_hits.pop(record.src_ip, None)
             payload_features = extract_payload_features(record.fwd_payloads)
             try:
-                self._flow_callback(record, flow_vec, host_vec, payload_matches, payload_features)
+                self._flow_callback(record, flow_vec, host_vec, payload_matches, payload_features, ja3_info)
             except Exception as e:
                 logger.error("Flow callback error for %s: %s", record.src_ip, e)
 
@@ -100,9 +118,11 @@ class Dispatcher:
             host_vec = self._host_extractor.extract_features(record.src_ip)
             with self._payload_lock:
                 payload_matches = self._payload_hits.pop(record.src_ip, [])
+            with self._ja3_lock:
+                ja3_info = self._ja3_hits.pop(record.src_ip, None)
             payload_features = extract_payload_features(record.fwd_payloads)
             try:
-                self._flow_callback(record, flow_vec, host_vec, payload_matches, payload_features)
+                self._flow_callback(record, flow_vec, host_vec, payload_matches, payload_features, ja3_info)
             except Exception as e:
                 logger.error("Flush callback error: %s", e)
 

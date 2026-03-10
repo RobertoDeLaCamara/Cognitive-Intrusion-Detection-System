@@ -34,6 +34,7 @@ class RulesEngine:
         record: FlowRecord,
         flow_features: np.ndarray,
         payload_matches: List[str],
+        ja3_info: Optional[dict] = None,
     ) -> Tuple[float, List[str]]:
         """Return (score, triggered_rules).
 
@@ -76,6 +77,10 @@ class RulesEngine:
             ratio = sum(record.fwd_lengths) / max(sum(record.bwd_lengths), 1)
             if ratio > 50:
                 triggered.append("asymmetric_upload")
+
+        # 6. Malicious JA3 fingerprint
+        if ja3_info and ja3_info.get("malicious"):
+            triggered.append("malicious_ja3")
 
         score = 1.0 if triggered else 0.0
         return score, triggered

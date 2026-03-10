@@ -102,6 +102,7 @@ async def export_alerts(
         "acknowledged": a.acknowledged,
         "notes": a.notes,
         "src_geo": a.src_geo,
+        "mitre_techniques": a.mitre_techniques,
     } for a in alerts]
 
     output = io.StringIO()

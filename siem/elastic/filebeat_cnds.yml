@@ -1,0 +1,37 @@
+# Filebeat config for tailing CNDS JSON log output.
+#
+# Requires CNDS to run with LOG_FORMAT=json so structured logs go to stdout/file.
+# Alternatively, use the Logstash HTTP poller approach (see logstash_cnds.conf).
+
+filebeat.inputs:
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/cnds/*.json
+    json.keys_under_root: true
+    json.add_error_key: true
+    json.message_key: message
+    fields:
+      event.module: cnds
+    fields_under_root: true
+
+processors:
+  - timestamp:
+      field: timestamp
+      layouts:
+        - '2006-01-02T15:04:05.999999Z07:00'
+  - drop_event:
+      when:
+        not:
+          has_fields: ['ensemble_score']
+
+output.elasticsearch:
+  hosts: ["https://localhost:9200"]
+  index: "cnds-alerts-%{+yyyy.MM.dd}"
+  username: "elastic"
+  password: "${ES_PASSWORD}"
+  ssl.verification_mode: full
+
+setup.template.name: "cnds-alerts"
+setup.template.pattern: "cnds-alerts-*"
+setup.template.overwrite: false

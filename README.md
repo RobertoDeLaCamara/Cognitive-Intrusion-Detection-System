@@ -16,20 +16,24 @@
 [Dispatcher]  ── flow expiry ──►  on_flow_complete()
    ├─ FlowExtractor   → 76 CICFlowMeter flow features
    ├─ HostExtractor   → 18 per-IP host features
-   └─ PayloadAnalyzer → regex pattern matches + 10 numeric payload features
+   ├─ PayloadAnalyzer → regex pattern matches + 10 numeric payload features
+   └─ JA3 Extractor   → TLS ClientHello fingerprint (hash + raw string)
         │
         ├─► [Supervised Engine]     Random Forest (76 flow + 10 payload features)
         ├─► [Isolation Forest]      Novelty score  (18 host features)
         ├─► [LSTM Autoencoder]      Sequence score (18 host features)
-        └─► [Rules Engine]          Threshold + pattern rules
+        └─► [Rules Engine]          Threshold + pattern + JA3 rules
                 │
                 ▼
         [Ensemble Scorer]
          weighted confidence fusion
                 │
         ┌───────┴────────┐
-        │   Alert fired  │  → logger + SQLite  →  FastAPI
-        └────────────────┘
+        │   Alert fired  │  → MITRE ATT&CK mapping
+        └───────┬────────┘    → logger + SQLite  →  FastAPI
+                │
+                ├─► SIEM (Splunk / Elastic / Syslog-CEF)
+                └─► Webhook / Telegram notifications
 ```
 
 ### Detection Engines
@@ -39,10 +43,55 @@
 | **Supervised** | 76 CICFlowMeter flow features (+ 10 payload features if retrained) | Random Forest (sklearn Pipeline) | Named attacks: DoS, PortScan, Brute-force, Web attacks, Infiltration |
 | **Isolation Forest** | 18 per-IP host features | IsolationForest + StandardScaler | Novel / zero-day volumetric anomalies |
 | **LSTM Autoencoder** | 18-feature time-series per IP | PyTorch sequence AE | Slow attacks, temporal behaviour drift |
-| **Rules** | Flow metadata + payload bytes (TCP + UDP) | Threshold rules | ICMP floods, SYN scans, SQLi, XSS, LFI, large payloads, asymmetric upload |
+| **Rules** | Flow metadata + payload bytes + JA3 hashes | Threshold rules | ICMP floods, SYN scans, SQLi, XSS, LFI, large payloads, asymmetric upload, malicious TLS fingerprints |
 
 Default ensemble weights: Supervised 40 %, Isolation Forest 30 %, LSTM 20 %, Rules 10 %.
 Any missing engine has its weight redistributed proportionally across the active engines.
+
+### MITRE ATT&CK Mapping
+
+Every alert is automatically enriched with [MITRE ATT&CK](https://attack.mitre.org/) technique IDs. Mappings cover both supervised model labels (14 attack types) and rule triggers (11 rules including `malicious_ja3`). Techniques are deduplicated when multiple sources map to the same ID.
+
+Example alert payload:
+```json
+{
+  "attack_type": "DoS Hulk",
+  "mitre_techniques": [
+    {"id": "T1498", "name": "Network Denial of Service", "tactic": "Impact"}
+  ]
+}
+```
+
+### JA3 TLS Fingerprinting
+
+CNDS extracts [JA3](https://github.com/salesforce/ja3) fingerprints from TLS ClientHello messages in real time. The JA3 hash (MD5 of TLS version, cipher suites, extensions, elliptic curves, and point formats) is:
+
+- Stored on every alert (`ja3_hash`, `ja3_string` columns)
+- Checked against a configurable list of known-malicious hashes (`MALICIOUS_JA3_FILE`)
+- Flagged by the rules engine as `malicious_ja3` → mapped to MITRE T1071 + T1573
+
+GREASE values (RFC 8701) are filtered before hashing.
+
+### SIEM Integration
+
+Pre-built integration templates live in `siem/`:
+
+| Platform | Files | Method |
+|---|---|---|
+| **Splunk** | `siem/splunk/inputs.conf`, `props.conf`, `savedsearches.conf` | HEC push via `WEBHOOK_URLS` or HTTP poll |
+| **Elastic / OpenSearch** | `siem/elastic/index_template.json`, `logstash_cnds.conf`, `filebeat_cnds.yml` | Logstash poll/webhook, Filebeat log tail |
+| **Syslog / CEF** (QRadar, ArcSight, Sentinel) | `siem/syslog/forwarder.py` | Standalone CEF forwarder over UDP/TCP |
+
+Quick start:
+```bash
+# Push alerts to Splunk HEC
+WEBHOOK_URLS=https://splunk.example.com:8088/services/collector/event
+
+# Or run the CEF syslog forwarder
+python siem/syslog/forwarder.py --syslog-host 10.0.0.50 --syslog-port 514
+```
+
+See `siem/README.md` for full setup instructions.
 
 ---
 
@@ -273,6 +322,8 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `IP_ALLOWLIST` | _(empty)_ | Comma-separated IPs to skip detection entirely |
 | `IP_BLOCKLIST` | _(empty)_ | Comma-separated IPs to auto-flag as critical |
 | `LOG_FORMAT` | `text` | Log output format: `text` or `json` (structured) |
+| `JA3_ENABLED` | `true` | Extract JA3 fingerprints from TLS ClientHello |
+| `MALICIOUS_JA3_FILE` | _(empty)_ | Path to known-malicious JA3 hashes (one per line); empty disables |
 
 ---
 
@@ -292,6 +343,18 @@ Copy `.env.example` to `.env` and adjust as needed.
 ├── scripts/
 │   ├── retrain_with_payload.py  # Retrain RF with 86 features (76 flow + 10 payload)
 │   └── pcap_replay.py          # PCAP replay for offline threat hunting / model eval
+├── siem/                        # SIEM integration templates
+│   ├── README.md                # Setup guide for all platforms
+│   ├── splunk/
+│   │   ├── inputs.conf          # HEC input configuration
+│   │   ├── props.conf           # Field extraction + CIM mapping
+│   │   └── savedsearches.conf   # Pre-built alert searches
+│   ├── elastic/
+│   │   ├── index_template.json  # Typed mappings (geo_point, nested MITRE)
+│   │   ├── logstash_cnds.conf   # Logstash pipeline (poll + webhook)
+│   │   └── filebeat_cnds.yml    # Filebeat log tail config
+│   └── syslog/
+│       └── forwarder.py         # CEF syslog forwarder (QRadar, ArcSight, Sentinel)
 ├── dashboard/
 │   └── app.py                   # Streamlit real-time dashboard
 ├── models/                      # ML model files (binaries not committed)
@@ -310,6 +373,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   │   ├── flow_extractor.py    # 76 CICFlowMeter-compatible features per flow
 │   │   ├── host_extractor.py    # 18 per-IP host features
 │   │   ├── payload_analyzer.py  # Regex pattern matching + numeric payload features
+│   │   ├── ja3.py               # JA3 TLS fingerprint extraction
 │   │   └── utils.py             # Shared utilities (byte entropy, etc.)
 │   ├── engines/
 │   │   ├── protocol.py          # DetectionEngine interface (Protocol)
@@ -317,10 +381,11 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   │   ├── supervised.py        # Random Forest wrapper
 │   │   ├── isolation_forest.py  # Isolation Forest wrapper
 │   │   ├── lstm_autoencoder.py  # LSTM Autoencoder wrapper
-│   │   └── rules.py             # Rule-based engine
+│   │   └── rules.py             # Rule-based engine (incl. JA3 rules)
 │   ├── ensemble/
 │   │   └── scorer.py            # Weighted confidence fusion → EnsembleResult
 │   ├── enrichment/
+│   │   ├── mitre.py             # MITRE ATT&CK technique mapping
 │   │   ├── geoip.py             # GeoIP enrichment (MaxMind)
 │   │   ├── correlation.py       # Auto-group alerts into incidents
 │   │   ├── adaptive_weights.py  # Feedback-driven engine weight tuning
@@ -352,8 +417,11 @@ Copy `.env.example` to `.env` and adjust as needed.
     ├── test_ensemble.py         # Ensemble scorer tests
     ├── test_flow_extractor.py
     ├── test_host_extractor.py
+    ├── test_ja3.py              # JA3 fingerprint extraction tests
+    ├── test_mitre.py            # MITRE ATT&CK mapping tests
     ├── test_payload_features.py
-    └── test_rules_engine.py
+    ├── test_rules_engine.py
+    └── test_siem.py             # CEF syslog forwarder tests
 ```
 
 ---
@@ -398,6 +466,9 @@ Jenkins pipeline stages (see `Jenkinsfile`):
 - [x] Dashboard enhancements — top talkers view, attack type breakdown, timeline visualization
 - [x] Alert deduplication — suppress duplicate alerts from same (src_ip, attack_type) within configurable window
 - [x] WebSocket authentication — JWT token required via `?token=` query parameter when `JWT_SECRET` is set
+- [x] MITRE ATT&CK mapping — automatic technique enrichment on every alert (14 attack types + 11 rules)
+- [x] JA3 TLS fingerprinting — real-time ClientHello extraction, malicious hash detection, per-alert storage
+- [x] SIEM integration templates — Splunk (HEC + CIM), Elastic (index template + Logstash + Filebeat), CEF syslog forwarder
 - [ ] Model drift detection — alert when live traffic feature distributions diverge from training data
 - [ ] Feedback-driven retraining — analyst TP/FP labels → accumulated dataset → automated retraining via MLflow
 - [ ] ONNX Runtime for LSTM — 2-5x inference speedup over raw PyTorch

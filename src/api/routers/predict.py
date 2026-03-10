@@ -20,10 +20,14 @@ from ...enrichment.suppression import is_suppressed
 from ...enrichment.notifications import notify_alert
 from ...enrichment.confidence_decay import apply_decay
 from ...enrichment.ip_lists import is_allowlisted, is_blocklisted
-from ...config import ENSEMBLE_THRESHOLD
+from ...config import ENSEMBLE_THRESHOLD, DEDUP_WINDOW_SECS
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["predict"])
+
+# API-side dedup cache: (src_ip, attack_type) -> last_alert_timestamp
+_api_dedup: dict = {}
+_api_dedup_lock = __import__("asyncio").Lock()
 
 
 @router.post("/predict", response_model=PredictResponse)
@@ -102,9 +106,27 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
     # GeoIP enrichment
     geo = geoip.lookup(body.src_ip)
 
-    # --- Persist alert if anomaly ---
+    # --- Persist alert if anomaly (with dedup) ---
     alert_id = None
     if result.is_anomaly:
+        dedup_key = (body.src_ip, scores.attack_type or "unknown")
+        now = datetime.now(timezone.utc)
+        async with _api_dedup_lock:
+            last = _api_dedup.get(dedup_key)
+            if last and (now - last).total_seconds() < DEDUP_WINDOW_SECS:
+                # Duplicate — return result without persisting
+                return PredictResponse(
+                    src_ip=body.src_ip, ensemble_score=result.score,
+                    is_anomaly=True, severity=severity,
+                    attack_type=scores.attack_type,
+                    engine_scores=EngineScoresOut(
+                        supervised=scores.supervised, isolation_forest=scores.isolation_forest,
+                        lstm=scores.lstm, rules=scores.rules,
+                        attack_type=scores.attack_type, triggered_rules=scores.triggered_rules,
+                    ),
+                    active_engines=result.active_engines, alert_id=None, src_geo=geo,
+                )
+            _api_dedup[dedup_key] = now
         alert = Alert(
             timestamp=datetime.now(timezone.utc),
             src_ip=body.src_ip,

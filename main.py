@@ -18,7 +18,7 @@ import threading
 import numpy as np
 from typing import List, Optional
 
-from src.config import CAPTURE_INTERFACE, MIN_PACKETS_FOR_ML, DATABASE_URL, DEDUP_WINDOW_SECS
+from src.config import CAPTURE_INTERFACE, MIN_PACKETS_FOR_ML, DATABASE_URL, DEDUP_WINDOW_SECS, setup_logging
 from src.capture.packet_capture import PacketCapture, PacketProcessor
 from src.capture.dispatcher import Dispatcher
 from src.engines.registry import supervised, iforest, lstm, rules, ensemble
@@ -30,6 +30,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
 )
 logger = logging.getLogger("cnds")
+setup_logging()
 
 # ── Alert persistence (async writer thread for the capture pipeline) ───────
 _db_engine = None
@@ -68,6 +69,7 @@ def _writer_loop():
             record, scores, result, severity, triggered = item
             session = _SessionLocal()
             try:
+                from src.enrichment.geoip import lookup as geoip_lookup
                 alert = Alert(
                     timestamp=datetime.now(timezone.utc),
                     src_ip=record.src_ip,
@@ -82,6 +84,7 @@ def _writer_loop():
                         "rules": scores.rules,
                     },
                     triggered_rules=triggered,
+                    src_geo=geoip_lookup(record.src_ip),
                 )
                 session.add(alert)
                 session.commit()
@@ -176,7 +179,14 @@ def on_flow_complete(
         if triggered:
             parts.append(f"rules={triggered}")
 
-        logger.warning("[ALERT] %s", " | ".join(parts))
+        logger.warning("[ALERT] %s", " | ".join(parts), extra={
+            "src_ip": record.src_ip,
+            "dst_ip": record.dst_ip,
+            "ensemble_score": result.score,
+            "attack_type": scores.attack_type,
+            "triggered_rules": triggered,
+            "active_engines": result.active_engines,
+        })
         _persist_alert(record, scores, result, severity, triggered)
 
 

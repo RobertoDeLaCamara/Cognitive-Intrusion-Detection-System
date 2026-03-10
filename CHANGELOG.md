@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.3] - 2026-03-10
+
+### Added
+
+- **Periodic cleanup task** — background asyncio task runs every 5 minutes to purge expired suppression rules from the DB and prune inactive IPs from the rate limiter
+- **GeoIP in capture pipeline** — alerts persisted from `main.py` now include `src_geo` enrichment (previously only the API predict endpoint did this)
+- **Structured JSON logging** — set `LOG_FORMAT=json` for machine-parseable logs compatible with ELK/Loki/CloudWatch; alert logs include structured `extra` fields (`src_ip`, `ensemble_score`, `attack_type`, etc.)
+- **API predict deduplication** — `/api/predict` now suppresses duplicate alerts from the same `(src_ip, attack_type)` within `DEDUP_WINDOW_SECS`, matching the capture pipeline behaviour
+- **Engine interface protocol** — `src/engines/protocol.py` defines a `DetectionEngine` Protocol; ML engines are verified at import time via `isinstance` checks in the registry
+
 ## [1.0.2] - 2026-03-10
 
 ### Added

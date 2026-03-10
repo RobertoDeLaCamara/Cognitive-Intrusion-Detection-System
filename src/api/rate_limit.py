@@ -13,6 +13,10 @@ from ..config import RATE_LIMIT_REQUESTS, RATE_LIMIT_WINDOW
 
 logger = logging.getLogger(__name__)
 
+# Module-level state so cleanup task can access it
+_hits: dict = defaultdict(list)
+_lock = asyncio.Lock()
+
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Per-IP sliding window rate limiter."""
@@ -21,11 +25,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self._requests = requests
         self._window = window
-        self._hits: dict = defaultdict(list)
-        self._lock = asyncio.Lock()
 
     async def dispatch(self, request: Request, call_next):
-        # Skip rate limiting for health/docs/metrics
         if request.url.path in ("/health", "/docs", "/openapi.json", "/metrics"):
             return await call_next(request)
 
@@ -33,17 +34,27 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         now = time.time()
         cutoff = now - self._window
 
-        async with self._lock:
-            # Prune old entries
-            self._hits[client_ip] = [t for t in self._hits[client_ip] if t > cutoff]
+        async with _lock:
+            _hits[client_ip] = [t for t in _hits[client_ip] if t > cutoff]
 
-            if len(self._hits[client_ip]) >= self._requests:
+            if len(_hits[client_ip]) >= self._requests:
                 return JSONResponse(
                     status_code=429,
                     content={"detail": "Rate limit exceeded"},
                     headers={"Retry-After": str(self._window)},
                 )
 
-            self._hits[client_ip].append(now)
+            _hits[client_ip].append(now)
 
         return await call_next(request)
+
+
+async def prune_inactive():
+    """Remove IPs with no recent hits. Called by periodic cleanup."""
+    now = time.time()
+    cutoff = now - RATE_LIMIT_WINDOW
+    async with _lock:
+        stale = [ip for ip, ts in _hits.items() if not ts or ts[-1] < cutoff]
+        for ip in stale:
+            del _hits[ip]
+        return len(stale)

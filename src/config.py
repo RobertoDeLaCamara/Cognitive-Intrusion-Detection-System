@@ -149,5 +149,31 @@ CONFIDENCE_DECAY_WINDOW = int(os.getenv("CONFIDENCE_DECAY_WINDOW", "300"))    # 
 IP_ALLOWLIST = set(filter(None, os.getenv("IP_ALLOWLIST", "").split(",")))
 IP_BLOCKLIST = set(filter(None, os.getenv("IP_BLOCKLIST", "").split(",")))
 
+# ── Logging ────────────────────────────────────────────────────────────────────
+LOG_FORMAT = os.getenv("LOG_FORMAT", "text")  # "text" or "json"
+
+
+def setup_logging():
+    """Configure logging. Call once at startup."""
+    if LOG_FORMAT == "json":
+        try:
+            from pythonjsonlogger.json import JsonFormatter
+            handler = logging.StreamHandler()
+            handler.setFormatter(JsonFormatter(
+                fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
+                rename_fields={"asctime": "timestamp", "levelname": "level"},
+            ))
+            logging.root.handlers.clear()
+            logging.root.addHandler(handler)
+            logging.root.setLevel(logging.INFO)
+            return
+        except ImportError:
+            pass
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+        force=True,
+    )
+
 # ── Validate configuration on import ──────────────────────────────────────────
 _validate_config()

@@ -272,6 +272,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `CONFIDENCE_DECAY_WINDOW` | `300` | Seconds to track repeat alerts for decay |
 | `IP_ALLOWLIST` | _(empty)_ | Comma-separated IPs to skip detection entirely |
 | `IP_BLOCKLIST` | _(empty)_ | Comma-separated IPs to auto-flag as critical |
+| `LOG_FORMAT` | `text` | Log output format: `text` or `json` (structured) |
 
 ---
 
@@ -311,6 +312,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   │   ├── payload_analyzer.py  # Regex pattern matching + numeric payload features
 │   │   └── utils.py             # Shared utilities (byte entropy, etc.)
 │   ├── engines/
+│   │   ├── protocol.py          # DetectionEngine interface (Protocol)
 │   │   ├── registry.py          # Shared engine singletons
 │   │   ├── supervised.py        # Random Forest wrapper
 │   │   ├── isolation_forest.py  # Isolation Forest wrapper

@@ -17,10 +17,8 @@ from .rate_limit import RateLimitMiddleware
 from ..config import API_KEY, CORS_ORIGINS, RATE_LIMIT_REQUESTS
 from ..engines.registry import supervised, iforest, lstm
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-)
+from ..config import setup_logging
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -29,8 +27,36 @@ async def lifespan(app: FastAPI):
     logger.info("Initialising database…")
     await init_db()
     logger.info("Cognitive Network Defense System API ready")
+
+    # Start periodic cleanup task
+    import asyncio
+    cleanup_task = asyncio.create_task(_periodic_cleanup())
+
     yield
+
+    cleanup_task.cancel()
     logger.info("Shutdown")
+
+
+async def _periodic_cleanup(interval: int = 300):
+    """Periodic background task: clean expired suppression rules and prune rate limiter."""
+    import asyncio
+    from .database import AsyncSessionLocal
+    from ..enrichment.suppression import cleanup_expired
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            async with AsyncSessionLocal() as session:
+                deleted = await cleanup_expired(session)
+                if deleted:
+                    logger.info("Cleaned %d expired suppression rules", deleted)
+        except Exception as e:
+            logger.debug("Suppression cleanup error: %s", e)
+        try:
+            from .rate_limit import prune_inactive
+            await prune_inactive()
+        except Exception:
+            pass
 
 
 app = FastAPI(

@@ -149,6 +149,13 @@ CONFIDENCE_DECAY_WINDOW = int(os.getenv("CONFIDENCE_DECAY_WINDOW", "300"))    # 
 IP_ALLOWLIST = set(filter(None, os.getenv("IP_ALLOWLIST", "").split(",")))
 IP_BLOCKLIST = set(filter(None, os.getenv("IP_BLOCKLIST", "").split(",")))
 
+# ── Device profiles — trusted outbound domains per device IP ──────────────────
+# JSON mapping: {"<src_ip>": ["domain.suffix", ...]}
+# Flows from a listed src_ip whose dst resolves to one of its trusted suffixes
+# are skipped before the detection pipeline runs.
+# Example: {"192.168.1.60": ["synology.com", "quickconnect.to", "synology.cn"]}
+TRUSTED_OUTBOUND: dict = _json.loads(os.getenv("TRUSTED_OUTBOUND", "{}"))
+
 # ── Logging ────────────────────────────────────────────────────────────────────
 LOG_FORMAT = os.getenv("LOG_FORMAT", "text")  # "text" or "json"
 

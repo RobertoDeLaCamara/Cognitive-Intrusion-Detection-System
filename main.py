@@ -12,13 +12,14 @@ import argparse
 import logging
 import queue
 import signal
+import socket
 import sys
 import time
 import threading
 import numpy as np
 from typing import List, Optional
 
-from src.config import CAPTURE_INTERFACE, MIN_PACKETS_FOR_ML, DATABASE_URL, DEDUP_WINDOW_SECS, setup_logging, MALICIOUS_JA3_FILE
+from src.config import CAPTURE_INTERFACE, MIN_PACKETS_FOR_ML, DATABASE_URL, DEDUP_WINDOW_SECS, setup_logging, MALICIOUS_JA3_FILE, TRUSTED_OUTBOUND
 from src.capture.packet_capture import PacketCapture, PacketProcessor
 from src.capture.dispatcher import Dispatcher
 from src.engines.registry import supervised, iforest, lstm, rules, ensemble
@@ -118,8 +119,41 @@ def _persist_alert(record, scores, result, severity, triggered, ja3_info=None):
         logger.warning("Alert queue full — dropping alert for %s", record.src_ip)
 
 
+# ── Trusted outbound DNS cache ─────────────────────────────────────────────────
+_dns_cache: dict = {}          # ip -> (hostname, expires_at)
+_DNS_CACHE_TTL = 3600          # seconds; Synology IPs are stable enough for 1h
+_dns_lock = threading.Lock()
+
+
+def _resolve_hostname(ip: str) -> str:
+    """Reverse DNS lookup with TTL cache. Returns hostname or '' on failure."""
+    now = time.time()
+    with _dns_lock:
+        entry = _dns_cache.get(ip)
+        if entry and now < entry[1]:
+            return entry[0]
+    try:
+        hostname = socket.gethostbyaddr(ip)[0]
+    except (socket.herror, socket.gaierror, OSError):
+        hostname = ""
+    with _dns_lock:
+        _dns_cache[ip] = (hostname, now + _DNS_CACHE_TTL)
+    return hostname
+
+
+def _is_trusted_outbound(src_ip: str, dst_ip: str) -> bool:
+    """Return True if this flow matches a device's trusted outbound domain list."""
+    if not TRUSTED_OUTBOUND:
+        return False
+    trusted_domains = TRUSTED_OUTBOUND.get(src_ip)
+    if not trusted_domains:
+        return False
+    hostname = _resolve_hostname(dst_ip)
+    return bool(hostname) and any(hostname.endswith(d) for d in trusted_domains)
+
+
 # ── Alert deduplication ────────────────────────────────────────────────────────
-_dedup_cache: dict = {}  # (src_ip, attack_type) -> last_fired_timestamp
+_dedup_cache: dict = {}          # (src_ip, attack_type) -> last_fired_timestamp
 _dedup_lock = threading.Lock()
 
 
@@ -132,6 +166,9 @@ def on_flow_complete(
     ja3_info: Optional[dict] = None,
 ) -> None:
     """Called by the Dispatcher when a flow expires."""
+    if _is_trusted_outbound(record.src_ip, record.dst_ip):
+        return
+
     scores = EngineScores()
 
     if supervised.is_available:

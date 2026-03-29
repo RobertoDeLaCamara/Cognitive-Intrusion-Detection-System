@@ -93,7 +93,8 @@ pipeline {
                         docker run --rm \
                             -e SONAR_USER="\$SONAR_USER" \
                             -e SONAR_PASS="\$SONAR_PASS" \
-                            -v "${env.WORKSPACE}:/usr/src" \
+                            --volumes-from agent-45 \
+                            -w "\${env.WORKSPACE}" \
                             sonarsource/sonar-scanner-cli \
                             -Dsonar.projectKey=cnds \
                             -Dsonar.sources=src \

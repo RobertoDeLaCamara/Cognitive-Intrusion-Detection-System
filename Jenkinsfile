@@ -94,7 +94,7 @@ pipeline {
                             -e SONAR_USER="\$SONAR_USER" \
                             -e SONAR_PASS="\$SONAR_PASS" \
                             --volumes-from agent-45 \
-                            -w "\${env.WORKSPACE}" \
+                            -w "${env.WORKSPACE}" \
                             sonarsource/sonar-scanner-cli \
                             -Dsonar.projectKey=cnds \
                             -Dsonar.sources=src \

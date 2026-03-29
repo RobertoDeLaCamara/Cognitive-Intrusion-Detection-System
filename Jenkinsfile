@@ -90,11 +90,13 @@ pipeline {
                     passwordVariable: 'SONAR_PASS'
                 )]) {
                     sh """
+                        VOL="cnds-sonar-\${env.BUILD_NUMBER}"
+                        docker volume create "\$VOL"
+                        tar -cf - . | docker run --rm -i -v "\$VOL:/usr/src" alpine tar -xf - -C /usr/src
                         docker run --rm \
                             -e SONAR_USER="\$SONAR_USER" \
                             -e SONAR_PASS="\$SONAR_PASS" \
-                            --volumes-from agent-45 \
-                            -w "${env.WORKSPACE}" \
+                            -v "\$VOL:/usr/src" \
                             sonarsource/sonar-scanner-cli \
                             -Dsonar.projectKey=cnds \
                             -Dsonar.sources=src \
@@ -105,6 +107,7 @@ pipeline {
                             -Dsonar.login="\$SONAR_USER" \
                             -Dsonar.password="\$SONAR_PASS" \
                             -Dsonar.scm.disabled=true
+                        docker volume rm "\$VOL"
                     """
                 }
             }
@@ -123,6 +126,7 @@ pipeline {
         always {
             sh 'rm -f test-results.xml coverage.xml || true'
             sh "docker rmi ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER} || true"
+            sh "docker volume rm cnds-sonar-\${env.BUILD_NUMBER} || true"
             cleanWs()
         }
         success {

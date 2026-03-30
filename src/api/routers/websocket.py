@@ -34,7 +34,7 @@ async def broadcast_alert(alert_data: dict) -> None:
                 await ws.send_text(message)
             except Exception:
                 disconnected.add(ws)
-        _clients -= disconnected
+        _clients.difference_update(disconnected)
 
 
 @router.websocket("/ws/alerts")

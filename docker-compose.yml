@@ -1,19 +1,35 @@
 services:
 
   api:
-    build: .
+    build:
+      context: .
+      target: base
     container_name: cnds-api
     command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
     volumes:
-      - ./models:/app/models:ro
+      - ./models:/app/models
       - cnds_db:/app/data
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.example
+        required: false
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:///./data/cnds.db
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 10s
     restart: unless-stopped
 
   detector:
-    build: .
+    build:
+      context: .
+      target: base
     container_name: cnds-detector
     # Root required for raw packet capture
     user: root
@@ -21,29 +37,53 @@ services:
     network_mode: host
     volumes:
       - ./models:/app/models:ro
-      # Detector does NOT mount the DB volume — only the API writes to the DB.
-      # The detector persists alerts via the API when --api is not used,
-      # or writes to its own local DB. For production, use PostgreSQL:
-      #   DATABASE_URL=postgresql+asyncpg://user:pass@db:5432/cnds
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.example
+        required: false
     environment:
-      # Point detector at the API for alert persistence instead of direct DB
       - CNDS_API_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
     restart: unless-stopped
 
   dashboard:
-    build: .
+    build:
+      context: .
+      target: dashboard
     container_name: cnds-dashboard
-    command: >
-      sh -c "pip install --quiet streamlit requests pandas &&
-             streamlit run dashboard/app.py --server.port 8501 --server.address 0.0.0.0"
     ports:
       - "8501:8501"
     environment:
       - CNDS_API_URL=http://api:8000
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     restart: unless-stopped
+
+  # One-shot service: generates demo models (if missing) + runs synthetic
+  # attack traffic so the dashboard has data immediately.
+  demo-seed:
+    build:
+      context: .
+      target: base
+    container_name: cnds-demo-seed
+    entrypoint: ["python", "scripts/demo_seed.py"]
+    volumes:
+      - ./models:/app/models
+    env_file:
+      - path: .env
+        required: false
+      - path: .env.example
+        required: false
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: "no"
+    profiles:
+      - demo
 
 volumes:
   cnds_db:

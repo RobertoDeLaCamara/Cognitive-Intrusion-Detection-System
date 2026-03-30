@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11-slim AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpcap-dev gcc g++ \
@@ -25,3 +25,15 @@ ENV PYTHONUNBUFFERED=1
 USER ids
 
 CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# ── Dashboard target ─────────────────────────────────────────────────────────
+FROM base AS dashboard
+
+USER root
+COPY requirements-dashboard.txt .
+RUN pip install --no-cache-dir -r requirements-dashboard.txt
+USER ids
+
+EXPOSE 8501
+
+CMD ["streamlit", "run", "dashboard/app.py", "--server.port", "8501", "--server.address", "0.0.0.0"]

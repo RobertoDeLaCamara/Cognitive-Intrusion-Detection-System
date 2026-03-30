@@ -64,7 +64,29 @@ class LSTMAutoencoderEngine:
         else:
             try:
                 import torch
-                self._model = torch.load(model_path, map_location="cpu", weights_only=True)
+                from .lstm_model import LSTMAutoencoder
+                cfg_kwargs = {
+                    "n_features": self._n_features,
+                    "hidden_dim": 64,
+                    "latent_dim": 32,
+                    "num_layers": 2,
+                    "dropout": 0.2,
+                }
+                # Load config-driven architecture if available
+                if os.path.exists(config_path):
+                    try:
+                        with open(config_path) as f:
+                            import json as _json
+                            lcfg = _json.load(f)
+                        cfg_kwargs.update({
+                            k: lcfg[k] for k in ("hidden_dim", "latent_dim", "num_layers", "dropout")
+                            if k in lcfg
+                        })
+                    except Exception:
+                        pass
+                self._model = LSTMAutoencoder(**cfg_kwargs)
+                state = torch.load(model_path, map_location="cpu", weights_only=True)
+                self._model.load_state_dict(state)
                 self._model.eval()
                 logger.info("LSTMAutoencoderEngine loaded: %s", model_path)
             except Exception as e:

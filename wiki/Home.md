@@ -44,8 +44,9 @@ uvicorn src.api.main:app --port 8000   # API only
 ## Key Layout
 
 ```
-main.py                          entry point — capture + detection pipeline
+main.py                          entry point — capture + CLI
 src/config.py                    70+ env vars with fail-fast validation
+src/pipeline.py                  detection pipeline callback (flow → engines → alert)
 src/capture/                     Scapy + async worker queue
 src/features/                    flow (76), host (18), payload (10), JA3
 src/engines/                     RF, IF, LSTM, rules

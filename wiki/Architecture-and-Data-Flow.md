@@ -28,7 +28,7 @@
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  on_flow_complete()  (main.py)                                       │
+│  on_flow_complete()  (src/pipeline.py)                                │
 │  1. supervised.predict(flow_vec)           → (attack_type, conf)    │
 │  2. isolation_forest.anomaly_score(host)   → [0,1]                  │
 │  3. lstm.update(ip, host); .score(ip)      → [0,1]                  │

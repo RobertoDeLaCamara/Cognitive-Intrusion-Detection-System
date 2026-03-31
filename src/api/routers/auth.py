@@ -1,7 +1,7 @@
 """Auth endpoints for JWT token management (Phase 7)."""
 
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -34,8 +34,7 @@ class UserOut(BaseModel):
     role: str
     is_active: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 @router.post("/token", response_model=TokenResponse)

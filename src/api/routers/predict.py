@@ -28,7 +28,15 @@ router = APIRouter(prefix="/api", tags=["predict"])
 
 # API-side dedup cache: (src_ip, attack_type) -> last_alert_timestamp
 _api_dedup: dict = {}
-_api_dedup_lock = __import__("asyncio").Lock()
+_api_dedup_lock = None
+
+
+def _get_dedup_lock():
+    global _api_dedup_lock
+    if _api_dedup_lock is None:
+        import asyncio
+        _api_dedup_lock = asyncio.Lock()
+    return _api_dedup_lock
 
 
 @router.post("/predict", response_model=PredictResponse)
@@ -115,7 +123,7 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
     if result.is_anomaly:
         dedup_key = (body.src_ip, scores.attack_type or "unknown")
         now = datetime.now(timezone.utc)
-        async with _api_dedup_lock:
+        async with _get_dedup_lock():
             last = _api_dedup.get(dedup_key)
             if last and (now - last).total_seconds() < DEDUP_WINDOW_SECS:
                 # Duplicate — return result without persisting

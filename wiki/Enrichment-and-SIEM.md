@@ -88,7 +88,7 @@ File: `src/enrichment/ip_lists.py`
 
 | List | Variable | Effect |
 |------|----------|--------|
-| Allowlist | `IP_ALLOWLIST` | Skip detection entirely for these IPs |
+| Allowlist | `IP_ALLOWLIST` | Skip detection entirely for these IPs/CIDRs |
 | Blocklist | `IP_BLOCKLIST` | Auto-escalate to CRITICAL severity |
 | Trusted outbound | `TRUSTED_OUTBOUND` | Per-device → domain suffix map; skip detection for matched pairs |
 

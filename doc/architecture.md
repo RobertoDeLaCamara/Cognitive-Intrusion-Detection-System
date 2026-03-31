@@ -287,7 +287,7 @@ triggered_rules: list[str]   # from rules engine
 | Web Attack – SQL Injection | T1190 |
 | Heartbleed | T1203 — Exploitation for Client Execution |
 
-#### Alert Deduplication (`main.py`)
+#### Alert Deduplication (`src/pipeline.py`)
 - In-memory LRU cache keyed by `(src_ip, attack_type)`.
 - TTL: `DEDUP_WINDOW_SECS` (default: 60 s).
 - Prevents alert storms from high-frequency attacks.
@@ -298,7 +298,8 @@ triggered_rules: list[str]   # from rules engine
 - Decayed alerts may fall below threshold and not fire.
 
 #### Alert Suppression (`suppression.py`)
-- Suppression rules stored in database.
+- Suppression rules stored in database, cached in memory with 10-second TTL.
+- Cache invalidated on rule create/delete.
 - Match criteria: `src_ip`, `dst_ip`, `attack_type`, `min_severity`, optional expiry.
 - Rules checked before DB insertion; matching alerts are silently dropped.
 
@@ -325,7 +326,7 @@ triggered_rules: list[str]   # from rules engine
 
 ### API Layer (`src/api/`)
 
-#### `FastAPI` Application (`main.py`)
+#### `FastAPI` Application (`src/api/main.py`)
 - Lifespan context manager: initializes DB, starts periodic cleanup task.
 - CORS middleware (configured via `CORS_ORIGINS`).
 - Optional legacy API-key auth via `X-API-Key` header.

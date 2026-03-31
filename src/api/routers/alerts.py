@@ -240,6 +240,7 @@ async def create_suppression_rule(
     db: AsyncSession = Depends(get_db),
 ):
     from datetime import datetime, timedelta, timezone
+    from ...enrichment.suppression import invalidate_cache
     rule = SuppressionRule(
         src_ip=body.src_ip,
         dst_ip=body.dst_ip,
@@ -251,17 +252,20 @@ async def create_suppression_rule(
     db.add(rule)
     await db.commit()
     await db.refresh(rule)
+    invalidate_cache()
     return rule
 
 
 @router.delete("/suppression-rules/{rule_id}", status_code=204,
                dependencies=[Depends(require_role("admin"))])
 async def delete_suppression_rule(rule_id: int, db: AsyncSession = Depends(get_db)):
+    from ...enrichment.suppression import invalidate_cache
     rule = await db.get(SuppressionRule, rule_id)
     if not rule:
         raise HTTPException(status_code=404, detail="Suppression rule not found")
     await db.delete(rule)
     await db.commit()
+    invalidate_cache()
 
 
 # ── Adaptive Weights (Phase 8) ────────────────────────────────────────────────

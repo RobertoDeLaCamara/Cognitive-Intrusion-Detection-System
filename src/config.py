@@ -146,6 +146,7 @@ CONFIDENCE_DECAY_FACTOR = float(os.getenv("CONFIDENCE_DECAY_FACTOR", "0.9"))  # 
 CONFIDENCE_DECAY_WINDOW = int(os.getenv("CONFIDENCE_DECAY_WINDOW", "300"))    # seconds
 
 # ── IP allowlist / blocklist (Phase 9) ────────────────────────────────────────
+# Supports individual IPs and CIDR ranges (e.g. 10.0.0.1,192.168.0.0/16)
 IP_ALLOWLIST = set(filter(None, os.getenv("IP_ALLOWLIST", "").split(",")))
 IP_BLOCKLIST = set(filter(None, os.getenv("IP_BLOCKLIST", "").split(",")))
 

@@ -1,11 +1,10 @@
 """Payload pattern matching and numeric feature extraction.
 
-Adapted from cognitive-anomaly-detector. Uses regex with timeout protection
-via threading to remain safe in worker threads.
+Adapted from cognitive-anomaly-detector. Uses regex on bounded input (4KB max)
+to remain safe in worker threads.
 """
 
 import re
-import threading
 import numpy as np
 from typing import List
 from scapy.all import Raw
@@ -30,23 +29,8 @@ PAYLOAD_FEATURE_NAMES = [
     "pattern_match_count", "max_payload_entropy", "mean_payload_length", "suspicious_char_ratio",
 ]
 
-MATCH_TIMEOUT_SECS = 1
-
-# Quick pre-screen bytes to avoid spawning threads for clearly benign payloads
+# Quick pre-screen bytes to avoid regex overhead for clearly benign payloads
 _PRESCREEN = re.compile(rb"(?:select|union|script|javascript|onerror|\.\.\/|jndi|\(\s*\)\s*\{|;\s*(?:ls|cat|wget))", re.IGNORECASE)
-
-
-def _match_with_timeout(pattern: re.Pattern, data: bytes) -> bool:
-    """Match with thread-based timeout to prevent ReDoS hangs."""
-    result = [False]
-
-    def _search():
-        result[0] = bool(pattern.search(data))
-
-    t = threading.Thread(target=_search, daemon=True)
-    t.start()
-    t.join(timeout=MATCH_TIMEOUT_SECS)
-    return result[0]
 
 
 def analyze_payload(packet) -> List[str]:
@@ -64,7 +48,7 @@ def analyze_payload(packet) -> List[str]:
     matches = []
     for name, pattern in _PATTERNS:
         try:
-            if _match_with_timeout(pattern, sample):
+            if pattern.search(sample):
                 matches.append(name)
         except Exception:
             pass
@@ -104,7 +88,7 @@ def extract_payload_features(payloads: List[bytes]) -> np.ndarray:
         for name, pattern in _PATTERNS:
             if name not in matched_set:
                 try:
-                    if _match_with_timeout(pattern, sample):
+                    if pattern.search(sample):
                         matched_set.add(name)
                 except Exception:
                     pass

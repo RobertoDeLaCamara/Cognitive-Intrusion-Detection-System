@@ -42,8 +42,8 @@ services:
         required: false
       - path: .env.example
         required: false
-    environment:
-      - CNDS_API_URL=http://api:8000
+    # NOTE: network_mode: host means container DNS won't resolve service
+    # names. The detector writes directly to the DB, not via the API.
     depends_on:
       api:
         condition: service_healthy

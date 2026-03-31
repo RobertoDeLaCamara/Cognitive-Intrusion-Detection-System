@@ -32,14 +32,14 @@ class TestPasswordHashing:
 
 
 class TestJWTTokens:
-    @patch("src.api.auth.JWT_SECRET", "testsecret")
+    @patch("src.api.auth.JWT_SECRET", "testsecret_32bytes_long_for_hmac")
     def test_create_and_decode_token(self):
         token = create_token("testuser", "analyst")
         payload = decode_token(token)
         assert payload["sub"] == "testuser"
         assert payload["role"] == "analyst"
 
-    @patch("src.api.auth.JWT_SECRET", "testsecret")
+    @patch("src.api.auth.JWT_SECRET", "testsecret_32bytes_long_for_hmac")
     def test_expired_token(self):
         import jwt
         payload = {
@@ -48,12 +48,12 @@ class TestJWTTokens:
             "exp": datetime.now(timezone.utc) - timedelta(hours=1),
             "iat": datetime.now(timezone.utc) - timedelta(hours=2),
         }
-        token = jwt.encode(payload, "testsecret", algorithm="HS256")
+        token = jwt.encode(payload, "testsecret_32bytes_long_for_hmac", algorithm="HS256")
         with pytest.raises(Exception) as exc:
             decode_token(token)
         assert "expired" in str(exc.value.detail).lower()
 
-    @patch("src.api.auth.JWT_SECRET", "testsecret")
+    @patch("src.api.auth.JWT_SECRET", "testsecret_32bytes_long_for_hmac")
     def test_invalid_token(self):
         with pytest.raises(Exception) as exc:
             decode_token("invalid.token.here")
@@ -65,7 +65,7 @@ class TestIsEnabled:
     def test_disabled_when_no_secret(self):
         assert not is_enabled()
 
-    @patch("src.api.auth.JWT_SECRET", "somesecret")
+    @patch("src.api.auth.JWT_SECRET", "somesecret_32bytes_long_for_hmac")
     def test_enabled_when_secret_set(self):
         assert is_enabled()
 
@@ -139,7 +139,7 @@ async def test_authenticate_user_not_found(auth_test_session):
 
 @pytest.mark.asyncio
 async def test_login_endpoint_success(auth_client, auth_test_session):
-    with patch("src.api.auth.JWT_SECRET", "testsecret"):
+    with patch("src.api.auth.JWT_SECRET", "testsecret_32bytes_long_for_hmac"):
         user = User(
             username="loginuser",
             password_hash=hash_password("loginpass"),
@@ -160,7 +160,7 @@ async def test_login_endpoint_success(auth_client, auth_test_session):
 
 @pytest.mark.asyncio
 async def test_login_endpoint_invalid_credentials(auth_client):
-    with patch("src.api.auth.JWT_SECRET", "testsecret"):
+    with patch("src.api.auth.JWT_SECRET", "testsecret_32bytes_long_for_hmac"):
         resp = await auth_client.post("/api/auth/token", json={
             "username": "nobody",
             "password": "wrongpass",
@@ -180,7 +180,7 @@ async def test_login_endpoint_jwt_disabled(auth_client):
 
 @pytest.mark.asyncio
 async def test_user_management_requires_admin(auth_client, auth_test_session):
-    with patch("src.api.auth.JWT_SECRET", "testsecret"):
+    with patch("src.api.auth.JWT_SECRET", "testsecret_32bytes_long_for_hmac"):
         # Create admin user
         admin = User(username="admin", password_hash=hash_password("adminpass"), role="admin")
         auth_test_session.add(admin)
@@ -207,7 +207,7 @@ async def test_user_management_requires_admin(auth_client, auth_test_session):
 
 @pytest.mark.asyncio
 async def test_viewer_cannot_create_users(auth_client, auth_test_session):
-    with patch("src.api.auth.JWT_SECRET", "testsecret"):
+    with patch("src.api.auth.JWT_SECRET", "testsecret_32bytes_long_for_hmac"):
         viewer = User(username="viewer", password_hash=hash_password("viewerpass"), role="viewer")
         auth_test_session.add(viewer)
         await auth_test_session.commit()

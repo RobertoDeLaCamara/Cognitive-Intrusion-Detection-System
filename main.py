@@ -10,21 +10,16 @@ Usage:
 
 import argparse
 import logging
-import queue
 import signal
-import socket
 import sys
 import time
 import threading
-import numpy as np
-from typing import List, Optional
 
-from src.config import CAPTURE_INTERFACE, MIN_PACKETS_FOR_ML, DATABASE_URL, DEDUP_WINDOW_SECS, setup_logging, MALICIOUS_JA3_FILE, TRUSTED_OUTBOUND
+from src.config import CAPTURE_INTERFACE, DATABASE_URL, MALICIOUS_JA3_FILE, setup_logging
 from src.capture.packet_capture import PacketCapture, PacketProcessor
 from src.capture.dispatcher import Dispatcher
-from src.engines.registry import supervised, iforest, lstm, rules, ensemble
-from src.ensemble.scorer import EngineScores, severity_from_score
-from src.features.flow_extractor import FlowRecord
+from src.engines.registry import supervised, iforest, lstm
+from src.pipeline import on_flow_complete
 
 logging.basicConfig(
     level=logging.INFO,
@@ -32,207 +27,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("cnds")
 setup_logging()
-
-# ── Alert persistence (async writer thread for the capture pipeline) ───────
-_db_engine = None
-_SessionLocal = None
-_alert_queue: queue.Queue = queue.Queue(maxsize=1000)
-_writer_thread: Optional[threading.Thread] = None
-_writer_stop = threading.Event()
-
-
-def _init_db():
-    """Lazy-init a sync-compatible DB session for the capture pipeline."""
-    global _db_engine, _SessionLocal
-    if _SessionLocal is not None:
-        return
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    from src.api.models import Base
-    # Convert async URL to sync (aiosqlite → pysqlite)
-    sync_url = DATABASE_URL.replace("+aiosqlite", "").replace("+asyncpg", "+psycopg2")
-    _db_engine = create_engine(sync_url, echo=False)
-    Base.metadata.create_all(_db_engine)
-    _SessionLocal = sessionmaker(bind=_db_engine)
-
-
-def _writer_loop():
-    """Dedicated thread that drains the alert queue and writes to DB."""
-    while not _writer_stop.is_set():
-        try:
-            item = _alert_queue.get(timeout=0.5)
-        except queue.Empty:
-            continue
-        try:
-            _init_db()
-            from datetime import datetime, timezone
-            from src.api.models import Alert
-            record, scores, result, severity, triggered, ja3_info = item
-            session = _SessionLocal()
-            try:
-                from src.enrichment.geoip import lookup as geoip_lookup
-                from src.enrichment.mitre import enrich as mitre_enrich
-                alert = Alert(
-                    timestamp=datetime.now(timezone.utc),
-                    src_ip=record.src_ip,
-                    dst_ip=record.dst_ip,
-                    attack_type=scores.attack_type,
-                    severity=severity,
-                    ensemble_score=result.score,
-                    engine_scores={
-                        "supervised": scores.supervised,
-                        "isolation_forest": scores.isolation_forest,
-                        "lstm": scores.lstm,
-                        "rules": scores.rules,
-                    },
-                    triggered_rules=triggered,
-                    src_geo=geoip_lookup(record.src_ip),
-                    mitre_techniques=mitre_enrich(scores.attack_type, triggered),
-                    ja3_hash=ja3_info["hash"] if ja3_info else None,
-                    ja3_string=ja3_info["string"] if ja3_info else None,
-                )
-                session.add(alert)
-                session.commit()
-            finally:
-                session.close()
-        except Exception as e:
-            logger.error("Failed to persist alert: %s", e)
-        finally:
-            _alert_queue.task_done()
-
-
-def _start_writer():
-    global _writer_thread
-    if _writer_thread is not None:
-        return
-    _writer_stop.clear()
-    _writer_thread = threading.Thread(target=_writer_loop, daemon=True, name="alert-writer")
-    _writer_thread.start()
-
-
-def _persist_alert(record, scores, result, severity, triggered, ja3_info=None):
-    """Enqueue alert for async DB write. Non-blocking."""
-    _start_writer()
-    try:
-        _alert_queue.put_nowait((record, scores, result, severity, triggered, ja3_info))
-    except queue.Full:
-        logger.warning("Alert queue full — dropping alert for %s", record.src_ip)
-
-
-# ── Trusted outbound DNS cache ─────────────────────────────────────────────────
-_dns_cache: dict = {}          # ip -> (hostname, expires_at)
-_DNS_CACHE_TTL = 3600          # seconds; Synology IPs are stable enough for 1h
-_dns_lock = threading.Lock()
-
-
-def _resolve_hostname(ip: str) -> str:
-    """Reverse DNS lookup with TTL cache. Returns hostname or '' on failure."""
-    now = time.time()
-    with _dns_lock:
-        entry = _dns_cache.get(ip)
-        if entry and now < entry[1]:
-            return entry[0]
-    try:
-        hostname = socket.gethostbyaddr(ip)[0]
-    except (socket.herror, socket.gaierror, OSError):
-        hostname = ""
-    with _dns_lock:
-        _dns_cache[ip] = (hostname, now + _DNS_CACHE_TTL)
-    return hostname
-
-
-def _is_trusted_outbound(src_ip: str, dst_ip: str) -> bool:
-    """Return True if this flow matches a device's trusted outbound domain list."""
-    if not TRUSTED_OUTBOUND:
-        return False
-    trusted_domains = TRUSTED_OUTBOUND.get(src_ip)
-    if not trusted_domains:
-        return False
-    hostname = _resolve_hostname(dst_ip)
-    return bool(hostname) and any(hostname.endswith(d) for d in trusted_domains)
-
-
-# ── Alert deduplication ────────────────────────────────────────────────────────
-_dedup_cache: dict = {}          # (src_ip, attack_type) -> last_fired_timestamp
-_dedup_lock = threading.Lock()
-
-
-def on_flow_complete(
-    record: FlowRecord,
-    flow_vec: np.ndarray,
-    host_vec: Optional[np.ndarray],
-    payload_matches: List[str],
-    payload_features: Optional[np.ndarray] = None,
-    ja3_info: Optional[dict] = None,
-) -> None:
-    """Called by the Dispatcher when a flow expires."""
-    if _is_trusted_outbound(record.src_ip, record.dst_ip):
-        return
-
-    scores = EngineScores()
-
-    if supervised.is_available:
-        result = supervised.predict(flow_vec, payload_features)
-        if result:
-            label, conf = result
-            scores.supervised = 0.0 if label == "BENIGN" else conf
-            scores.attack_type = label
-            scores.supervised_confidence = conf
-
-    if host_vec is not None:
-        if iforest.is_available:
-            scores.isolation_forest = iforest.anomaly_score(host_vec)
-        if lstm.is_available:
-            lstm.update(record.src_ip, host_vec)
-            scores.lstm = lstm.anomaly_score(record.src_ip)
-
-    rule_score, triggered = rules.evaluate(record, flow_vec, payload_matches, ja3_info)
-    scores.rules = rule_score
-    scores.triggered_rules = triggered
-
-    result = ensemble.score(scores)
-
-    if result.is_anomaly:
-        severity = severity_from_score(result.score, scores.attack_type)
-
-        # Deduplication: skip if same (src_ip, attack_type) fired recently
-        dedup_key = (record.src_ip, scores.attack_type or "unknown")
-        now = time.time()
-        with _dedup_lock:
-            last_fired = _dedup_cache.get(dedup_key, 0.0)
-            if now - last_fired < DEDUP_WINDOW_SECS:
-                return
-            _dedup_cache[dedup_key] = now
-            # Prune stale entries periodically
-            if len(_dedup_cache) > 10000:
-                cutoff = now - DEDUP_WINDOW_SECS
-                stale = [k for k, t in _dedup_cache.items() if t < cutoff]
-                for k in stale:
-                    del _dedup_cache[k]
-
-        parts = [
-            f"src={record.src_ip}",
-            f"dst={record.dst_ip}",
-            f"score={result.score:.3f}",
-            f"engines={result.active_engines}",
-        ]
-        if scores.attack_type and scores.attack_type != "BENIGN":
-            parts.append(f"type={scores.attack_type}")
-        if triggered:
-            parts.append(f"rules={triggered}")
-        if ja3_info:
-            parts.append(f"ja3={ja3_info['hash']}")
-
-        logger.warning("[ALERT] %s", " | ".join(parts), extra={
-            "src_ip": record.src_ip,
-            "dst_ip": record.dst_ip,
-            "ensemble_score": result.score,
-            "attack_type": scores.attack_type,
-            "triggered_rules": triggered,
-            "active_engines": result.active_engines,
-            "ja3_hash": ja3_info["hash"] if ja3_info else None,
-        })
-        _persist_alert(record, scores, result, severity, triggered, ja3_info)
 
 
 def main():
@@ -251,7 +45,13 @@ def main():
         load_malicious_ja3(MALICIOUS_JA3_FILE)
 
     # Optional API server
+    api_app = None
     if args.api:
+        if "sqlite" in DATABASE_URL:
+            logger.warning(
+                "SQLite does not support concurrent writers. "
+                "Use PostgreSQL (DATABASE_URL=postgresql+asyncpg://...) for production --api mode."
+            )
         import uvicorn
         from src.api.main import app as api_app
         api_thread = threading.Thread(
@@ -267,11 +67,10 @@ def main():
     capture    = PacketCapture(processor=processor, iface=args.iface)
 
     # Expose capture stats to API /health endpoint
-    if args.api:
-        _api_app = api_app  # captured from import above
+    if args.api and api_app is not None:
         def _update_stats():
             while not capture._stop.is_set():
-                _api_app.state.capture_stats = {**processor.stats, **dispatcher.stats}
+                api_app.state.capture_stats = {**processor.stats, **dispatcher.stats}
                 time.sleep(5)
         threading.Thread(target=_update_stats, daemon=True, name="stats-updater").start()
 

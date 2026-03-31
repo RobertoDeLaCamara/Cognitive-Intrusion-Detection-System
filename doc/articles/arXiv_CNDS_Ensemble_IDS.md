@@ -105,7 +105,7 @@ The `HostExtractor` maintains per-source-IP sliding windows of the last N_host =
 
 ### 4.3 Payload Features (10 dimensions)
 
-The `PayloadAnalyzer` applies 30+ regular expression patterns to packet payloads sampled up to `MAX_PAYLOAD_SAMPLE_BYTES` = 4096 bytes per packet. Each pattern runs in a daemon thread with a 1-second timeout to prevent catastrophic backtracking (ReDoS [27]). A pre-screening regular expression filters obviously benign payloads before the per-pattern matching step.
+The `PayloadAnalyzer` applies 6 compiled regular expression patterns to packet payloads sampled up to `PAYLOAD_SAMPLE_BYTES` = 4096 bytes per packet. Input size bounding to 4KB is the primary ReDoS mitigation [27]. A pre-screening regular expression filters obviously benign payloads before the per-pattern matching step.
 
 Features produced: binary flags for six attack categories (SQL injection, XSS, command injection, shell commands, directory traversal, file inclusion), total match count, and payload entropy, size mean, and variance.
 

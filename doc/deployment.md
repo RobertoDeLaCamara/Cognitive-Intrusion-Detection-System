@@ -166,8 +166,8 @@ CONFIDENCE_DECAY_FACTOR=0.9     # Score multiplier per repeat alert
 ALERT_COOLDOWN_SECS=30          # Min seconds between alerts from same IP
 
 # ── IP Filtering ─────────────────────────────────────────────────────────
-IP_ALLOWLIST=                   # Space-separated IPs; skip detection entirely
-IP_BLOCKLIST=                   # Space-separated IPs; auto-flag all traffic
+IP_ALLOWLIST=                   # IPs or CIDR ranges; skip detection entirely
+IP_BLOCKLIST=                   # IPs or CIDR ranges; auto-flag all traffic
 
 # Trusted outbound (JSON): skip detection for specific src→domain pairs
 # TRUSTED_OUTBOUND={"192.168.1.60": ["relay.synology.com"]}

@@ -97,7 +97,7 @@ Three extractors run concurrently on every packet:
 
 **HostExtractor** maintains per-IP sliding windows of the last 100 packets. It computes the 18 host features on demand when the detection callback runs.
 
-**PayloadAnalyzer** runs 30+ regex patterns against each packet payload in a daemon thread with a 1-second timeout per pattern. This timeout is non-negotiable: without it, a carefully crafted packet can trigger catastrophic backtracking in a regex engine (ReDoS), blocking the entire detection pipeline. A pre-screening regex filters obviously benign payloads before the expensive per-pattern matching.
+**PayloadAnalyzer** runs 6 compiled regex patterns against each packet payload, bounded to 4KB per sample. This input size limit is the primary ReDoS protection: without it, a carefully crafted packet can trigger catastrophic backtracking in a regex engine, blocking the entire detection pipeline. A pre-screening regex filters obviously benign payloads before the per-pattern matching.
 
 ---
 

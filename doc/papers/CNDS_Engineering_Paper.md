@@ -56,7 +56,7 @@ The dispatcher invokes all four extractors on each packet:
 
 - **HostExtractor** (`src/features/host_extractor.py`): Maintains per-IP sliding windows of the last W packets (default W=100). Computes 18 behavioral features on demand.
 
-- **PayloadAnalyzer** (`src/features/payload_analyzer.py`): Runs 30+ regex patterns against packet payloads in daemon threads with per-pattern timeout t_regex=1s (ReDoS protection). Returns triggered rule names and 10 numeric features.
+- **PayloadAnalyzer** (`src/features/payload_analyzer.py`): Runs 6 compiled regex patterns against packet payloads bounded to 4KB per sample (ReDoS protection via input size limiting). A pre-screening regex filters obviously benign payloads before per-pattern matching. Returns triggered rule names and 10 numeric features.
 
 - **JA3** (`src/features/ja3.py`): Parses TLS ClientHello records; filters GREASE values; computes MD5 hash; checks against configurable blocklist.
 

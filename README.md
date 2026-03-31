@@ -319,8 +319,8 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `DNS_LOGGING_ENABLED` | `false` | Enable DNS query logging from captured traffic |
 | `CONFIDENCE_DECAY_FACTOR` | `0.9` | Score multiplier per repeat alert from same IP |
 | `CONFIDENCE_DECAY_WINDOW` | `300` | Seconds to track repeat alerts for decay |
-| `IP_ALLOWLIST` | _(empty)_ | Comma-separated IPs to skip detection entirely |
-| `IP_BLOCKLIST` | _(empty)_ | Comma-separated IPs to auto-flag as critical |
+| `IP_ALLOWLIST` | _(empty)_ | Comma-separated IPs or CIDR ranges to skip detection entirely |
+| `IP_BLOCKLIST` | _(empty)_ | Comma-separated IPs or CIDR ranges to auto-flag as critical |
 | `LOG_FORMAT` | `text` | Log output format: `text` or `json` (structured) |
 | `JA3_ENABLED` | `true` | Extract JA3 fingerprints from TLS ClientHello |
 | `MALICIOUS_JA3_FILE` | _(empty)_ | Path to known-malicious JA3 hashes (one per line); empty disables |
@@ -330,7 +330,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 ## Project Structure
 
 ```
-├── main.py                      # Entry point: capture + detection pipeline
+├── main.py                      # Entry point: capture + CLI
 ├── docker-compose.yml
 ├── Dockerfile
 ├── Jenkinsfile                  # CI/CD: build → lint → test → SonarQube → push
@@ -365,6 +365,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   └── lstm_config.json         # LSTM architecture config (tracked)
 ├── src/
 │   ├── config.py                # All settings (env-var driven)
+│   ├── pipeline.py              # Detection pipeline callback (flow → engines → alert)
 │   ├── mlflow_registry.py       # Unified MLflow model registry
 │   ├── capture/
 │   │   ├── packet_capture.py    # Scapy capture + async worker queue
@@ -381,6 +382,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   │   ├── supervised.py        # Random Forest wrapper
 │   │   ├── isolation_forest.py  # Isolation Forest wrapper
 │   │   ├── lstm_autoencoder.py  # LSTM Autoencoder wrapper
+│   │   ├── lstm_model.py        # LSTM Autoencoder architecture (nn.Module)
 │   │   └── rules.py             # Rule-based engine (incl. JA3 rules)
 │   ├── ensemble/
 │   │   └── scorer.py            # Weighted confidence fusion → EnsembleResult

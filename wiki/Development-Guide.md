@@ -108,7 +108,7 @@ pytest tests/test_mitre.py -v
 | `NOTIFY_MIN_SEVERITY` | high | Min severity for webhook notifications |
 | `CORRELATION_THRESHOLD` | 5 | Alerts to auto-create incident |
 | `ADAPTIVE_WEIGHTS_ENABLED` | false | Feedback-driven weight tuning |
-| `IP_ALLOWLIST` | (empty) | Comma-separated IPs to skip |
+| `IP_ALLOWLIST` | (empty) | Comma-separated IPs or CIDR ranges to skip |
 | `IP_BLOCKLIST` | (empty) | Comma-separated IPs to auto-escalate |
 
 ## PCAP Replay

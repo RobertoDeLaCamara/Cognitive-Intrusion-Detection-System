@@ -20,6 +20,7 @@ router = APIRouter(tags=["websocket"])
 # Connected clients
 _clients: Set[WebSocket] = set()
 _lock = asyncio.Lock()
+_MAX_WS_CLIENTS = 100
 
 
 async def broadcast_alert(alert_data: dict) -> None:
@@ -42,6 +43,7 @@ async def alerts_ws(websocket: WebSocket, token: str = Query(default=None)):
     """WebSocket endpoint — clients receive real-time alert JSON messages.
 
     When JWT_SECRET is set, requires ?token=<JWT> query parameter.
+    Max concurrent connections: 100.
     """
     # Authenticate if JWT is enabled
     if jwt_enabled():
@@ -52,6 +54,12 @@ async def alerts_ws(websocket: WebSocket, token: str = Query(default=None)):
             decode_token(token)
         except Exception:
             await websocket.close(code=4003, reason="Invalid or expired token")
+            return
+
+    # Connection limit
+    async with _lock:
+        if len(_clients) >= _MAX_WS_CLIENTS:
+            await websocket.close(code=4029, reason="Too many connections")
             return
 
     await websocket.accept()

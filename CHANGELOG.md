@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.4] - 2026-03-31
+
+### Changed
+
+- **Pipeline extraction** — detection pipeline callback (`on_flow_complete`, alert persistence, dedup, trusted-outbound filtering) extracted from `main.py` into `src/pipeline.py` for cleaner separation of concerns
+- **CIDR support for IP lists** — `IP_ALLOWLIST` and `IP_BLOCKLIST` now accept CIDR ranges (e.g. `10.0.0.0/8,192.168.1.100`) in addition to individual IPs
+- **Suppression rule caching** — suppression rules are now cached in memory with a 10-second TTL, avoiding a DB query per alert; cache is invalidated on rule create/delete
+- **Payload analyzer simplification** — removed thread-per-regex pattern matching; uses direct `re.search()` on bounded 4KB input instead (pre-screen regex still filters benign payloads)
+- **WebSocket connection limit** — `/ws/alerts` now rejects connections beyond 100 concurrent clients (close code 4029)
+- **Alembic in thread executor** — `init_db()` runs Alembic migrations via `run_in_executor` to avoid blocking the async event loop
+- **Lazy asyncio.Lock** — predict router's dedup lock is now lazily initialized to avoid creating it outside an event loop
+- **Flow heap compaction** — `FlowExtractor._evict_oldest()` now compacts the expiry heap to prevent unbounded growth from stale references
+- **SQLite concurrent-writer warning** — `main.py --api` now logs a warning when using SQLite, recommending PostgreSQL for production
+- **Pydantic v2 migration** — replaced deprecated `class Config` with `model_config = ConfigDict(from_attributes=True)` in all Pydantic schemas (eliminates 4 deprecation warnings)
+- **JWT test secrets** — test suite uses 32+ byte HMAC secrets (eliminates `InsecureKeyLengthWarning`)
+
+### Fixed
+
+- **docker-compose detector** — removed misleading `CNDS_API_URL` env var from detector service (uses `network_mode: host`, cannot resolve service names)
+
 ## [1.0.3] - 2026-03-10
 
 ### Added

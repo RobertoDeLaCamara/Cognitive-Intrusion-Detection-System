@@ -502,7 +502,7 @@ Delete a user. Requires `admin` role.
 
 ### `WS /ws/alerts`
 
-Real-time alert stream. Each fired alert is broadcast as a JSON message immediately after enrichment and persistence.
+Real-time alert stream. Each fired alert is broadcast as a JSON message immediately after enrichment and persistence. Maximum 100 concurrent connections (excess connections are rejected with close code 4029).
 
 **Connection:**
 ```

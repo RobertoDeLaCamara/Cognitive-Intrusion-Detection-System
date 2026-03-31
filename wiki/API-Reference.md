@@ -217,7 +217,7 @@ DNS queries captured during monitoring. Useful for DGA detection and lateral mov
 
 ### `WS /ws/alerts`
 
-Real-time alert broadcast. JWT optional (controlled by same auth flag as REST).
+Real-time alert broadcast. JWT optional (controlled by same auth flag as REST). Maximum 100 concurrent connections.
 
 ```javascript
 const ws = new WebSocket('ws://localhost:8000/ws/alerts');

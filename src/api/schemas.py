@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 import ipaddress
 
 
@@ -76,8 +76,7 @@ class AlertOut(BaseModel):
     mitre_techniques: Optional[List[Dict[str, str]]] = None
     ja3_hash: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AlertUpdate(BaseModel):
@@ -107,8 +106,7 @@ class IncidentOut(BaseModel):
     resolved_at: Optional[datetime]
     notes: Optional[str]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── Health ─────────────────────────────────────────────────────────────────────
@@ -140,5 +138,4 @@ class SuppressionRuleOut(BaseModel):
     created_at: datetime
     expires_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)

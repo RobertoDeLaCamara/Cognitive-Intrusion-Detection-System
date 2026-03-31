@@ -423,6 +423,10 @@ class FlowExtractor:
             return
         oldest_key = min(self._flows, key=lambda k: self._flows[k].start_time)
         del self._flows[oldest_key]
+        # Compact heap: rebuild to remove stale references
+        import heapq
+        self._expiry_heap = [(t, k) for t, k in self._expiry_heap if k in self._flows]
+        heapq.heapify(self._expiry_heap)
 
     @property
     def active_flow_count(self) -> int:

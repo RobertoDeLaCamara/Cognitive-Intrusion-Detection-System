@@ -11,11 +11,13 @@ build/
 .coverage
 htmlcov/
 
-# Model files (large binaries — copy manually per README)
+# Model files (large binaries — train locally or pull from MLflow)
 models/*.joblib
 models/*.pkl
 models/*.pt
-# Keep config files
+# Exceptions: lite model ships with the repo for out-of-the-box detection
+!models/rf_lite_model.joblib
+# Keep metadata JSON
 !models/*.json
 
 # Database

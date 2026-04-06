@@ -19,8 +19,8 @@
     "Worms"
   ],
   "benign_label": "Benign",
-  "n_estimators": 100,
-  "max_depth": 20,
+  "n_estimators": 25,
+  "max_depth": 10,
   "n_features_in": 76,
   "label_map": {
     "0": "Benign",
@@ -35,10 +35,10 @@
     "9": "Worms"
   },
   "metrics": {
-    "accuracy": 0.9316,
-    "precision_t90": 0.9128,
-    "recall_t90": 0.9908,
-    "f1_t90": 0.9502,
-    "fp_rate_t90": 0.0237
+    "accuracy": 0.9115,
+    "precision_t90": 0.9117,
+    "recall_t90": 0.9965,
+    "f1_t90": 0.9522,
+    "fp_rate_t90": 0.0241
   }
 }

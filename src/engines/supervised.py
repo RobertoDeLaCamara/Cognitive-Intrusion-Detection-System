@@ -17,7 +17,7 @@ from typing import Optional, Tuple
 
 import joblib
 
-from ..config import RF_MODEL_PATH, RF_SCORE_THRESHOLD
+from ..config import RF_MODEL_PATH, RF_LITE_MODEL_PATH, RF_SCORE_THRESHOLD
 from ..features.flow_extractor import FLOW_FEATURE_NAMES
 from ..features.payload_analyzer import PAYLOAD_FEATURE_NAMES
 from .. import mlflow_registry
@@ -67,7 +67,7 @@ class SupervisedEngine:
         if model is not None:
             self._model = model
             logger.info("SupervisedEngine loaded from MLflow")
-        # 2. Fall back to local file
+        # 2. Fall back to locally trained full model
         elif os.path.exists(self._model_path):
             try:
                 self._model = joblib.load(self._model_path)
@@ -75,9 +75,22 @@ class SupervisedEngine:
             except Exception as e:
                 logger.error("Failed to load RF model: %s", e)
                 return
+        # 3. Bundled lite model — ships with the repo for out-of-the-box detection
+        elif os.path.exists(RF_LITE_MODEL_PATH):
+            try:
+                self._model = joblib.load(RF_LITE_MODEL_PATH)
+                logger.info("SupervisedEngine loaded from bundled lite model %s "
+                            "(~88-90%% accuracy — run scripts/train_rf.py for full model)",
+                            RF_LITE_MODEL_PATH)
+            except Exception as e:
+                logger.error("Failed to load RF lite model: %s", e)
+                return
         else:
-            logger.warning("RF model not found at %s — supervised engine disabled",
-                           self._model_path)
+            logger.warning(
+                "No RF model found (checked MLflow, %s, %s) — supervised engine disabled. "
+                "Run: python scripts/train_rf.py",
+                self._model_path, RF_LITE_MODEL_PATH,
+            )
             return
 
         n = _get_n_features(self._model)

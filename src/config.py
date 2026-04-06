@@ -88,6 +88,7 @@ ALERT_COOLDOWN_SECS   = int(os.getenv("ALERT_COOLDOWN_SECS", "60"))
 # ── Model paths ────────────────────────────────────────────────────────────────
 MODELS_DIR          = os.getenv("MODELS_DIR", "models")
 RF_MODEL_PATH       = os.path.join(MODELS_DIR, os.getenv("RF_MODEL_FILE", "rf_model.joblib"))
+RF_LITE_MODEL_PATH  = os.path.join(MODELS_DIR, os.getenv("RF_LITE_MODEL_FILE", "rf_lite_model.joblib"))
 IF_MODEL_PATH       = os.path.join(MODELS_DIR, os.getenv("IF_MODEL_FILE", "isolation_forest.joblib"))
 IF_SCALER_PATH      = os.path.join(MODELS_DIR, os.getenv("IF_SCALER_FILE", "if_scaler.joblib"))
 LSTM_MODEL_PATH     = os.path.join(MODELS_DIR, os.getenv("LSTM_MODEL_FILE", "lstm_autoencoder.pt"))

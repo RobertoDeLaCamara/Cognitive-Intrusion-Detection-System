@@ -296,9 +296,9 @@ def log_to_mlflow(pipeline, metrics: dict, mlflow_uri: str):
 
 # ── Save ───────────────────────────────────────────────────────────────────
 
-def save(pipeline, metrics: dict, output_dir: Path):
+def save(pipeline, metrics: dict, output_dir: Path, filename: str = "rf_model.joblib"):
     output_dir.mkdir(parents=True, exist_ok=True)
-    path = output_dir / "rf_model.joblib"
+    path = output_dir / filename
     joblib.dump(pipeline, path)
     log.info("Pipeline saved → %s  (%d KB)", path, path.stat().st_size // 1024)
 
@@ -315,7 +315,8 @@ def save(pipeline, metrics: dict, output_dir: Path):
         "label_map": {str(k): v for k, v in LABEL_MAP.items()},
         "metrics": metrics,
     }
-    meta_path = output_dir / "rf_model_meta.json"
+    stem = Path(filename).stem
+    meta_path = output_dir / f"{stem}_meta.json"
     meta_path.write_text(json.dumps(meta, indent=2))
     log.info("Metadata  → %s", meta_path)
 
@@ -335,14 +336,30 @@ def main():
     parser.add_argument("--jobs", default=-1, type=int)
     parser.add_argument("--no-smote", action="store_true",
                         help="Skip SMOTE oversampling")
+    parser.add_argument("--lite", action="store_true",
+                        help="Train bundled lite model: 50k stratified sample, "
+                             "25 estimators, max_depth=10. Saves to rf_lite_model.joblib.")
     parser.add_argument("--mlflow-uri",
                         default=os.getenv("MLFLOW_TRACKING_URI", ""),
                         help="MLflow tracking URI (empty = skip)")
     args = parser.parse_args()
 
     from sklearn.model_selection import train_test_split
+    from sklearn.utils import resample
 
     X, y = load_data(args.data_dir)
+
+    # ── Lite mode: subsample + reduced hyperparams ─────────────────────────
+    if args.lite:
+        log.info("LITE mode: sampling 50k rows (stratified), "
+                 "n_estimators=25, max_depth=10, no SMOTE")
+        X, y = resample(X, y, n_samples=50_000, stratify=y, random_state=42)
+        args.estimators = 25
+        args.max_depth = 10
+        args.no_smote = True
+        output_filename = "rf_lite_model.joblib"
+    else:
+        output_filename = "rf_model.joblib"
 
     log.info("Splitting: test_size=%.0f%%  stratified", args.test_size * 100)
     X_train, X_test, y_train, y_test = train_test_split(
@@ -363,29 +380,45 @@ def main():
 
     metrics = evaluate(pipeline, X_test, y_test)
 
-    print("\n" + "="*70)
-    print("SUMMARY vs BASELINE (v1.0.6 — plain RF, no pipeline)")
-    print("="*70)
-    print(f"  Accuracy        : {metrics['accuracy']:.3f}  (baseline: 0.930)")
-    print(f"  Precision @0.90 : {metrics['precision_t90']:.3f}  (baseline: 0.927)")
-    print(f"  Recall    @0.90 : {metrics['recall_t90']:.3f}  (baseline: 0.989)")
-    print(f"  FP rate   @0.90 : {metrics['fp_rate_t90']:.3f}  (baseline: 0.019)")
+    if args.lite:
+        print("\n" + "="*70)
+        print("LITE MODEL SUMMARY")
+        print("="*70)
+        print(f"  Accuracy        : {metrics['accuracy']:.3f}")
+        print(f"  Precision @0.90 : {metrics['precision_t90']:.3f}")
+        print(f"  Recall    @0.90 : {metrics['recall_t90']:.3f}")
+        print(f"  FP rate   @0.90 : {metrics['fp_rate_t90']:.3f}")
+        print(f"  → Commit models/rf_lite_model.joblib to ship with the repo")
+    else:
+        print("\n" + "="*70)
+        print("SUMMARY vs BASELINE (v1.0.6 — plain RF, no pipeline)")
+        print("="*70)
+        print(f"  Accuracy        : {metrics['accuracy']:.3f}  (baseline: 0.930)")
+        print(f"  Precision @0.90 : {metrics['precision_t90']:.3f}  (baseline: 0.927)")
+        print(f"  Recall    @0.90 : {metrics['recall_t90']:.3f}  (baseline: 0.989)")
+        print(f"  FP rate   @0.90 : {metrics['fp_rate_t90']:.3f}  (baseline: 0.019)")
 
-    save(pipeline, metrics, args.output_dir)
+    save(pipeline, metrics, args.output_dir, filename=output_filename)
 
-    if args.mlflow_uri:
+    if args.mlflow_uri and not args.lite:
         log.info("Logging to MLflow: %s", args.mlflow_uri)
         uri = log_to_mlflow(pipeline, metrics, args.mlflow_uri)
         if uri:
             print(f"\nMLflow model URI: {uri}")
+    elif args.lite:
+        log.info("MLflow skipped for lite model")
     else:
         log.info("MLflow skipped (set --mlflow-uri or MLFLOW_TRACKING_URI to enable)")
 
     print("\n" + "="*70)
     print("NEXT STEP")
     print("="*70)
-    print("Model is a Pipeline — SupervisedEngine handles it automatically.")
-    print("To use MLflow registry in CNDS: set MLFLOW_TRACKING_URI in .env")
+    if args.lite:
+        print("git add models/rf_lite_model.joblib models/rf_lite_model_meta.json")
+        print("git commit -m 'Add bundled lite supervised model'")
+    else:
+        print("Model is a Pipeline — SupervisedEngine handles it automatically.")
+        print("To use MLflow registry in CNDS: set MLFLOW_TRACKING_URI in .env")
 
 
 if __name__ == "__main__":

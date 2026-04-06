@@ -83,8 +83,8 @@ class SupervisedEngine:
                             RF_LITE_MODEL_PATH)
             except Exception as e:
                 logger.error("Failed to load RF lite model: %s", e)
-                return
-        else:
+
+        if self._model is None:
             logger.warning(
                 "No RF model found (checked MLflow, %s, %s) — supervised engine disabled. "
                 "Run: python scripts/train_rf.py",

@@ -1,0 +1,29 @@
+{
+  "classes": [
+    "Analysis",
+    "Backdoor",
+    "Benign",
+    "DoS",
+    "Exploits",
+    "Fuzzers",
+    "Generic",
+    "Reconnaissance",
+    "Shellcode",
+    "Worms"
+  ],
+  "benign_label": "Benign",
+  "n_estimators": 100,
+  "n_features_in": 76,
+  "label_map": {
+    "0": "Benign",
+    "1": "Analysis",
+    "2": "Backdoor",
+    "3": "DoS",
+    "4": "Exploits",
+    "5": "Fuzzers",
+    "6": "Generic",
+    "7": "Reconnaissance",
+    "8": "Shellcode",
+    "9": "Worms"
+  }
+}

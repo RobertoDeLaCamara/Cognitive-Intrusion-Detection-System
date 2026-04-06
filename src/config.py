@@ -67,6 +67,7 @@ WEIGHT_IFOREST      = float(os.getenv("WEIGHT_IFOREST", "0.30"))
 WEIGHT_LSTM         = float(os.getenv("WEIGHT_LSTM", "0.20"))
 WEIGHT_RULES        = float(os.getenv("WEIGHT_RULES", "0.10"))
 ENSEMBLE_THRESHOLD  = float(os.getenv("ENSEMBLE_THRESHOLD", "0.55"))
+RF_SCORE_THRESHOLD  = float(os.getenv("RF_SCORE_THRESHOLD", "0.90"))  # min confidence for RF to contribute a non-zero score
 
 # ── Per-attack-type weight overrides (Phase 4) ───────────────────────────────
 # JSON string mapping attack type → {engine: weight}

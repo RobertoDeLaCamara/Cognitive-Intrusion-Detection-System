@@ -72,7 +72,7 @@ class AlertOut(BaseModel):
     acknowledged: bool
     notes: Optional[str]
     incident_id: Optional[int]
-    src_geo: Optional[Dict[str, str]] = None
+    src_geo: Optional[Dict[str, Any]] = None
     mitre_techniques: Optional[List[Dict[str, str]]] = None
     ja3_hash: Optional[str] = None
 

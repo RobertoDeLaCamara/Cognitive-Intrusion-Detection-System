@@ -73,10 +73,9 @@ class SupervisedEngine:
                 self._model = joblib.load(self._model_path)
                 logger.info("SupervisedEngine loaded from %s", self._model_path)
             except Exception as e:
-                logger.error("Failed to load RF model: %s", e)
-                return
+                logger.warning("Full RF model failed to load (%s) — trying lite model", e)
         # 3. Bundled lite model — ships with the repo for out-of-the-box detection
-        elif os.path.exists(RF_LITE_MODEL_PATH):
+        if self._model is None and os.path.exists(RF_LITE_MODEL_PATH):
             try:
                 self._model = joblib.load(RF_LITE_MODEL_PATH)
                 logger.info("SupervisedEngine loaded from bundled lite model %s "

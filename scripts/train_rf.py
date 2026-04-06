@@ -69,45 +69,8 @@ SMOTE_MIN_SAMPLES = 2000  # target per minority class after oversampling
 SKEW_THRESHOLD = 5.0
 
 
-# ── Custom sklearn transformers ────────────────────────────────────────────
-
-class ClipNegativeTransformer:
-    """Clip negative values to 0 before log1p transform."""
-    def fit(self, X, y=None): return self
-    def transform(self, X):
-        return np.clip(X, 0, None)
-    def fit_transform(self, X, y=None): return self.fit(X, y).transform(X)
-
-
-class SelectiveLog1pTransformer:
-    """Apply log1p only to columns identified as highly skewed during fit."""
-    def __init__(self, threshold: float = SKEW_THRESHOLD):
-        self.threshold = threshold
-        self.skewed_cols_ = None
-
-    def fit(self, X, y=None):
-        df = pd.DataFrame(X)
-        skewness = df.skew().abs()
-        self.skewed_cols_ = skewness[skewness > self.threshold].index.tolist()
-        log.info("  log1p applied to %d/%d skewed features", len(self.skewed_cols_), X.shape[1])
-        return self
-
-    def transform(self, X):
-        X = np.array(X, dtype=np.float64)
-        if self.skewed_cols_:
-            X[:, self.skewed_cols_] = np.log1p(X[:, self.skewed_cols_])
-        return X
-
-    def fit_transform(self, X, y=None):
-        return self.fit(X, y).transform(X)
-
-    def get_params(self, deep=True):
-        return {"threshold": self.threshold}
-
-    def set_params(self, **params):
-        for k, v in params.items():
-            setattr(self, k, v)
-        return self
+# ── Custom sklearn transformers (importable from src for joblib compatibility)
+from src.features.transformers import ClipNegativeTransformer, SelectiveLog1pTransformer  # noqa: E402
 
 
 # ── Data loading ───────────────────────────────────────────────────────────
@@ -371,7 +334,8 @@ def main():
         X_train, y_train = apply_smote(X_train, y_train)
 
     log.info("Building pipeline: clip → log1p → scaler → RF "
-             "(n_estimators=%d, max_depth=%s)", args.estimators, args.max_depth)
+             "(n_estimators=%d, max_depth=%s, skew_threshold=%.1f)",
+             args.estimators, args.max_depth, SKEW_THRESHOLD)
     pipeline = build_pipeline(args.estimators, args.max_depth, args.jobs)
 
     t0 = time.time()

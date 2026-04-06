@@ -6,7 +6,7 @@ CNDS uses four complementary detection engines. Each engine observes a different
 
 | Engine | Weight | Features | What it detects |
 |---|---|---|---|
-| Random Forest | 40% | 76 flow features | Named attack classes (14 types) |
+| Random Forest | 40% | 76 flow features | Named attack classes (10 types) |
 | Isolation Forest | 30% | 18 host features | Volume/behavioral anomalies |
 | LSTM Autoencoder | 20% | Temporal host sequences | Slow/drift behavioral changes |
 | Rules Engine | 10% | All signals | High-confidence threshold patterns |
@@ -18,41 +18,55 @@ CNDS uses four complementary detection engines. Each engine observes a different
 **File:** `src/engines/supervised.py`
 
 ### Purpose
-Classify network flows into one of 14 known attack categories or `BENIGN`. This engine provides the highest precision for known attack types and produces the named `attack_type` label that appears on every alert.
+Classify network flows into one of 9 known attack categories or `Benign`. This engine provides the highest precision for known attack types and produces the named `attack_type` label that appears on every alert.
 
 ### Model
-- **Algorithm:** scikit-learn `RandomForestClassifier` (or Pipeline).
+- **Algorithm:** scikit-learn `Pipeline` (clip → log1p on skewed features → StandardScaler → RandomForestClassifier).
 - **Features:** 76 CICFlowMeter flow features (see `FlowExtractor`).
-- **Training dataset:** CIC-IDS2017 — a labeled 5-day pcap capture from the Canadian Institute for Cybersecurity.
-- **Storage:** `models/rf_model.joblib` (scikit-learn Pipeline, gitignored).
-- **Alternative:** MLflow model registry if `MLFLOW_TRACKING_URI` is set.
+- **Training dataset:** CIC-UNSW-NB15 — 447k labeled flows from the Canadian Institute for Cybersecurity / UNSW.
+- **Anomaly score:** `1 - P(Benign)` — calibrated against the actual benign probability.
+- **FP threshold:** scores below `RF_SCORE_THRESHOLD` (default `0.90`) are zeroed to suppress low-confidence predictions.
+
+### Model load chain (priority order)
+
+| Priority | Source | When available |
+|---|---|---|
+| 1 | MLflow registry | `MLFLOW_TRACKING_URI` is set and model is registered |
+| 2 | `models/rf_model.joblib` | Locally trained full model (gitignored, 124MB+) |
+| 3 | `models/rf_lite_model.joblib` | **Bundled lite model — ships with the repo** |
+
+The lite model (1.6MB, 91% accuracy on CIC-UNSW-NB15) provides functional detection out-of-the-box on a fresh `git clone`. The full model or MLflow version are used automatically when available.
 
 ### Attack Classes
 
 | Label | Attack Category |
 |---|---|
-| BENIGN | Normal traffic |
-| DoS Hulk | HTTP flood (Hulk tool) |
-| DoS GoldenEye | HTTP DoS (GoldenEye) |
-| DoS Slowloris | Slow HTTP headers |
-| DoS Slowhttptest | Slow HTTP body |
-| PortScan | TCP/UDP port scanning |
-| FTP-Patator | FTP brute force |
-| SSH-Patator | SSH brute force |
-| Bot | C2 bot communication |
-| Infiltration | Network infiltration |
-| Web Attack – Brute Force | HTTP login brute force |
-| Web Attack – XSS | Cross-site scripting payload |
-| Web Attack – SQL Injection | SQL injection payload |
-| Heartbleed | OpenSSL Heartbleed exploit |
+| Benign | Normal traffic |
+| DoS | Denial of Service |
+| Exploits | Exploit attempts |
+| Fuzzers | Fuzzing / scanning |
+| Generic | Generic attack patterns |
+| Reconnaissance | Network reconnaissance |
+| Analysis | Deep packet analysis attacks |
+| Backdoor | Backdoor / RAT activity |
+| Shellcode | Shellcode injection |
+| Worms | Self-propagating worms |
 
-### Scoring
-- `predict_proba()` returns per-class probabilities.
-- Confidence = probability of the predicted class (max over all classes).
-- Returns `("BENIGN", confidence)` for normal traffic — the ensemble scorer treats this as `score=1-confidence` when attack type is BENIGN.
+### Training
+
+```bash
+# Generate bundled lite model (50k sample, ~1.6MB, ships with repo)
+python scripts/train_rf.py --lite
+
+# Train full production model (447k samples, ~124MB, gitignored)
+python scripts/train_rf.py
+
+# Train and register to MLflow
+python scripts/train_rf.py --mlflow-uri http://192.168.1.48:5050
+```
 
 ### Extending
-To add classes, retrain with additional labeled data. The `scripts/retrain_with_payload.py` script adds 10 payload features (86 total) to extend detection for injection attacks. Update `RF_MODEL_FILE` in `.env` to point to the new model.
+To retrain on a custom dataset, provide a `Data.csv` (76 CICFlowMeter features) and `Label.csv` (integer class index) and pass `--data-dir /path/to/dataset` to `train_rf.py`. Update `RF_MODEL_FILE` in `.env` to point to the new model.
 
 ---
 

@@ -14,6 +14,26 @@ class TestSupervisedEngine:
         assert not engine.is_available
         assert engine.predict(np.zeros(76)) is None
 
+    @patch("src.engines.supervised.mlflow_registry.load_latest", return_value=None)
+    @patch("joblib.load")
+    def test_falls_back_to_lite_model(self, mock_load, mock_mlflow):
+        """Tier-3 load: when MLflow and full model are absent, lite model is used."""
+        from src.engines.supervised import SupervisedEngine, RF_LITE_MODEL_PATH
+
+        mock_model = MagicMock()
+        mock_model.classes_ = ["Benign", "DoS"]
+        mock_model.n_features_in_ = 76
+        mock_load.return_value = mock_model
+
+        # full model path absent, lite model path present
+        def exists_side_effect(path):
+            return path == RF_LITE_MODEL_PATH
+
+        with patch("os.path.exists", side_effect=exists_side_effect):
+            engine = SupervisedEngine(model_path="/nonexistent/rf_model.joblib")
+            assert engine.is_available
+            mock_load.assert_called_once_with(RF_LITE_MODEL_PATH)
+
     def test_predict_with_mock_model(self):
         from src.engines.supervised import SupervisedEngine
 

@@ -109,17 +109,19 @@ cp .env.example .env
 
 ### 2. Add models
 
-Copy trained model files to `models/` (binary files are excluded from git):
+The **supervised engine ships a bundled lite model** (`models/rf_lite_model.joblib`, 1.6MB) committed to the repo — no download needed. It provides functional detection (91% accuracy on CIC-UNSW-NB15) out of the box.
+
+To upgrade to the full model or add the other engines:
 
 ```bash
-# Supervised engine — Random Forest Pipeline (76 features)
-cp /path/to/rf_model.joblib               models/
+# Train full supervised model (requires CIC-UNSW-NB15 dataset, ~24s)
+python scripts/train_rf.py --data-dir /path/to/CIC-UNSW-NB15
 
-# Isolation Forest + scaler
+# Isolation Forest + scaler (optional)
 cp /path/to/isolation_forest.joblib       models/
 cp /path/to/if_scaler.joblib              models/
 
-# LSTM Autoencoder
+# LSTM Autoencoder (optional)
 cp /path/to/lstm_autoencoder.pt           models/
 cp /path/to/lstm_config.json              models/   # tracked in git
 ```
@@ -286,7 +288,9 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `ALERT_COOLDOWN_SECS` | `60` | Seconds before a duplicate alert can fire again |
 | `DEDUP_WINDOW_SECS` | `300` | Alert deduplication window (seconds) |
 | `MODELS_DIR` | `models` | Directory containing model files |
-| `RF_MODEL_FILE` | `rf_model.joblib` | Random Forest model filename |
+| `RF_MODEL_FILE` | `rf_model.joblib` | Full RF model (gitignored, train locally) |
+| `RF_LITE_MODEL_FILE` | `rf_lite_model.joblib` | Bundled lite RF model (committed, fallback) |
+| `RF_SCORE_THRESHOLD` | `0.90` | Min RF anomaly score to avoid false positives |
 | `IF_MODEL_FILE` | `isolation_forest.joblib` | Isolation Forest model filename |
 | `IF_SCALER_FILE` | `if_scaler.joblib` | IF scaler filename |
 | `LSTM_MODEL_FILE` | `lstm_autoencoder.pt` | LSTM model filename |
@@ -298,8 +302,11 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `CORS_ORIGINS` | _(empty)_ | Comma-separated allowed origins; defaults to `http://localhost:3000` |
 | `ATTACK_TYPE_WEIGHTS` | `{}` | JSON: per-attack-type engine weight overrides |
 | `CALIBRATION_TEMPERATURE` | `1.0` | Platt scaling temperature (>1 softer, <1 sharper) |
-| `MLFLOW_TRACKING_URI` | _(empty)_ | MLflow server URL; empty disables MLflow |
+| `MLFLOW_TRACKING_URI` | `http://192.168.1.48:5050` | MLflow server URL; empty disables MLflow |
 | `MLFLOW_REGISTRY_NAME` | `cnds` | MLflow model registry name |
+| `AWS_ACCESS_KEY_ID` | — | MinIO access key for MLflow artifact store |
+| `AWS_SECRET_ACCESS_KEY` | — | MinIO secret key for MLflow artifact store |
+| `MLFLOW_S3_ENDPOINT_URL` | `http://192.168.1.189:9000` | MinIO S3 endpoint for MLflow artifacts |
 | `JWT_SECRET` | _(empty)_ | JWT signing secret; empty disables JWT auth |
 | `JWT_ALGORITHM` | `HS256` | JWT signing algorithm |
 | `JWT_EXPIRE_MINUTES` | `60` | JWT token expiry (minutes) |
@@ -357,12 +364,13 @@ Copy `.env.example` to `.env` and adjust as needed.
 │       └── forwarder.py         # CEF syslog forwarder (QRadar, ArcSight, Sentinel)
 ├── dashboard/
 │   └── app.py                   # Streamlit real-time dashboard
-├── models/                      # ML model files (binaries not committed)
-│   ├── rf_model.joblib          # Random Forest pipeline (76 features)
-│   ├── isolation_forest.joblib  # Isolation Forest
-│   ├── if_scaler.joblib         # StandardScaler for IF
-│   ├── lstm_autoencoder.pt      # LSTM Autoencoder weights
-│   └── lstm_config.json         # LSTM architecture config (tracked)
+├── models/                      # ML model files
+│   ├── rf_lite_model.joblib     # Bundled lite RF (1.6MB, committed — works out of the box)
+│   ├── rf_model.joblib          # Full RF pipeline (gitignored — train with scripts/train_rf.py)
+│   ├── isolation_forest.joblib  # Isolation Forest (gitignored)
+│   ├── if_scaler.joblib         # StandardScaler for IF (gitignored)
+│   ├── lstm_autoencoder.pt      # LSTM Autoencoder weights (gitignored)
+│   └── lstm_config.json         # LSTM architecture config (committed)
 ├── src/
 │   ├── config.py                # All settings (env-var driven)
 │   ├── pipeline.py              # Detection pipeline callback (flow → engines → alert)

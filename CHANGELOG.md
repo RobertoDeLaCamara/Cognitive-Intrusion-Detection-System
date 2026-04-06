@@ -2,6 +2,48 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.9] - 2026-04-06
+
+### Added
+- **Bundled lite supervised model** — `models/rf_lite_model.joblib` (1.6MB) committed to the repo; trained on 50k stratified sample of CIC-UNSW-NB15 (91% accuracy, 2.4% FP rate at threshold 0.90). Users get functional intrusion detection on `git clone` with no setup required.
+- **3-tier model load chain** — `SupervisedEngine` now tries: (1) MLflow registry, (2) full local `rf_model.joblib`, (3) bundled `rf_lite_model.joblib`.
+- **`--lite` flag in `train_rf.py`** — generates the bundled lite model in ~0.3s (50k sample, 25 estimators, max_depth=10, no SMOTE).
+- **`RF_LITE_MODEL_PATH` config** — env var `RF_LITE_MODEL_FILE` overrides the lite model path.
+
+## [1.0.8] - 2026-04-06
+
+### Added
+- **MLflow artifact store** — model artifacts registered to MinIO on `192.168.1.189:9000`; model `cnds-supervised` available in registry at `192.168.1.48:5050`.
+- **Proxy bypass in MLflow init** — `mlflow_registry.init()` and `train_rf.py` unset `HTTP_PROXY`/`HTTPS_PROXY` so boto3 reaches the MinIO LAN endpoint directly.
+- **`.env.example`** — documents `MLFLOW_TRACKING_URI`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `MLFLOW_S3_ENDPOINT_URL` for homelab setup.
+
+## [1.0.7] - 2026-04-06
+
+### Changed
+- **Full Pipeline in `train_rf.py`** — training now wraps preprocessing (clip → log1p on 48 skewed features → StandardScaler) + RF into a single sklearn `Pipeline`; no separate scaler needed at inference time.
+- **Pipeline-aware `SupervisedEngine`** — `_get_classifier()`, `_get_n_features()`, `_get_classes()` helpers unwrap `Pipeline` objects; supports both Pipeline and plain estimator formats transparently.
+- **`MLFLOW_TRACKING_URI` default** — points to homelab server (`192.168.1.48:5050`); set to empty to disable.
+
+## [1.0.6] - 2026-04-06
+
+### Added
+- **`RF_SCORE_THRESHOLD`** (default `0.90`) — RF anomaly scores below this are zeroed to suppress low-confidence false positives. Env var: `RF_SCORE_THRESHOLD`.
+- **`eval_engines.py`** — diagnostic script evaluating RF and IF engines with synthetic CIC-UNSW-NB15-like traffic; outputs classification report, binary precision/recall sweep, and score distributions.
+
+### Changed
+- **Real RF model** — replaced random demo model with one trained on full CIC-UNSW-NB15 (447k flows, 100 estimators, class_weight=balanced); accuracy 93%, FP rate 1.9% at threshold 0.90.
+- **`BENIGN_LABEL`** updated to `"Benign"` to match CIC-UNSW-NB15 taxonomy (was `"BENIGN"` for the demo model).
+- **`anomaly_score()`** now uses `1 - P(Benign)` instead of confidence of the predicted class for better calibration.
+
+## [1.0.5] - 2026-04-06
+
+### Added
+- **Extended Prometheus metrics** — `cnds_alerts_suppressed_total` counter (labels: `reason=dedup|suppression_rule`) and `cnds_ensemble_score` histogram (fine-grained buckets, label: `is_anomaly`).
+- **Engine label on alert counter** — `cnds_alerts_total` now includes `engine` label (primary engine by score contribution).
+- **`observe_ensemble_score()`** — called on every `/api/predict` request regardless of whether an alert fires.
+- **`inc_suppressed()`** — incremented on both dedup hits and suppression rule matches.
+- **Test suites** — `test_predict.py`, `test_pipeline.py`, `test_suppression.py`, `test_correlation.py` (67 tests).
+
 ## [1.0.4] - 2026-03-31
 
 ### Changed

@@ -70,7 +70,7 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
         result = _supervised.predict(flow_vec, pay_vec)
         if result:
             label, conf = result
-            scores.supervised = 0.0 if label == "BENIGN" else conf
+            scores.supervised = 0.0 if label.upper() == "BENIGN" else conf
             scores.attack_type = label
             scores.supervised_confidence = conf
         else:

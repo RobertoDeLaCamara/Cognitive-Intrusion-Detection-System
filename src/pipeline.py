@@ -157,7 +157,7 @@ def on_flow_complete(
         result = supervised.predict(flow_vec, payload_features)
         if result:
             label, conf = result
-            scores.supervised = 0.0 if label == "BENIGN" else conf
+            scores.supervised = 0.0 if label.upper() == "BENIGN" else conf
             scores.attack_type = label
             scores.supervised_confidence = conf
 

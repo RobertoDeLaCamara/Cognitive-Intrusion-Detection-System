@@ -113,15 +113,12 @@ The PCAP replay script (`scripts/pcap_replay.py`) and digital twin demo (`demo/`
 
 ---
 
-## Roadmap Indicators
+## Roadmap
 
-The architecture supports the following extensions without breaking changes:
+Planned features, enhancements, and security improvements are tracked as GitHub Issues:
+[github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System/issues](https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System/issues)
 
-- **Additional ML engines**: The `DetectionEngine` protocol allows new engines to be registered alongside existing ones.
-- **Feature streaming**: The async queue and dispatcher are built for horizontal scaling — adding more worker processes is a configuration change.
-- **Active response**: The alert pipeline feeds into a notification system; a blocking/response module can subscribe to the same stream.
-- **Network asset inventory**: The host extractor already tracks per-IP behavioral profiles — asset classification is a natural extension.
-- **Threat intelligence feeds**: JA3 blocklists and IP blocklists are file-backed; feeds can be automated with a polling script.
+Milestones map to minor releases (v2.0, v3.0). MoSCoW priority labels are used to communicate delivery intent.
 
 ---
 

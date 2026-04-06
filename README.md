@@ -453,32 +453,4 @@ Jenkins pipeline stages (see `Jenkinsfile`):
 
 ## Roadmap
 
-### v1.0 (complete)
-
-- [x] Phase 1 — Shared capture layer (single Scapy loop → dual feature extraction)
-- [x] Phase 2 — All four engines + ensemble scoring + FastAPI orchestration
-- [x] Phase 3 — Payload pattern features fed into supervised feature set
-- [x] Phase 4 — Confidence calibration and per-attack-type weight tuning
-- [x] Phase 5 — Unified MLflow registry for all three models
-- [x] Phase 6 — Real-time dashboard (WebSocket + Streamlit analytics)
-- [x] Phase 7 — Auth (JWT/RBAC), Prometheus metrics, OpenTelemetry tracing
-- [x] Phase 8 — GeoIP enrichment, alert correlation, adaptive weights, suppression rules, webhook/Telegram notifications, rate limiting, DNS logging
-- [x] Phase 9 — Confidence decay, IP allowlist/blocklist, alert trends endpoint, capture stats in /health
-
-### v2.0 (planned)
-
-- [x] PCAP replay mode — offline ingestion of `.pcap` files for threat hunting and model evaluation
-- [x] Alembic DB migrations — proper schema versioning for production deployments
-- [x] Config validation — fail-fast on startup if weights don't sum to 1.0 or thresholds are out of range
-- [x] API integration tests — end-to-end endpoint testing with in-memory SQLite
-- [x] RBAC enforcement — wire `require_role()` to sensitive endpoints (suppression rules, incidents)
-- [x] Alert export — CSV/JSON bulk export endpoint for analyst reporting
-- [x] Dashboard enhancements — top talkers view, attack type breakdown, timeline visualization
-- [x] Alert deduplication — suppress duplicate alerts from same (src_ip, attack_type) within configurable window
-- [x] WebSocket authentication — JWT token required via `?token=` query parameter when `JWT_SECRET` is set
-- [x] MITRE ATT&CK mapping — automatic technique enrichment on every alert (14 attack types + 11 rules)
-- [x] JA3 TLS fingerprinting — real-time ClientHello extraction, malicious hash detection, per-alert storage
-- [x] SIEM integration templates — Splunk (HEC + CIM), Elastic (index template + Logstash + Filebeat), CEF syslog forwarder
-- [ ] Model drift detection — alert when live traffic feature distributions diverge from training data
-- [ ] Feedback-driven retraining — analyst TP/FP labels → accumulated dataset → automated retraining via MLflow
-- [ ] ONNX Runtime for LSTM — 2-5x inference speedup over raw PyTorch
+See the [open issues](https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System/issues) for planned features and known bugs. Contributions welcome — check [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

@@ -1,4 +1,11 @@
 {
+  "model_type": "sklearn.Pipeline",
+  "steps": [
+    "ClipNegativeTransformer",
+    "SelectiveLog1pTransformer",
+    "StandardScaler",
+    "RandomForestClassifier"
+  ],
   "classes": [
     "Analysis",
     "Backdoor",
@@ -12,7 +19,8 @@
     "Worms"
   ],
   "benign_label": "Benign",
-  "n_estimators": 100,
+  "n_estimators": 200,
+  "max_depth": 20,
   "n_features_in": 76,
   "label_map": {
     "0": "Benign",
@@ -25,5 +33,12 @@
     "7": "Reconnaissance",
     "8": "Shellcode",
     "9": "Worms"
+  },
+  "metrics": {
+    "accuracy": 0.9283,
+    "precision_t90": 0.9163,
+    "recall_t90": 0.9922,
+    "f1_t90": 0.9527,
+    "fp_rate_t90": 0.0227
   }
 }

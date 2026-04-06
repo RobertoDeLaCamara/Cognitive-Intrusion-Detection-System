@@ -20,13 +20,13 @@ The sandbox consists of two components:
 The digital twin models a typical home/small-office network:
 
 ```
-192.168.1.0/24
+[INTERNAL_SUBNET]
 │
-├── 192.168.1.1    ROUTER      — Default gateway
-├── 192.168.1.60   NAS         — Synology NAS (SMB, NFS, HTTP)
-├── 192.168.1.62   GITEA       — Self-hosted Git server (HTTP/HTTPS)
-├── 192.168.1.86   REGISTRY    — Private Docker registry (HTTPS :5000)
-└── 192.168.1.100  CLIENT      — Developer workstation
+├── [INTERNAL_IP]    ROUTER      — Default gateway
+├── [INTERNAL_IP]   NAS         — NAS (SMB, NFS, HTTP)
+├── [GIT_SERVER_IP]   GIT_SERVER       — Self-hosted Git server (HTTP/HTTPS)
+├── [REGISTRY_IP]   REGISTRY    — Private Docker registry (HTTPS :5000)
+└── [CLIENT_IP]  CLIENT      — Developer workstation
 ```
 
 These IPs are representative of a real lab environment and match the `TRUSTED_OUTBOUND` device profiles in `.env.example`. Each device has realistic traffic patterns modeled in the generator.
@@ -46,7 +46,7 @@ Models day-to-day device activity:
 | Traffic Type | Source | Destination | Protocol |
 |---|---|---|---|
 | HTTP/HTTPS web browsing | CLIENT | External IPs | TCP 80/443 |
-| Git push/pull | CLIENT | GITEA :3000 | TCP |
+| Git push/pull | CLIENT | GIT_SERVER :3000 | TCP |
 | Docker pull | CLIENT | REGISTRY :5000 | TCP/HTTPS |
 | NAS file access | CLIENT | NAS :445 | SMB/TCP |
 | DNS lookups | CLIENT | ROUTER :53 | UDP |
@@ -63,7 +63,7 @@ Packet sizes, inter-arrival times, and flow durations are randomized within real
 | `port_scan` | Full Port Scan | External `10.0.0.3` | All local IPs |
 | `brute_force` | SSH Brute Force | External `10.0.0.4` | CLIENT :22 |
 | `large_payload_exfil` | Data Exfiltration | CLIENT | External :8080 |
-| `web_attacks` | SQLi + XSS | External `10.0.0.5` | GITEA :3000 |
+| `web_attacks` | SQLi + XSS | External `10.0.0.5` | GIT_SERVER :3000 |
 
 ### PCAP structure
 
@@ -125,30 +125,30 @@ Generating synthetic traffic...
 Replaying traffic through detection pipeline...
 
 --- Scenario: ICMP Flood ---
-[CRITICAL] DoS attack from 10.0.0.1 → 192.168.1.1
+[CRITICAL] DoS attack from 10.0.0.1 → [INTERNAL_IP]
   Engines: supervised=0.88 | iforest=0.91 | lstm=N/A | rules=1.00
   Ensemble: 0.91 | MITRE: T1498
 
 --- Scenario: SYN Scan ---
-[HIGH] PortScan from 10.0.0.2 → 192.168.1.100
+[HIGH] PortScan from 10.0.0.2 → [CLIENT_IP]
   Engines: supervised=0.84 | iforest=0.87 | lstm=0.71 | rules=1.00
   Ensemble: 0.85 | MITRE: T1046
 
 --- Scenario: Brute Force ---
-[MEDIUM] SSH-Patator from 10.0.0.4 → 192.168.1.100:22
+[MEDIUM] SSH-Patator from 10.0.0.4 → [CLIENT_IP]:22
   Engines: supervised=0.79 | iforest=0.65 | lstm=0.72 | rules=0.00
   Ensemble: 0.69 | MITRE: T1110
 
 --- Scenario: Data Exfiltration ---
-[HIGH] Anomaly from 192.168.1.100 → 10.0.0.99:8080
+[HIGH] Anomaly from [CLIENT_IP] → 10.0.0.99:8080
   Engines: supervised=0.21 | iforest=0.73 | lstm=0.84 | rules=0.00
   Ensemble: 0.61 | MITRE: T1048
 
 --- Scenario: Web Attacks ---
-[HIGH] Web Attack – SQL Injection from 10.0.0.5 → 192.168.1.62:3000
+[HIGH] Web Attack – SQL Injection from 10.0.0.5 → [GIT_SERVER_IP]:3000
   Engines: supervised=0.83 | iforest=0.54 | lstm=0.45 | rules=1.00
   Ensemble: 0.76 | MITRE: T1190
-[MEDIUM] Web Attack – XSS from 10.0.0.5 → 192.168.1.62:3000
+[MEDIUM] Web Attack – XSS from 10.0.0.5 → [GIT_SERVER_IP]:3000
   Engines: supervised=0.71 | iforest=0.49 | lstm=0.42 | rules=1.00
   Ensemble: 0.68 | MITRE: T1059.007
 
@@ -193,7 +193,7 @@ python scripts/pcap_replay.py \
   "alerts": [
     {
       "timestamp": "...",
-      "src_ip": "192.168.1.100",
+      "src_ip": "[CLIENT_IP]",
       "attack_type": "PortScan",
       "severity": "high",
       "ensemble_score": 0.83,
@@ -244,12 +244,12 @@ In `demo/generate_traffic.py`, add a new IP to the device constants:
 
 ```python
 # ── Device IPs ────────────────────────────────────────────────────────────────
-ROUTER   = "192.168.1.1"
-NAS      = "192.168.1.60"
-GITEA    = "192.168.1.62"
-REGISTRY = "192.168.1.86"
-CLIENT   = "192.168.1.100"
-NEW_IOT  = "192.168.1.120"  # Add your device
+ROUTER   = "[INTERNAL_IP]"
+NAS      = "[INTERNAL_IP]"
+GIT_SERVER    = "[GIT_SERVER_IP]"
+REGISTRY = "[REGISTRY_IP]"
+CLIENT   = "[CLIENT_IP]"
+NEW_IOT  = "[INTERNAL_IP]"  # Add your device
 ```
 
 Then add traffic generation logic for the device in the `generate_normal_traffic()` function using Scapy packet constructors.

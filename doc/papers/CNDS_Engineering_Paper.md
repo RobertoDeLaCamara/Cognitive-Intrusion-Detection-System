@@ -1,6 +1,6 @@
 # CNDS: A Four-Engine Weighted Ensemble System for Real-Time Network Intrusion Detection with MITRE ATT&CK Attribution
 
-**Abstract** — We present CNDS (Cognitive Network Defense System), a real-time network intrusion detection system that fuses four complementary detection engines — a supervised Random Forest classifier, an unsupervised Isolation Forest, an LSTM Autoencoder, and a rule-based heuristic engine — through a weighted ensemble with dynamic weight redistribution and Platt temperature calibration. The system extracts 76 CICFlowMeter-compatible flow features, 18 per-IP host behavioral features, and 10 payload-derived features from live Scapy packet capture through an asynchronous worker queue. Detected threats are automatically enriched with MITRE ATT&CK technique mappings and exported to SIEM platforms via Splunk HEC, Elastic, and Syslog-CEF. We describe the system architecture, feature engineering pipeline, ensemble scoring mechanism, deduplication strategy, and SIEM integration approach. The system is deployed as a three-container Docker Compose stack and exposed via a FastAPI REST interface with WebSocket streaming, JWT/RBAC authentication, and Prometheus metrics.
+**Abstract** — We present CNDS (Cognitive Network Defense System), a real-time network intrusion detection system that fuses four complementary detection engines — a supervised Random Forest classifier, an unsupervised Isolation Forest, an LSTM Autoencoder, and a rule-based heuristic engine — through a weighted ensemble with dynamic weight redistribution and Platt temperature calibration. The system extracts 76 CICFlowMeter-compatible flow features, 18 per-IP host behavioral features, and 10 payload-derived features from live Scapy packet capture through an asynchronous worker queue. Detected threats are automatically enriched with MITRE ATT&CK technique mappings and exported to SIEM platforms via Splunk HEC, Elastic, and Syslog-CEF. We describe the system architecture, feature engineering pipeline, ensemble scoring mechanism, deduplication strategy, and SIEM integration approach. The system is deployed as a three-container Docker Compose stack and exposed via a FastAPI REST interface with WebSocket streaming, JWT/RBAC authentication, and Monitoring Service metrics.
 
 ---
 
@@ -248,7 +248,7 @@ Two authentication mechanisms are supported:
 
 ### 8.4 Observability
 
-Prometheus metrics are exposed at `GET /metrics`:
+Monitoring Service metrics are exposed at `GET /metrics`:
 
 | Metric | Type | Labels |
 |--------|------|--------|

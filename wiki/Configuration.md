@@ -99,10 +99,10 @@ Configuration is validated on startup. Invalid settings (e.g., weights not summi
 
 | Variable | Default | Description |
 |---|---|---|
-| `PROMETHEUS_ENABLED` | `false` | Enable Prometheus metrics at `/metrics` |
+| `Monitoring Service_ENABLED` | `false` | Enable Monitoring Service metrics at `/metrics` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | _(empty)_ | OpenTelemetry OTLP endpoint |
-| `MLFLOW_TRACKING_URI` | _(empty)_ | MLflow server URL; empty disables MLflow |
-| `MLFLOW_REGISTRY_NAME` | `cnds` | MLflow model registry name |
+| `ML Tracking_TRACKING_URI` | _(empty)_ | ML Tracking server URL; empty disables ML Tracking |
+| `ML Tracking_REGISTRY_NAME` | `cnds` | ML Tracking model registry name |
 | `LOG_FORMAT` | `text` | Log output format: `text` or `json` (structured) |
 
 ## Enrichment & Notifications

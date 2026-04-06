@@ -12,11 +12,11 @@
 
 | File | Audience | Description |
 |---|---|---|
-| [concepts.md](concepts.md) | All audiences | MITRE ATT&CK, JA3, flows, ML algorithms, SIEM, JWT, Prometheus, attack types |
+| [concepts.md](concepts.md) | All audiences | MITRE ATT&CK, JA3, flows, ML algorithms, SIEM, JWT, Monitoring Service, attack types |
 | [product.md](product.md) | Executives, PM, sales | Commercial purpose, value proposition, competitive positioning |
 | [architecture.md](architecture.md) | Engineers, architects | System design, data flow, component responsibilities |
 | [engines.md](engines.md) | ML engineers, security engineers | Detection engine overview, model specs, tuning |
-| [ml-models.md](ml-models.md) | ML engineers, data scientists | Deep dive: feature engineering, training, retraining, calibration, MLflow |
+| [ml-models.md](ml-models.md) | ML engineers, data scientists | Deep dive: feature engineering, training, retraining, calibration, ML Tracking |
 | [api-reference.md](api-reference.md) | Integrators, developers | Complete REST + WebSocket API reference |
 | [use-cases.md](use-cases.md) | SOC analysts, security architects | Operational use cases, attack scenarios, analyst workflows |
 | [digital-twin-sandbox.md](digital-twin-sandbox.md) | Engineers, demo operators | Local network digital twin, offline demo, sandbox testing |

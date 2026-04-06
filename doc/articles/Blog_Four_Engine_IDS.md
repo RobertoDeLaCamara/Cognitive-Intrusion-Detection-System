@@ -133,7 +133,7 @@ A few takeaways from building and operating this system:
 
 1. **The ensemble weight split matters less than you think, but calibration matters a lot.** Moving from 40/30/20/10 to 35/35/20/10 had minimal impact on aggregate precision/recall. But a miscalibrated temperature produced a bimodal score distribution that made it impossible to set a useful threshold.
 
-2. **Trusted-outbound filtering is essential in any real network.** A Synology NAS scanning its own subnet generates hundreds of "anomalous" host feature vectors per hour. Adding it to `TRUSTED_OUTBOUND` eliminates this noise without weakening detection elsewhere.
+2. **Trusted-outbound filtering is essential in any real network.** A NAS scanning its own subnet generates hundreds of "anomalous" host feature vectors per hour. Adding it to `TRUSTED_OUTBOUND` eliminates this noise without weakening detection elsewhere.
 
 3. **The LSTM's value is in the edge cases.** On the CIC-IDS2017 benchmark, the LSTM adds ~2% to precision. In production, it caught three slow-and-low exfiltration events that the RF and IF both missed. The 20% weight understates its operational importance.
 

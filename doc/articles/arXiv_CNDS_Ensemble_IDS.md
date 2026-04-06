@@ -58,7 +58,7 @@ The architecture enforces a strict separation between the detection path (latenc
 
 ### 3.2 Key Design Decisions
 
-**Bounded queues with drop semantics.** Both the packet queue and the alert queue are bounded. When a queue is full, new items are dropped rather than blocking the producer. This ensures that the packet capture thread never blocks on consumer backpressure. Dropped packet count and dropped alert count are tracked as Prometheus metrics for operational monitoring.
+**Bounded queues with drop semantics.** Both the packet queue and the alert queue are bounded. When a queue is full, new items are dropped rather than blocking the producer. This ensures that the packet capture thread never blocks on consumer backpressure. Dropped packet count and dropped alert count are tracked as Monitoring Service metrics for operational monitoring.
 
 **Per-IP state isolation.** All per-IP state (host feature sliding windows, LSTM sequence buffers, alert deduplication cache) is keyed on source IP. State isolation ensures that a high-volume source IP cannot affect the behavioral model of other source IPs.
 
@@ -235,7 +235,7 @@ The alert writer thread processes the alert queue with the following operations 
 3. Structured JSON log append
 4. Database INSERT (SQLite or PostgreSQL via asyncio thread pool)
 
-The queue (capacity 1,000) provides backpressure isolation between the detection path and the persistence path. Queue depth is emitted as a Prometheus gauge.
+The queue (capacity 1,000) provides backpressure isolation between the detection path and the persistence path. Queue depth is emitted as a Monitoring Service gauge.
 
 ### 7.4 SIEM Integration
 

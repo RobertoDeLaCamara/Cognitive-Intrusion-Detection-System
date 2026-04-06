@@ -1,11 +1,11 @@
 # CI/CD Pipeline
 
-CNDS uses a Jenkins pipeline defined in `Jenkinsfile`.
+CNDS uses a CI/CD pipeline defined in `CI/CDfile`.
 
 ## Pipeline Stages
 
 ### 1. Checkout
-Pulls the latest code from Gitea.
+Pulls the latest code from Git Server.
 
 ### 2. Build Image
 Builds a Docker image tagged with the build number and `latest`:
@@ -22,20 +22,20 @@ Two jobs run in parallel:
 
 ### 4. Run Tests
 Executes `pytest` inside the container with:
-- JUnit XML output for Jenkins test reporting
+- JUnit XML output for CI/CD test reporting
 - Coverage report
 
-### 5. SonarQube Analysis
-Pushes static analysis results to SonarQube (project key: `cnds`). Configuration is in `sonar-project.properties`.
+### 5. Quality Analysis Analysis
+Pushes static analysis results to Quality Analysis (project key: `cnds`). Configuration is in `sonar-project.properties`.
 
 ### 6. Push to Registry
-Pushes the built image to the private Docker registry at `192.168.1.86:5000`.
+Pushes the built image to the private Docker registry at `[REGISTRY_IP]:5000`.
 
 ## Configuration Files
 
 | File | Purpose |
 |---|---|
-| `Jenkinsfile` | Pipeline definition |
+| `CI/CDfile` | Pipeline definition |
 | `Dockerfile` | Container build (pins `torch==2.5.1+cpu`, default CMD starts API) |
-| `sonar-project.properties` | SonarQube project settings |
+| `sonar-project.properties` | Quality Analysis project settings |
 | `.dockerignore` | Files excluded from Docker build context |

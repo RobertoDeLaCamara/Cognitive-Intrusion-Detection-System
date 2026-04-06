@@ -31,11 +31,11 @@ Classify network flows into one of 9 known attack categories or `Benign`. This e
 
 | Priority | Source | When available |
 |---|---|---|
-| 1 | MLflow registry | `MLFLOW_TRACKING_URI` is set and model is registered |
+| 1 | ML Tracking registry | `ML Tracking_TRACKING_URI` is set and model is registered |
 | 2 | `models/rf_model.joblib` | Locally trained full model (gitignored, 124MB+) |
 | 3 | `models/rf_lite_model.joblib` | **Bundled lite model — ships with the repo** |
 
-The lite model (1.6MB, 91% accuracy on CIC-UNSW-NB15) provides functional detection out-of-the-box on a fresh `git clone`. The full model or MLflow version are used automatically when available.
+The lite model (1.6MB, 91% accuracy on CIC-UNSW-NB15) provides functional detection out-of-the-box on a fresh `git clone`. The full model or ML Tracking version are used automatically when available.
 
 ### Attack Classes
 
@@ -61,8 +61,8 @@ python scripts/train_rf.py --lite
 # Train full production model (447k samples, ~124MB, gitignored)
 python scripts/train_rf.py
 
-# Train and register to MLflow
-python scripts/train_rf.py --mlflow-uri http://192.168.1.48:5050
+# Train and register to ML Tracking
+python scripts/train_rf.py --ML Tracking-uri http://[MAIN_NODE_IP]:5050
 ```
 
 ### Extending
@@ -328,11 +328,11 @@ Training code is expected in the `scripts/` or `models/` directory. The config f
 }
 ```
 
-### MLflow Integration
-When `MLFLOW_TRACKING_URI` is set, models can be loaded from the registry:
+### ML Tracking Integration
+When `ML Tracking_TRACKING_URI` is set, models can be loaded from the registry:
 ```bash
 # Register a new model version
-python src/mlflow_registry.py --register models/rf_model_v2.joblib --name cnds-rf
+python src/ML Tracking_registry.py --register models/rf_model_v2.joblib --name cnds-rf
 ```
 
-The `src/mlflow_registry.py` module provides a unified interface for loading from registry or local path.
+The `src/ML Tracking_registry.py` module provides a unified interface for loading from registry or local path.

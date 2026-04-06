@@ -1,6 +1,6 @@
 # CNDS — Modelos de ML/AI: Entrenamiento y Reentrenamiento
 
-Este documento cubre en detalle los tres modelos de machine learning del sistema (Random Forest, Isolation Forest, LSTM Autoencoder), su ingeniería de features, los parámetros exactos de configuración, los procedimientos de entrenamiento inicial y reentrenamiento, la calibración del ensemble, el sistema de pesos adaptativos y la integración con MLflow.
+Este documento cubre en detalle los tres modelos de machine learning del sistema (Random Forest, Isolation Forest, LSTM Autoencoder), su ingeniería de features, los parámetros exactos de configuración, los procedimientos de entrenamiento inicial y reentrenamiento, la calibración del ensemble, el sistema de pesos adaptativos y la integración con ML Tracking.
 
 ---
 
@@ -17,7 +17,7 @@ Este documento cubre en detalle los tres modelos de machine learning del sistema
 6. [Rules Engine (Heurístico)](#6-rules-engine-heurístico)
 7. [Ensemble Scorer: Fusión y Calibración](#7-ensemble-scorer-fusión-y-calibración)
 8. [Pesos Adaptativos (Feedback Loop)](#8-pesos-adaptativos-feedback-loop)
-9. [Integración con MLflow](#9-integración-con-mlflow)
+9. [Integración con ML Tracking](#9-integración-con-ML Tracking)
 10. [Procedimientos de Entrenamiento](#10-procedimientos-de-entrenamiento)
 11. [Procedimientos de Reentrenamiento](#11-procedimientos-de-reentrenamiento)
 12. [Evaluación de Modelos](#12-evaluación-de-modelos)
@@ -382,8 +382,8 @@ def predict(self, flow_features, payload_features=None):
 
 ```python
 def _load(self):
-    # 1. Intentar desde MLflow registry (si MLFLOW_TRACKING_URI configurado)
-    model = mlflow_registry.load_latest("supervised")
+    # 1. Intentar desde ML Tracking registry (si ML Tracking_TRACKING_URI configurado)
+    model = ML Tracking_registry.load_latest("supervised")
     if model is not None:
         self._model = model
         return
@@ -744,18 +744,18 @@ weights = {e: w / total for e, w in weights.items()}
 
 ---
 
-## 9. Integración con MLflow
+## 9. Integración con ML Tracking
 
-**Archivo:** `src/mlflow_registry.py`
+**Archivo:** `src/ML Tracking_registry.py`
 
 ### Configuración
 
 ```bash
-MLFLOW_TRACKING_URI=http://mlflow-server:5000   # Servidor MLflow
-MLFLOW_REGISTRY_NAME=cnds                        # Prefijo de modelo en registry
+ML Tracking_TRACKING_URI=http://ML Tracking-server:5000   # Servidor ML Tracking
+ML Tracking_REGISTRY_NAME=cnds                        # Prefijo de modelo en registry
 ```
 
-Cuando `MLFLOW_TRACKING_URI` está vacío, toda la funcionalidad MLflow se deshabilita silenciosamente y los motores cargan desde archivos locales.
+Cuando `ML Tracking_TRACKING_URI` está vacío, toda la funcionalidad ML Tracking se deshabilita silenciosamente y los motores cargan desde archivos locales.
 
 ### Registro de modelos
 
@@ -763,14 +763,14 @@ Todos los modelos ML son registrados bajo nombres con prefijo `cnds-`:
 
 | Motor | Registry name | Función de carga |
 |---|---|---|
-| Random Forest | `cnds-supervised` | `mlflow.sklearn.load_model()` |
-| Isolation Forest | `cnds-isolation_forest` | `mlflow.sklearn.load_model()` |
-| LSTM Autoencoder | `cnds-lstm` | `mlflow.pytorch.load_model()` |
+| Random Forest | `cnds-supervised` | `ML Tracking.sklearn.load_model()` |
+| Isolation Forest | `cnds-isolation_forest` | `ML Tracking.sklearn.load_model()` |
+| LSTM Autoencoder | `cnds-lstm` | `ML Tracking.pytorch.load_model()` |
 
 ### Registrar un modelo entrenado
 
 ```python
-from src.mlflow_registry import log_model, log_pytorch_model
+from src.ML Tracking_registry import log_model, log_pytorch_model
 
 # Random Forest / Isolation Forest (scikit-learn)
 log_model(
@@ -799,16 +799,16 @@ log_pytorch_model(
 
 ### Ciclo de vida de versiones
 
-MLflow maneja múltiples versiones por modelo. La función `load_latest()` carga por defecto el stage `"Production"`:
+ML Tracking maneja múltiples versiones por modelo. La función `load_latest()` carga por defecto el stage `"Production"`:
 
 ```python
-model_uri = f"models:/{MLFLOW_REGISTRY_NAME}-{model_name}/Production"
+model_uri = f"models:/{ML Tracking_REGISTRY_NAME}-{model_name}/Production"
 ```
 
 **Proceso para promover una nueva versión:**
 1. Entrenar el nuevo modelo.
 2. Registrarlo con `log_model()` (crea version N en stage "None").
-3. En MLflow UI o CLI: transicionar versión N a "Staging".
+3. En ML Tracking UI o CLI: transicionar versión N a "Staging".
 4. Validar con `pcap_replay.py` en tráfico de referencia.
 5. Transicionar a "Production". CNDS cargará el nuevo modelo en el próximo restart.
 6. Archivar la versión anterior.
@@ -1183,12 +1183,12 @@ with open('models/lstm_config.json', 'w') as f:
 # Reemplazar lstm_autoencoder.pt y lstm_config.json
 ```
 
-### 11.4 Versionado con MLflow (proceso recomendado para producción)
+### 11.4 Versionado con ML Tracking (proceso recomendado para producción)
 
 ```bash
 # Después de entrenar un nuevo modelo:
 python -c "
-from src.mlflow_registry import log_model
+from src.ML Tracking_registry import log_model
 
 # Cargar modelo nuevo
 from joblib import load
@@ -1204,7 +1204,7 @@ uri = log_model(
 print('Registered:', uri)
 "
 
-# En MLflow UI: transicionar de None → Staging → (validar) → Production
+# En ML Tracking UI: transicionar de None → Staging → (validar) → Production
 # CNDS cargará automáticamente la nueva versión Production al reiniciar
 ```
 

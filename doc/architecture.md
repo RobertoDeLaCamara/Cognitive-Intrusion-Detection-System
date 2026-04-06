@@ -330,7 +330,7 @@ triggered_rules: list[str]   # from rules engine
 - Lifespan context manager: initializes DB, starts periodic cleanup task.
 - CORS middleware (configured via `CORS_ORIGINS`).
 - Optional legacy API-key auth via `X-API-Key` header.
-- Prometheus exporter at `/metrics`.
+- Monitoring Service exporter at `/metrics`.
 - OpenTelemetry tracing via `OTEL_EXPORTER_OTLP_ENDPOINT`.
 - Per-IP rate limiting: `RATE_LIMIT_REQUESTS` per `RATE_LIMIT_WINDOW` seconds.
 
@@ -465,7 +465,7 @@ Key configuration categories:
 | Auth | `JWT_SECRET`, `JWT_ALGORITHM`, `JWT_EXPIRE_MINUTES` |
 | Enrichment | `GEOIP_DB_PATH`, `CORRELATION_*`, `ADAPTIVE_WEIGHTS_ENABLED` |
 | Notifications | `WEBHOOK_URLS`, `NOTIFY_MIN_SEVERITY`, `TELEGRAM_*` |
-| Observability | `PROMETHEUS_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `LOG_FORMAT` |
+| Observability | `Monitoring Service_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `LOG_FORMAT` |
 | IP filtering | `IP_ALLOWLIST`, `IP_BLOCKLIST`, `TRUSTED_OUTBOUND` |
 
 ---

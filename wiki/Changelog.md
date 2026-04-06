@@ -64,5 +64,5 @@
 
 ### Planned
 - Model drift detection — alert when live traffic features diverge from training data
-- Feedback-driven retraining — analyst TP/FP labels → automated retraining via MLflow
+- Feedback-driven retraining — analyst TP/FP labels → automated retraining via ML Tracking
 - ONNX Runtime for LSTM — 2-5x inference speedup over raw PyTorch

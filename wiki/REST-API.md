@@ -23,7 +23,7 @@ Base URL: `http://localhost:8000`
 | `/api/auth/users` | GET / POST | User management (requires admin) |
 | `/api/auth/users/{user_id}` | DELETE | Delete user (requires admin) |
 | `/ws/alerts` | WebSocket | Real-time alert stream (`?token=JWT` when auth enabled) |
-| `/metrics` | GET | Prometheus metrics (when `PROMETHEUS_ENABLED=true`) |
+| `/metrics` | GET | Monitoring Service metrics (when `Monitoring Service_ENABLED=true`) |
 | `/docs` | GET | Swagger UI (auto-generated) |
 
 ## Authentication
@@ -68,7 +68,7 @@ Unauthenticated connections are rejected with close code 4001/4003.
 curl -X POST http://localhost:8000/api/predict \
   -H "Content-Type: application/json" \
   -d '{
-    "src_ip": "192.168.1.100",
+    "src_ip": "[CLIENT_IP]",
     "dst_ip": "10.0.0.1",
     "dst_port": 80,
     "protocol": 6,

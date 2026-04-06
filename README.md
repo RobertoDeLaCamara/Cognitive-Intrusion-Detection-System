@@ -181,7 +181,7 @@ Base URL: `http://localhost:8000`
 | `/api/auth/users` | GET / POST | User management (requires admin) |
 | `/api/auth/users/{user_id}` | DELETE | Delete user (requires admin) |
 | `/ws/alerts` | WebSocket | Real-time alert stream (`?token=JWT` when auth enabled) |
-| `/metrics` | GET | Prometheus metrics (when `PROMETHEUS_ENABLED=true`) |
+| `/metrics` | GET | Monitoring Service metrics (when `Monitoring Service_ENABLED=true`) |
 | `/docs` | GET | Swagger UI (auto-generated) |
 
 ### Example: manual prediction
@@ -190,7 +190,7 @@ Base URL: `http://localhost:8000`
 curl -X POST http://localhost:8000/api/predict \
   -H "Content-Type: application/json" \
   -d '{
-    "src_ip": "192.168.1.100",
+    "src_ip": "[CLIENT_IP]",
     "dst_ip": "10.0.0.1",
     "dst_port": 80,
     "protocol": 6,
@@ -302,15 +302,15 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `CORS_ORIGINS` | _(empty)_ | Comma-separated allowed origins; defaults to `http://localhost:3000` |
 | `ATTACK_TYPE_WEIGHTS` | `{}` | JSON: per-attack-type engine weight overrides |
 | `CALIBRATION_TEMPERATURE` | `1.0` | Platt scaling temperature (>1 softer, <1 sharper) |
-| `MLFLOW_TRACKING_URI` | `http://192.168.1.48:5050` | MLflow server URL; empty disables MLflow |
-| `MLFLOW_REGISTRY_NAME` | `cnds` | MLflow model registry name |
-| `AWS_ACCESS_KEY_ID` | — | MinIO access key for MLflow artifact store |
-| `AWS_SECRET_ACCESS_KEY` | — | MinIO secret key for MLflow artifact store |
-| `MLFLOW_S3_ENDPOINT_URL` | `http://192.168.1.189:9000` | MinIO S3 endpoint for MLflow artifacts |
+| `ML Tracking_TRACKING_URI` | `http://[MAIN_NODE_IP]:5050` | ML Tracking server URL; empty disables ML Tracking |
+| `ML Tracking_REGISTRY_NAME` | `cnds` | ML Tracking model registry name |
+| `AWS_ACCESS_KEY_ID` | — | S3-compatible storage access key for ML Tracking artifact store |
+| `AWS_SECRET_ACCESS_KEY` | — | S3-compatible storage secret key for ML Tracking artifact store |
+| `ML Tracking_S3_ENDPOINT_URL` | `http://[BACKUP_SERVER_IP]:9000` | S3-compatible storage S3 endpoint for ML Tracking artifacts |
 | `JWT_SECRET` | _(empty)_ | JWT signing secret; empty disables JWT auth |
 | `JWT_ALGORITHM` | `HS256` | JWT signing algorithm |
 | `JWT_EXPIRE_MINUTES` | `60` | JWT token expiry (minutes) |
-| `PROMETHEUS_ENABLED` | `false` | Enable Prometheus metrics at `/metrics` |
+| `Monitoring Service_ENABLED` | `false` | Enable Monitoring Service metrics at `/metrics` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | _(empty)_ | OpenTelemetry OTLP endpoint |
 | `GEOIP_DB_PATH` | _(empty)_ | Path to GeoLite2-City.mmdb; empty disables GeoIP |
 | `CORRELATION_WINDOW_SECS` | `300` | Time window for alert correlation (seconds) |
@@ -340,7 +340,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 ├── main.py                      # Entry point: capture + CLI
 ├── docker-compose.yml
 ├── Dockerfile
-├── Jenkinsfile                  # CI/CD: build → lint → test → SonarQube → push
+├── CI/CDfile                  # CI/CD: build → lint → test → Quality Analysis → push
 ├── sonar-project.properties
 ├── requirements.txt
 ├── .env.example
@@ -374,7 +374,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 ├── src/
 │   ├── config.py                # All settings (env-var driven)
 │   ├── pipeline.py              # Detection pipeline callback (flow → engines → alert)
-│   ├── mlflow_registry.py       # Unified MLflow model registry
+│   ├── ML Tracking_registry.py       # Unified ML Tracking model registry
 │   ├── capture/
 │   │   ├── packet_capture.py    # Scapy capture + async worker queue
 │   │   └── dispatcher.py        # Fan-out to feature pipelines on flow expiry
@@ -410,7 +410,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 │       ├── schemas.py           # Pydantic request/response schemas
 │       ├── database.py          # Async SQLAlchemy session setup
 │       ├── auth.py              # JWT authentication and RBAC
-│       ├── metrics.py           # Prometheus metrics + OpenTelemetry
+│       ├── metrics.py           # Monitoring Service metrics + OpenTelemetry
 │       ├── rate_limit.py        # Per-IP rate limiting middleware
 │       └── routers/
 │           ├── predict.py       # POST /api/predict
@@ -438,16 +438,16 @@ Copy `.env.example` to `.env` and adjust as needed.
 
 ## CI/CD Pipeline
 
-Jenkins pipeline stages (see `Jenkinsfile`):
+CI/CD pipeline stages (see `CI/CDfile`):
 
-1. **Checkout** — pull from Gitea
+1. **Checkout** — pull from Git Server
 2. **Build Image** — `docker build` tagged with build number and `latest`
 3. **Code Quality** (parallel)
    - *Lint* — flake8 (max line length 120)
    - *Security* — Safety dependency audit
 4. **Run Tests** — pytest with JUnit XML + coverage report
-5. **SonarQube Analysis** — static analysis pushed to SonarQube (`cnds` project)
-6. **Push to Registry** — push to private Docker registry at `192.168.1.86:5000`
+5. **Quality Analysis Analysis** — static analysis pushed to Quality Analysis (`cnds` project)
+6. **Push to Registry** — push to private Docker registry at `[REGISTRY_IP]:5000`
 
 ---
 

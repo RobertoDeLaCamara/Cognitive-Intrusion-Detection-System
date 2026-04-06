@@ -81,8 +81,8 @@ src/
 │   ├── schemas.py            # Pydantic request/response models
 │   ├── database.py           # Async session + Alembic migration
 │   ├── auth.py               # JWT + RBAC
-│   ├── metrics.py            # Prometheus + OpenTelemetry
+│   ├── metrics.py            # Monitoring Service + OpenTelemetry
 │   ├── rate_limit.py         # Per-IP rate limiting
 │   └── routers/              # Route modules (predict, alerts, auth, ws)
-└── mlflow_registry.py        # Unified MLflow model registry
+└── ML Tracking_registry.py        # Unified ML Tracking model registry
 ```

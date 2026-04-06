@@ -94,6 +94,12 @@ IF_SCALER_PATH      = os.path.join(MODELS_DIR, os.getenv("IF_SCALER_FILE", "if_s
 LSTM_MODEL_PATH     = os.path.join(MODELS_DIR, os.getenv("LSTM_MODEL_FILE", "lstm_autoencoder.pt"))
 LSTM_CONFIG_PATH    = os.path.join(MODELS_DIR, os.getenv("LSTM_CONFIG_FILE", "lstm_config.json"))
 
+# ── Isolation Forest training ─────────────────────────────────────────────────
+IF_TRAINING_STATUS_FILE = os.getenv("IF_TRAINING_STATUS_FILE", "/tmp/cnds_if_training_status.json")
+IF_CONTAMINATION        = float(os.getenv("IF_CONTAMINATION", "0.05"))
+IF_N_ESTIMATORS         = int(os.getenv("IF_N_ESTIMATORS", "200"))
+IF_MIN_SAMPLES          = int(os.getenv("IF_MIN_SAMPLES", "100"))
+
 # ── MLflow (Phase 5) ──────────────────────────────────────────────────────────
 MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://192.168.1.48:5050")  # homelab MLflow server
 MLFLOW_REGISTRY_NAME = os.getenv("MLFLOW_REGISTRY_NAME", "cnds")

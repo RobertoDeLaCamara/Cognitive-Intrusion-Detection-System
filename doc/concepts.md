@@ -20,11 +20,11 @@ This document explains the security, networking, and machine learning concepts r
 12. [SIEM Systems](#12-siem-systems)
 13. [CEF — Common Event Format](#13-cef--common-event-format)
 14. [JWT and RBAC](#14-jwt-and-rbac)
-15. [Prometheus and OpenTelemetry](#15-prometheus-and-opentelemetry)
+15. [Monitoring Service and OpenTelemetry](#15-Monitoring Service-and-opentelemetry)
 16. [TCP Flags](#16-tcp-flags)
 17. [Scapy](#17-scapy)
 18. [Alembic and Database Migrations](#18-alembic-and-database-migrations)
-19. [MLflow](#19-mlflow)
+19. [ML Tracking](#19-ML Tracking)
 20. [Glossary of Attack Types](#20-glossary-of-attack-types)
 
 ---
@@ -136,8 +136,8 @@ All packets matching a given 5-tuple, from first packet to last, constitute one 
 
 **Example:**
 ```
-192.168.1.100:54321 → 10.0.0.5:443 TCP  ← one flow
-10.0.0.5:443 → 192.168.1.100:54321 TCP  ← same flow, backward direction
+[CLIENT_IP]:54321 → 10.0.0.5:443 TCP  ← one flow
+10.0.0.5:443 → [CLIENT_IP]:54321 TCP  ← same flow, backward direction
 ```
 
 ### Why flows matter for ML
@@ -549,7 +549,7 @@ A CEF message is a single syslog line:
 
 **Example from CNDS:**
 ```
-<134>Mar 29 14:22:01 cnds CEF:0|CNDS|Cognitive Network Defense System|1.0.3|PortScan|Network Service Scanning Detected|7|src=192.168.1.100 dst=10.0.0.5 proto=TCP cs1=T1046 cs1Label=MITRETechnique cn1=0.85 cn1Label=EnsembleScore
+<134>Mar 29 14:22:01 cnds CEF:0|CNDS|Cognitive Network Defense System|1.0.3|PortScan|Network Service Scanning Detected|7|src=[CLIENT_IP] dst=10.0.0.5 proto=TCP cs1=T1046 cs1Label=MITRETechnique cn1=0.85 cn1Label=EnsembleScore
 ```
 
 **Fields:**
@@ -606,11 +606,11 @@ Role is embedded in the JWT payload. FastAPI dependency functions check the role
 
 ---
 
-## 15. Prometheus and OpenTelemetry
+## 15. Monitoring Service and OpenTelemetry
 
-### Prometheus
+### Monitoring Service
 
-Prometheus is an open-source monitoring and alerting toolkit. It works on a **pull model**: Prometheus scrapes an HTTP endpoint (`/metrics`) at a configured interval and stores the time-series data in its own database.
+Monitoring Service is an open-source monitoring and alerting toolkit. It works on a **pull model**: Monitoring Service scrapes an HTTP endpoint (`/metrics`) at a configured interval and stores the time-series data in its own database.
 
 Metrics are exposed in a simple text format:
 
@@ -626,7 +626,7 @@ Three metric types:
 - **Gauge:** A value that can go up or down (current active flows, queue size).
 - **Histogram:** Distribution of values (request latency, ensemble score distribution).
 
-CNDS exposes a Prometheus endpoint at `/metrics` (when `PROMETHEUS_ENABLED=true`). Prometheus scrapes it and Grafana visualizes it.
+CNDS exposes a Monitoring Service endpoint at `/metrics` (when `Monitoring Service_ENABLED=true`). Monitoring Service scrapes it and Visualization Service visualizes it.
 
 ### OpenTelemetry (OTel)
 
@@ -683,7 +683,7 @@ Scapy's packet model is a stack of **layers**, each representing a protocol:
 ```python
 from scapy.all import IP, TCP, Raw
 
-pkt = IP(src="192.168.1.1", dst="10.0.0.5") / TCP(sport=54321, dport=443, flags="S") / Raw(b"payload")
+pkt = IP(src="[INTERNAL_IP]", dst="10.0.0.5") / TCP(sport=54321, dport=443, flags="S") / Raw(b"payload")
 ```
 
 Each layer (`/`) stacks on top of the previous, and Scapy automatically fills in fields like checksums and lengths.
@@ -746,11 +746,11 @@ Alembic runs automatically at CNDS startup (in `src/api/database.py`), so fresh 
 
 ---
 
-## 19. MLflow
+## 19. ML Tracking
 
 ### What it is
 
-MLflow is an open-source platform for managing the machine learning lifecycle. It has four main components:
+ML Tracking is an open-source platform for managing the machine learning lifecycle. It has four main components:
 
 - **Tracking:** Log parameters, metrics, artifacts, and code version for every training run.
 - **Projects:** Package ML code for reproducible execution.
@@ -761,28 +761,28 @@ MLflow is an open-source platform for managing the machine learning lifecycle. I
 
 CNDS trains three ML models — Random Forest, Isolation Forest, LSTM Autoencoder. Without version control, you end up with files named `rf_model_v2_final_REAL.joblib` and no reliable way to know which version is in production, what metrics it achieved, or how to roll back if a new model regresses.
 
-MLflow solves this:
+ML Tracking solves this:
 - Every training run logs its hyperparameters, training metrics (accuracy, F1, threshold), and the model artifact.
 - The Registry provides a promotion workflow: train → register → test in Staging → promote to Production.
-- CNDS's engine loaders check MLflow first (`load_latest("supervised")`) and fall back to local files if MLflow is not configured.
+- CNDS's engine loaders check ML Tracking first (`load_latest("supervised")`) and fall back to local files if ML Tracking is not configured.
 
 ### Model lifecycle in CNDS
 
 ```
 Training run
     │ joblib.dump() / torch.save()
-    │ mlflow_registry.log_model()
+    │ ML Tracking_registry.log_model()
     ▼
-MLflow Registry
+ML Tracking Registry
     │ Stage: "None"  ← just registered
     │
     │ (validate with pcap_replay.py)
-    │ mlflow models transition
+    │ ML Tracking models transition
     ▼
     │ Stage: "Staging"  ← under test
     │
     │ (A/B comparison, analyst review)
-    │ mlflow models transition
+    │ ML Tracking models transition
     ▼
     │ Stage: "Production"  ← CNDS loads this on restart
     │
@@ -791,7 +791,7 @@ MLflow Registry
     │ Stage: "Archived"
 ```
 
-When `MLFLOW_TRACKING_URI` is empty, the entire registry layer is skipped silently and models are loaded from local files — useful for development and air-gapped environments.
+When `ML Tracking_TRACKING_URI` is empty, the entire registry layer is skipped silently and models are loaded from local files — useful for development and air-gapped environments.
 
 ---
 

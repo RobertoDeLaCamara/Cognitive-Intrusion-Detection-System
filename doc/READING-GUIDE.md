@@ -13,7 +13,7 @@ The CNDS documentation is designed to be read in layers. Not every reader needs 
 
 **→ Read: [concepts.md](concepts.md)**
 
-Twenty self-contained explanations of every concept the rest of the documentation assumes you know: MITRE ATT&CK (what it is, how it is structured, which techniques CNDS maps), network flows and the 5-tuple, CICFlowMeter and the CIC-IDS2017 dataset, JA3 TLS fingerprinting, Random Forest, Isolation Forest, LSTM Autoencoders, ensemble methods, confidence calibration, Shannon entropy, SIEM platforms, CEF syslog, JWT and RBAC, Prometheus, TCP flags, Scapy, Alembic migrations, MLflow, and a glossary of every attack type that appears in CNDS alerts.
+Twenty self-contained explanations of every concept the rest of the documentation assumes you know: MITRE ATT&CK (what it is, how it is structured, which techniques CNDS maps), network flows and the 5-tuple, CICFlowMeter and the CIC-IDS2017 dataset, JA3 TLS fingerprinting, Random Forest, Isolation Forest, LSTM Autoencoders, ensemble methods, confidence calibration, Shannon entropy, SIEM platforms, CEF syslog, JWT and RBAC, Monitoring Service, TCP flags, Scapy, Alembic migrations, ML Tracking, and a glossary of every attack type that appears in CNDS alerts.
 
 You do not need to read this document front to back. It is a reference — come back to it whenever a term in another document is unfamiliar.
 
@@ -60,7 +60,7 @@ A half-hour read that covers all four engines — Random Forest, Isolation Fores
 
 **→ Read next: [ml-models.md](ml-models.md)**
 
-The most technical and dense document in the collection. It goes to code level for each model: the 76 CICFlowMeter features with their exact indices and calculation formulas, the Isolation Forest sigmoid normalization, the per-IP FIFO buffers of the LSTM, the PyTorch autoencoder architecture, the exact hyperparameters of the production model, step-by-step procedures for training and retraining each model, and the MLflow version lifecycle.
+The most technical and dense document in the collection. It goes to code level for each model: the 76 CICFlowMeter features with their exact indices and calculation formulas, the Isolation Forest sigmoid normalization, the per-IP FIFO buffers of the LSTM, the PyTorch autoencoder architecture, the exact hyperparameters of the production model, step-by-step procedures for training and retraining each model, and the ML Tracking version lifecycle.
 
 This document is the reference for when you need to intervene in the models — whether to adapt the system to a new network, add an attack class, or diagnose performance degradation.
 
@@ -88,13 +88,13 @@ The three final documents are operational references. Read them in any order dep
 
 **→ Read: [digital-twin-sandbox.md](digital-twin-sandbox.md)**
 
-The digital twin is a simulated network (router, NAS, Gitea, Docker registry, workstation) with Scapy-generated synthetic traffic. No root, no database, no models needed. The demo runs five attack scenarios and produces a detection report. It also documents how to extend the twin with new devices and scenarios, and how to use the PCAP replay script to evaluate models against real captures.
+The digital twin is a simulated network (router, NAS, Git Server, Docker registry, workstation) with Scapy-generated synthetic traffic. No root, no database, no models needed. The demo runs five attack scenarios and produces a detection report. It also documents how to extend the twin with new devices and scenarios, and how to use the PCAP replay script to evaluate models against real captures.
 
 > *I want to integrate CNDS into my stack or build something on top of it.*
 
 **→ Read: [api-reference.md](api-reference.md)**
 
-Complete reference for every REST and WebSocket endpoint: alerts, incidents, manual prediction, statistics, suppression rules, adaptive weights, JWT/RBAC authentication, Prometheus metrics. Includes JSON request/response examples for every operation.
+Complete reference for every REST and WebSocket endpoint: alerts, incidents, manual prediction, statistics, suppression rules, adaptive weights, JWT/RBAC authentication, Monitoring Service metrics. Includes JSON request/response examples for every operation.
 
 > *I want to install it in production.*
 

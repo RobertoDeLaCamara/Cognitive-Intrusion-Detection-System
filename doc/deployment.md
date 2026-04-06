@@ -156,7 +156,7 @@ TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 
 # ── Observability ────────────────────────────────────────────────────────
-PROMETHEUS_ENABLED=true
+Monitoring Service_ENABLED=true
 OTEL_EXPORTER_OTLP_ENDPOINT=    # http://otel-collector:4318 (empty = disabled)
 LOG_FORMAT=json                  # json or text
 
@@ -170,15 +170,15 @@ IP_ALLOWLIST=                   # IPs or CIDR ranges; skip detection entirely
 IP_BLOCKLIST=                   # IPs or CIDR ranges; auto-flag all traffic
 
 # Trusted outbound (JSON): skip detection for specific src→domain pairs
-# TRUSTED_OUTBOUND={"192.168.1.60": ["relay.synology.com"]}
+# TRUSTED_OUTBOUND={"[INTERNAL_IP]": ["relay.nas-provider.com"]}
 
 # ── JA3 ──────────────────────────────────────────────────────────────────
 JA3_ENABLED=true
 MALICIOUS_JA3_FILE=             # Path to file with one JA3 hash per line
 
-# ── MLflow ───────────────────────────────────────────────────────────────
-MLFLOW_TRACKING_URI=            # Empty = use local model files
-MLFLOW_REGISTRY_NAME=cnds
+# ── ML Tracking ───────────────────────────────────────────────────────────────
+ML Tracking_TRACKING_URI=            # Empty = use local model files
+ML Tracking_REGISTRY_NAME=cnds
 
 # ── Adaptive Weights ─────────────────────────────────────────────────────
 ADAPTIVE_WEIGHTS_ENABLED=false
@@ -264,11 +264,11 @@ If models are absent, CNDS starts in **rules-only mode**. The `/health` endpoint
 {"engines": {"supervised": false, "isolation_forest": false, "lstm": false, "rules": true}}
 ```
 
-### Loading models from MLflow
+### Loading models from ML Tracking
 
 ```bash
-MLFLOW_TRACKING_URI=http://mlflow-server:5000
-MLFLOW_REGISTRY_NAME=cnds
+ML Tracking_TRACKING_URI=http://ML Tracking-server:5000
+ML Tracking_REGISTRY_NAME=cnds
 ```
 
 CNDS will attempt to load registered model versions from the registry instead of local files. Falls back to local files if registry is unreachable.

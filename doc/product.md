@@ -38,7 +38,7 @@ Traditional network IDS tools suffer from one or more of these limitations:
 
 ### For Engineering Teams
 - **Modular architecture**: Each detection engine is a Python class implementing a typed `DetectionEngine` protocol — new engines can be added without touching other components.
-- **Full observability**: Prometheus metrics, OpenTelemetry tracing, structured JSON logs, and a `/health` endpoint make CNDS a first-class citizen in modern infrastructure.
+- **Full observability**: Monitoring Service metrics, OpenTelemetry tracing, structured JSON logs, and a `/health` endpoint make CNDS a first-class citizen in modern infrastructure.
 - **Database choice**: SQLite for development and testing; drop-in PostgreSQL support for production concurrent-writer workloads.
 
 ---

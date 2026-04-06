@@ -58,7 +58,7 @@ Migration files live in `alembic/versions/` and are tracked in git.
 - [ ] Set `API_KEY` or use JWT auth — don't leave the API open
 - [ ] Pin `CAPTURE_INTERFACE` to the correct network interface
 - [ ] Set `LOG_FORMAT=json` for structured logging compatible with ELK/Loki/CloudWatch
-- [ ] Enable `PROMETHEUS_ENABLED=true` and configure scraping
+- [ ] Enable `Monitoring Service_ENABLED=true` and configure scraping
 - [ ] Configure `WEBHOOK_URLS` or `TELEGRAM_BOT_TOKEN` for alert notifications
 - [ ] Set `IP_ALLOWLIST` for trusted infrastructure IPs (monitoring, load balancers)
 - [ ] Review and tune `ENSEMBLE_THRESHOLD` and engine weights for your environment

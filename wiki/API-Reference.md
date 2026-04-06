@@ -66,7 +66,7 @@ Run all engines on manually supplied features. Useful for testing and offline re
   "flow_features": [0.0, ...],      // 76 float values
   "host_features": [0.0, ...],      // 18 float values (optional)
   "payload_features": [0.0, ...],   // 10 float values (optional)
-  "src_ip": "192.168.1.100",        // optional — for dedup/GeoIP
+  "src_ip": "[CLIENT_IP]",        // optional — for dedup/GeoIP
   "ja3_hash": "abc123..."           // optional
 }
 ```
@@ -123,7 +123,7 @@ Single alert with full detail including GeoIP, MITRE techniques, engine scores, 
 Update acknowledged status and/or add investigation notes.
 
 ```json
-{"acknowledged": true, "notes": "Confirmed DoS from 192.168.1.100"}
+{"acknowledged": true, "notes": "Confirmed DoS from [CLIENT_IP]"}
 ```
 
 ### `GET /api/alerts/export`
@@ -184,7 +184,7 @@ Create a suppression rule (e.g., scheduled maintenance window).
 
 ```json
 {
-  "src_ip": "192.168.1.50",
+  "src_ip": "[INTERNAL_IP]",
   "attack_type": null,
   "expires_at": "2025-04-01T06:00:00Z",
   "reason": "Scheduled vulnerability scan"
@@ -235,7 +235,7 @@ Message format matches `GET /api/alerts/{id}` response schema.
 
 ### `GET /metrics`
 
-Prometheus scrape endpoint. Exposes:
+Monitoring Service scrape endpoint. Exposes:
 
 | Metric | Type | Labels |
 |--------|------|--------|

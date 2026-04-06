@@ -73,7 +73,7 @@ This document describes operational scenarios for CNDS across different deployme
 
 **Signal chain:**
 
-1. Attacker runs `nmap -sS 192.168.1.0/24` from `10.0.0.99`.
+1. Attacker runs `nmap -sS [INTERNAL_SUBNET]` from `10.0.0.99`.
 2. **Rules Engine fires**: `syn_flag_count > PORT_SCAN_THRESHOLD AND tot_fwd_pkts < 3`. Rule: `syn_scan`.
 3. **Supervised engine**: "PortScan" label at 0.85 confidence. The combination of high SYN count, low packet total, and near-zero backward traffic is characteristic.
 4. **Isolation Forest**: Host features show massive `unique_ports` and `uncommon_port_ratio` values. Score: 0.91.
@@ -92,7 +92,7 @@ This document describes operational scenarios for CNDS across different deployme
 
 **Signal chain:**
 
-1. Attacker runs `hydra -t 4 -l root -P rockyou.txt ssh://192.168.1.10`.
+1. Attacker runs `hydra -t 4 -l root -P rockyou.txt ssh://[INTERNAL_IP]`.
 2. **Supervised engine**: "SSH-Patator" label at 0.81 confidence. The feature pattern — many short bidirectional flows to port 22 with consistent byte sizes — matches the training data.
 3. **Isolation Forest**: Elevated `packet_rate` and `unique_ports = 1` (all traffic to port 22) produces an anomaly score of 0.67.
 4. **LSTM**: Repeated short-duration flows over time create an unusual temporal pattern. Score: 0.73 after 20 flows.
@@ -266,12 +266,12 @@ This coverage maps directly to PCI DSS Requirement 11.4 (intrusion detection) an
 1. Before scan window: `POST /api/suppression-rules`:
 ```json
 {
-  "src_ip": "192.168.1.50",
+  "src_ip": "[INTERNAL_IP]",
   "reason": "Authorized Nessus scan — change #2026-042",
   "expires_at": "2026-03-29T20:00:00Z"
 }
 ```
-2. During scan: All alerts matching `src_ip=192.168.1.50` are silently suppressed.
+2. During scan: All alerts matching `src_ip=[INTERNAL_IP]` are silently suppressed.
 3. After scan window: Rule expires automatically at `expires_at`. Or manually delete with `DELETE /api/suppression-rules/3`.
 
 **Granular suppression:** The rule can match on `attack_type` (suppress only "PortScan" from the scanner IP while still alerting on unusual payloads). This allows suppressing known-benign scan behaviors while maintaining detection for unexpected activity from the same IP.
@@ -348,14 +348,14 @@ Alternatively, add a suppression rule for the NAS IP to achieve the same effect 
 **Actor:** Network administrator in a home/lab network
 **Goal:** Prevent CNDS from alerting on known-benign outbound traffic from specific devices.
 
-**Context:** The lab has a NAS that regularly syncs with Synology QuickConnect (relay.synology.com) and a Gitea server that fetches GitHub updates. These generate "Bot" and "Infiltration" false positives from the supervised engine.
+**Context:** The lab has a NAS that regularly syncs with NAS QuickConnect (relay.nas-provider.com) and a Git Server server that fetches GitHub updates. These generate "Bot" and "Infiltration" false positives from the supervised engine.
 
 **Configuration in `.env`:**
 ```
 TRUSTED_OUTBOUND='{
-  "192.168.1.60": ["relay.synology.com", "quickconnect.to"],
-  "192.168.1.62": ["github.com", "api.github.com", "objects.githubusercontent.com"],
-  "192.168.1.86": ["registry-1.docker.io", "auth.docker.io"]
+  "[INTERNAL_IP]": ["relay.nas-provider.com", "nas-provider.to"],
+  "[GIT_SERVER_IP]": ["github.com", "api.github.com", "objects.githubusercontent.com"],
+  "[REGISTRY_IP]": ["registry-1.docker.io", "auth.docker.io"]
 }'
 ```
 

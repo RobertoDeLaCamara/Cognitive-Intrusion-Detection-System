@@ -100,7 +100,7 @@ List alerts with optional filtering. Requires authentication.
   {
     "id": 1,
     "timestamp": "2026-03-29T14:22:01Z",
-    "src_ip": "192.168.1.100",
+    "src_ip": "[CLIENT_IP]",
     "dst_ip": "10.0.0.5",
     "src_port": 54231,
     "dst_port": 80,
@@ -233,7 +233,7 @@ List incidents. Requires authentication.
 [
   {
     "id": 1,
-    "title": "Repeated DoS from 192.168.1.100",
+    "title": "Repeated DoS from [CLIENT_IP]",
     "description": "Auto-created: 7 alerts from same source in 300s",
     "status": "open",
     "severity": "high",
@@ -303,7 +303,7 @@ List active suppression rules. Requires authentication.
 [
   {
     "id": 1,
-    "src_ip": "192.168.1.200",
+    "src_ip": "[INTERNAL_IP]",
     "dst_ip": null,
     "attack_type": "PortScan",
     "min_severity": "low",
@@ -323,7 +323,7 @@ Create a suppression rule. Requires `analyst` role.
 **Request body:**
 ```json
 {
-  "src_ip": "192.168.1.200",
+  "src_ip": "[INTERNAL_IP]",
   "attack_type": "PortScan",
   "min_severity": "low",
   "reason": "Authorized vulnerability scanner",
@@ -384,7 +384,7 @@ Return logged DNS queries. Requires authentication.
 [
   {
     "timestamp": "2026-03-29T14:20:11Z",
-    "src_ip": "192.168.1.100",
+    "src_ip": "[CLIENT_IP]",
     "query": "evil.domain.com",
     "query_type": "A",
     "response": "203.0.113.5"
@@ -403,7 +403,7 @@ Run the full detection pipeline on pre-computed feature vectors. Suitable for in
 **Request body:**
 ```json
 {
-  "src_ip": "192.168.1.100",
+  "src_ip": "[CLIENT_IP]",
   "dst_ip": "10.0.0.5",
   "dst_port": 80,
   "protocol": "TCP",
@@ -535,7 +535,7 @@ asyncio.run(stream_alerts())
 
 ### `GET /metrics`
 
-Prometheus metrics. No authentication required.
+Monitoring Service metrics. No authentication required.
 
 **Key metrics exposed:**
 

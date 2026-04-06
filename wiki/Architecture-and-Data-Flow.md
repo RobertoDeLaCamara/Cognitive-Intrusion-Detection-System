@@ -127,7 +127,7 @@ Detector + Dashboard
 |---------|----------|----------|---------|
 | API | 8000 | 8000 | REST + WebSocket |
 | Dashboard | 8501 | 8501 | Streamlit UI |
-| Prometheus | — | /metrics | Scrape endpoint on API |
+| Monitoring Service | — | /metrics | Scrape endpoint on API |
 | Syslog-CEF | — | 514 UDP/TCP | SIEM forwarding (optional) |
 
 ## Async Alert Writer

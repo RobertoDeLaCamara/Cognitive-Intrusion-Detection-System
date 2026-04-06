@@ -92,7 +92,7 @@ File: `src/enrichment/ip_lists.py`
 | Blocklist | `IP_BLOCKLIST` | Auto-escalate to CRITICAL severity |
 | Trusted outbound | `TRUSTED_OUTBOUND` | Per-device → domain suffix map; skip detection for matched pairs |
 
-`TRUSTED_OUTBOUND` format (JSON): `{"192.168.1.60": ["synology.com", "dropbox.com"]}`
+`TRUSTED_OUTBOUND` format (JSON): `{"[INTERNAL_IP]": ["nas-provider.com", "dropbox.com"]}`
 DNS reverse lookup with 1-hour TTL cache.
 
 ---
@@ -105,7 +105,7 @@ Suppress alerts during scheduled maintenance windows:
 
 ```json
 {
-  "src_ip": "192.168.1.50",
+  "src_ip": "[INTERNAL_IP]",
   "attack_type": null,
   "expires_at": "2025-04-01T06:00:00Z",
   "reason": "Scheduled vulnerability scan"
@@ -194,7 +194,7 @@ CEF (Common Event Format) over UDP/TCP to port 514. Compatible with QRadar, ArcS
 
 ```bash
 # Start CEF forwarder
-python siem/syslog/forwarder.py --host 192.168.1.200 --port 514 --proto udp
+python siem/syslog/forwarder.py --host [INTERNAL_IP] --port 514 --proto udp
 ```
 
 CEF Header format:

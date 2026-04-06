@@ -30,7 +30,7 @@ uvicorn src.api.main:app --port 8000   # API only
 | API | FastAPI + Uvicorn | 8000 |
 | Dashboard | Streamlit | 8501 |
 | Database | SQLite (default) / PostgreSQL | — |
-| Metrics | Prometheus | /metrics |
+| Metrics | Monitoring Service | /metrics |
 | Tracing | OpenTelemetry (optional) | — |
 
 ## Wiki Pages
@@ -52,7 +52,7 @@ src/features/                    flow (76), host (18), payload (10), JA3
 src/engines/                     RF, IF, LSTM, rules
 src/ensemble/scorer.py           weighted fusion + temperature scaling
 src/enrichment/                  MITRE, GeoIP, correlation, notifications
-src/api/                         FastAPI + JWT/RBAC + Prometheus + WebSocket
+src/api/                         FastAPI + JWT/RBAC + Monitoring Service + WebSocket
 siem/                            Splunk, Elastic, Syslog-CEF templates
 models/                          gitignored — must train separately
 ```

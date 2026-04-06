@@ -101,7 +101,7 @@ pytest tests/test_mitre.py -v
 | `DATABASE_URL` | `sqlite+aiosqlite:///./cnds.db` | Use `postgresql+asyncpg://...` for prod |
 | `JWT_SECRET` | (empty) | Enables JWT auth if set |
 | `API_KEY` | (empty) | Enables API key auth if set |
-| `PROMETHEUS_ENABLED` | false | Expose /metrics |
+| `Monitoring Service_ENABLED` | false | Expose /metrics |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (empty) | OTLP traces |
 | `GEOIP_DB_PATH` | (empty) | MaxMind GeoLite2 .mmdb path |
 | `WEBHOOK_URLS` | (empty) | Comma-separated notification URLs |
@@ -132,18 +132,18 @@ safety check
 flake8 src/ --max-line-length=120 && safety check && pytest tests/ -v --cov=src
 ```
 
-## CI/CD Pipeline (Jenkins)
+## CI/CD Pipeline (CI/CD)
 
-Defined in `Jenkinsfile`:
+Defined in `CI/CDfile`:
 
-1. **Checkout** — Pull from Gitea
+1. **Checkout** — Pull from Git Server
 2. **Build Image** — `docker build` with build number + `latest` tags
 3. **Code Quality** (parallel):
    - `flake8` lint (max-line-length 120)
    - `safety` dependency audit
 4. **Run Tests** — `pytest` with JUnit XML + coverage
-5. **SonarQube** — Static analysis push
-6. **Push** — Docker image to private registry `192.168.1.86:5000`
+5. **Quality Analysis** — Static analysis push
+6. **Push** — Docker image to private registry `[REGISTRY_IP]:5000`
 
 ## Docker Compose Details
 
@@ -208,7 +208,7 @@ src/
     ├── schemas.py               Pydantic request/response
     ├── database.py              Async session + auto-migration
     ├── auth.py                  JWT/RBAC
-    ├── metrics.py               Prometheus + OpenTelemetry
+    ├── metrics.py               Monitoring Service + OpenTelemetry
     ├── rate_limit.py            Per-IP token bucket
     └── routers/
         ├── alerts.py

@@ -29,6 +29,11 @@ import warnings
 import json
 from pathlib import Path
 
+# Unset HTTP proxy for local LAN traffic (MinIO artifact store on 192.168.1.x).
+# The system-wide proxy at .89 blocks S3/MinIO connections.
+for _v in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+    os.environ.pop(_v, None)
+
 import numpy as np
 import pandas as pd
 import joblib

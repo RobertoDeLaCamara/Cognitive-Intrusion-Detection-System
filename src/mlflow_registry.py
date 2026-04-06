@@ -37,6 +37,9 @@ def init():
     if not MLFLOW_TRACKING_URI or mlflow is None:
         logger.info("MLflow disabled (no MLFLOW_TRACKING_URI or mlflow not installed)")
         return False
+    # Unset system HTTP proxy so boto3 can reach the MinIO artifact store on LAN
+    for _v in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        os.environ.pop(_v, None)
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
     logger.info("MLflow tracking: %s", MLFLOW_TRACKING_URI)
     return True

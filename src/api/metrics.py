@@ -33,10 +33,12 @@ def _get_prometheus():
 _request_count = None
 _request_latency = None
 _alert_count = None
+_alert_suppressed_count = None
+_ensemble_score_histogram = None
 
 
 def _init_metrics():
-    global _request_count, _request_latency, _alert_count
+    global _request_count, _request_latency, _alert_count, _alert_suppressed_count, _ensemble_score_histogram
     prom = _get_prometheus()
     if prom is None:
         return
@@ -47,14 +49,36 @@ def _init_metrics():
         "cnds_http_request_duration_seconds", "Request latency", ["method", "endpoint"]
     )
     _alert_count = prom.Counter(
-        "cnds_alerts_total", "Total alerts fired", ["severity"]
+        "cnds_alerts_total", "Total alerts fired", ["severity", "engine"]
+    )
+    _alert_suppressed_count = prom.Counter(
+        "cnds_alerts_suppressed_total", "Total alerts suppressed by dedup or suppression rules",
+        ["reason"],
+    )
+    _ensemble_score_histogram = prom.Histogram(
+        "cnds_ensemble_score",
+        "Distribution of ensemble confidence scores",
+        ["is_anomaly"],
+        buckets=[0.1, 0.2, 0.3, 0.4, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0],
     )
 
 
-def inc_alert(severity: str):
+def inc_alert(severity: str, engine: str = "ensemble"):
     """Increment the alert counter."""
     if _alert_count is not None:
-        _alert_count.labels(severity=severity).inc()
+        _alert_count.labels(severity=severity, engine=engine).inc()
+
+
+def inc_suppressed(reason: str = "suppression_rule"):
+    """Increment the suppressed-alert counter. reason: 'dedup' | 'suppression_rule'"""
+    if _alert_suppressed_count is not None:
+        _alert_suppressed_count.labels(reason=reason).inc()
+
+
+def observe_ensemble_score(score: float, is_anomaly: bool):
+    """Record an ensemble score observation."""
+    if _ensemble_score_histogram is not None:
+        _ensemble_score_histogram.labels(is_anomaly=str(is_anomaly)).observe(score)
 
 
 def setup_prometheus(app: FastAPI):

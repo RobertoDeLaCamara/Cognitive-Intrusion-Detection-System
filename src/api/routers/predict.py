@@ -10,7 +10,7 @@ from ..database import get_db
 from ..models import Alert, SeverityLevel
 from ..schemas import PredictRequest, PredictResponse, EngineScoresOut
 from .websocket import broadcast_alert
-from ..metrics import inc_alert
+from ..metrics import inc_alert, inc_suppressed, observe_ensemble_score
 from ...engines.registry import supervised as _supervised, iforest as _iforest, lstm as _lstm, rules as _rules, ensemble as _ensemble
 from ...ensemble.scorer import EngineScores, severity_from_score
 from ...features.flow_extractor import FlowRecord
@@ -112,6 +112,9 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
 
     severity = severity_from_score(result.score, scores.attack_type)
 
+    # Record score distribution regardless of whether it becomes an alert
+    observe_ensemble_score(result.score, result.is_anomaly)
+
     # GeoIP enrichment
     geo = geoip.lookup(body.src_ip)
 
@@ -127,6 +130,7 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
             last = _api_dedup.get(dedup_key)
             if last and (now - last).total_seconds() < DEDUP_WINDOW_SECS:
                 # Duplicate — return result without persisting
+                inc_suppressed("dedup")
                 return PredictResponse(
                     src_ip=body.src_ip, ensemble_score=result.score,
                     is_anomaly=True, severity=severity,
@@ -168,6 +172,7 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
 
         # Check suppression rules
         if await is_suppressed(alert, db):
+            inc_suppressed("suppression_rule")
             await db.rollback()
         else:
             # Alert correlation
@@ -189,7 +194,13 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
             }
             await broadcast_alert(alert_payload)
             await notify_alert(alert_payload)
-            inc_alert(severity)
+            # Primary engine: the highest-scoring active engine
+            primary_engine = max(
+                result.active_engines,
+                key=lambda e: getattr(scores, e, 0.0) or 0.0,
+                default="ensemble",
+            )
+            inc_alert(severity, engine=primary_engine)
 
     return PredictResponse(
         src_ip=body.src_ip,

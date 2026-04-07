@@ -15,10 +15,13 @@ import sys
 import time
 import threading
 
+import os
+
 from src.config import CAPTURE_INTERFACE, DATABASE_URL, MALICIOUS_JA3_FILE, setup_logging
 from src.capture.packet_capture import PacketCapture, PacketProcessor
 from src.capture.dispatcher import Dispatcher
-from src.engines.registry import supervised, iforest, lstm
+from src.engines.registry import supervised, iforest, lstm, baseline
+from src import pipeline
 from src.pipeline import on_flow_complete
 
 logging.basicConfig(
@@ -36,8 +39,14 @@ def main():
     parser.add_argument("--duration", type=int, default=0, help="Run for N seconds (0 = forever)")
     args = parser.parse_args()
 
-    logger.info("Engines: supervised=%s  iforest=%s  lstm=%s  rules=True",
-                supervised.is_available, iforest.is_available, lstm.is_available)
+    logger.info(
+        "Engines: supervised=%s  iforest=%s  lstm=%s  baseline=%s  rules=True",
+        supervised.is_available, iforest.is_available, lstm.is_available, baseline.is_available,
+    )
+
+    # Initialise unsupervised baseline collector (enabled by default).
+    baseline_enabled = os.environ.get("BASELINE_COLLECTION_ENABLED", "true").lower() != "false"
+    pipeline.init_baseline_collector(enabled=baseline_enabled)
 
     # Load malicious JA3 hashes if configured
     if MALICIOUS_JA3_FILE:

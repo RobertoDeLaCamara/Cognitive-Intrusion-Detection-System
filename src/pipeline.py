@@ -15,11 +15,37 @@ from typing import List, Optional
 from .config import (
     DATABASE_URL, DEDUP_WINDOW_SECS, TRUSTED_OUTBOUND,
 )
-from .engines.registry import supervised, iforest, lstm, rules, ensemble
+from .engines.registry import supervised, iforest, lstm, baseline as baseline_engine, rules, ensemble
 from .ensemble.scorer import EngineScores, severity_from_score
 from .features.flow_extractor import FlowRecord
+from .unsupervised.collector import BaselineCollector
+from .unsupervised.triggers import CompositeTrigger
+from .unsupervised.window_trainer import WindowTrainer
 
 logger = logging.getLogger(__name__)
+
+# ── Unsupervised baseline collector (lazily initialised) ───────────────────
+_baseline_collector: Optional[BaselineCollector] = None
+_baseline_collector_lock = threading.Lock()
+
+
+def init_baseline_collector(enabled: bool = True) -> None:
+    """Initialise the global unsupervised baseline collector.
+
+    Safe to call multiple times; subsequent calls are no-ops.
+    """
+    global _baseline_collector
+    with _baseline_collector_lock:
+        if _baseline_collector is not None:
+            return
+        trainer = WindowTrainer(on_trained=baseline_engine.reload_from_mlflow_baseline)
+        trigger = CompositeTrigger()
+        _baseline_collector = BaselineCollector(
+            trigger=trigger,
+            on_window_ready=trainer.train_window,
+            enabled=enabled,
+        )
+    logger.info("Unsupervised baseline collector initialised (enabled=%s)", enabled)
 
 # ── Alert persistence (async writer thread) ────────────────────────────────
 _db_engine = None
@@ -69,6 +95,7 @@ def _writer_loop():
                         "isolation_forest": scores.isolation_forest,
                         "lstm": scores.lstm,
                         "rules": scores.rules,
+                        **({"baseline": scores.baseline} if scores.baseline is not None else {}),
                     },
                     triggered_rules=triggered,
                     src_geo=geoip_lookup(record.src_ip),
@@ -167,6 +194,13 @@ def on_flow_complete(
         if lstm.is_available:
             lstm.update(record.src_ip, host_vec)
             scores.lstm = lstm.anomaly_score(record.src_ip)
+        # Baseline engine: update ring buffer and score before feeding the collector,
+        # so the same host_vec contributes to both inference and the training window.
+        if baseline_engine.is_available:
+            baseline_engine.update(record.src_ip, host_vec)
+            scores.baseline = baseline_engine.anomaly_score(record.src_ip, host_vec)
+        if _baseline_collector is not None:
+            _baseline_collector.observe(record, host_vec)
 
     rule_score, triggered = rules.evaluate(record, flow_vec, payload_matches, ja3_info)
     scores.rules = rule_score

@@ -16,10 +16,15 @@ def _validate_config():
     """Validate configuration on module load. Raises ConfigurationError on failure."""
     errors = []
 
-    # Validate engine weights sum to 1.0
-    weight_sum = WEIGHT_SUPERVISED + WEIGHT_IFOREST + WEIGHT_LSTM + WEIGHT_RULES
+    # All five engine weights must sum to 1.0. WEIGHT_BASELINE is included because
+    # the ensemble normalises over *active* engines — omitting baseline from the
+    # budget would silently compress all other weights when it activates.
+    weight_sum = WEIGHT_SUPERVISED + WEIGHT_IFOREST + WEIGHT_LSTM + WEIGHT_RULES + WEIGHT_BASELINE
     if not (0.99 <= weight_sum <= 1.01):
-        errors.append(f"Engine weights must sum to 1.0, got {weight_sum:.3f}")
+        errors.append(
+            f"Engine weights (supervised+iforest+lstm+rules+baseline) must sum to 1.0, "
+            f"got {weight_sum:.3f}"
+        )
 
     # Validate thresholds are in valid ranges
     if not (0.0 <= ENSEMBLE_THRESHOLD <= 1.0):
@@ -62,10 +67,11 @@ COMMON_PORTS = {
 }
 
 # ── Engine weights ────────────────────────────────────────────────────────────
-WEIGHT_SUPERVISED   = float(os.getenv("WEIGHT_SUPERVISED", "0.40"))
-WEIGHT_IFOREST      = float(os.getenv("WEIGHT_IFOREST", "0.30"))
-WEIGHT_LSTM         = float(os.getenv("WEIGHT_LSTM", "0.20"))
-WEIGHT_RULES        = float(os.getenv("WEIGHT_RULES", "0.10"))
+WEIGHT_SUPERVISED   = float(os.getenv("WEIGHT_SUPERVISED", "0.35"))
+WEIGHT_IFOREST      = float(os.getenv("WEIGHT_IFOREST",   "0.25"))
+WEIGHT_LSTM         = float(os.getenv("WEIGHT_LSTM",      "0.15"))
+WEIGHT_RULES        = float(os.getenv("WEIGHT_RULES",     "0.05"))
+WEIGHT_BASELINE     = float(os.getenv("WEIGHT_BASELINE",  "0.20"))
 ENSEMBLE_THRESHOLD  = float(os.getenv("ENSEMBLE_THRESHOLD", "0.55"))
 RF_SCORE_THRESHOLD  = float(os.getenv("RF_SCORE_THRESHOLD", "0.90"))  # min confidence for RF to contribute a non-zero score
 

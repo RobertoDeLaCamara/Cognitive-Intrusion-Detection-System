@@ -48,6 +48,40 @@
 Default ensemble weights: Supervised 40 %, Isolation Forest 30 %, LSTM 20 %, Rules 10 %.
 Any missing engine has its weight redistributed proportionally across the active engines.
 
+### Unsupervised Baseline Training
+
+CNDS continuously collects live network feature vectors and autonomously trains baseline anomaly models — no labeled data required. When enough traffic diversity has been observed, a background thread fits a new **IsolationForest** and **LSTM Autoencoder** on the collected window and persists the artifacts to MLflow.
+
+**Trigger conditions** (all four must be satisfied simultaneously):
+
+| Condition | Default |
+|---|---|
+| Minimum feature vectors collected | 50,000 |
+| Minimum distinct source IPs | 20 |
+| Minimum elapsed time | 30 minutes |
+| Minimum destination-port Shannon entropy | 2.5 bits |
+
+A hard cap of 500,000 vectors overrides the composite trigger regardless of the other conditions.
+
+**Artifact layout** (logged under MLflow experiment `cnds-unsupervised-baseline`, registered as `cnds-unsupervised-baseline`):
+
+```
+unsupervised_baseline/
+  scaler.joblib          # StandardScaler fitted on training split
+  iforest.joblib         # IsolationForest (200 estimators, contamination 0.01)
+  lstm_autoencoder.pt    # LSTM Autoencoder weights (PyTorch .pt)
+  threshold.txt          # 99th-percentile reconstruction error threshold
+  provenance.json        # Window metadata: time range, fire reason, port/protocol histograms
+```
+
+If MLflow is not configured, models are still fitted but not persisted; a warning is logged.
+
+**Enable / disable:** set `BASELINE_COLLECTION_ENABLED=false` to disable collection entirely. The default is `true`.
+
+**Drop-counter warning:** while a training run is in progress, incoming samples are silently dropped and counted. When the run completes, a `WARNING` is logged with the total dropped count. A consistently high drop count means training takes longer than one window interval — consider reducing `min_total_vectors` or moving the training workload to a dedicated process.
+
+See [`doc/unsupervised.md`](doc/unsupervised.md) for the full developer reference.
+
 ### MITRE ATT&CK Mapping
 
 Every alert is automatically enriched with [MITRE ATT&CK](https://attack.mitre.org/) technique IDs. Mappings cover both supervised model labels (14 attack types) and rule triggers (11 rules including `malicious_ja3`). Techniques are deduplicated when multiple sources map to the same ID.
@@ -331,6 +365,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `LOG_FORMAT` | `text` | Log output format: `text` or `json` (structured) |
 | `JA3_ENABLED` | `true` | Extract JA3 fingerprints from TLS ClientHello |
 | `MALICIOUS_JA3_FILE` | _(empty)_ | Path to known-malicious JA3 hashes (one per line); empty disables |
+| `BASELINE_COLLECTION_ENABLED` | `true` | Enable unsupervised baseline collection and training |
 
 ---
 
@@ -392,6 +427,12 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   │   ├── lstm_autoencoder.py  # LSTM Autoencoder wrapper
 │   │   ├── lstm_model.py        # LSTM Autoencoder architecture (nn.Module)
 │   │   └── rules.py             # Rule-based engine (incl. JA3 rules)
+│   ├── unsupervised/
+│   │   ├── collector.py         # Thread-safe ring-capped feature vector buffer
+│   │   ├── triggers.py          # CompositeTrigger: four-condition window trigger
+│   │   ├── window_trainer.py    # IsolationForest + LSTM Autoencoder training + MLflow logging
+│   │   ├── artifact_schema.py   # Canonical MLflow artifact path constants
+│   │   └── provenance.py        # ProvenanceMetadata: window statistics snapshot
 │   ├── ensemble/
 │   │   └── scorer.py            # Weighted confidence fusion → EnsembleResult
 │   ├── enrichment/
@@ -431,7 +472,9 @@ Copy `.env.example` to `.env` and adjust as needed.
     ├── test_mitre.py            # MITRE ATT&CK mapping tests
     ├── test_payload_features.py
     ├── test_rules_engine.py
-    └── test_siem.py             # CEF syslog forwarder tests
+    ├── test_siem.py             # CEF syslog forwarder tests
+    └── unsupervised/
+        └── test_collector.py    # BaselineCollector, CompositeTrigger, ProvenanceMetadata unit tests
 ```
 
 ---

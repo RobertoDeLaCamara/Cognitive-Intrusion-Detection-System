@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from ..config import (
-    WEIGHT_SUPERVISED, WEIGHT_IFOREST, WEIGHT_LSTM, WEIGHT_RULES,
+    WEIGHT_SUPERVISED, WEIGHT_IFOREST, WEIGHT_LSTM, WEIGHT_RULES, WEIGHT_BASELINE,
     ENSEMBLE_THRESHOLD, ATTACK_TYPE_WEIGHTS, CALIBRATION_TEMPERATURE,
 )
 
@@ -24,6 +24,9 @@ class EngineScores:
     isolation_forest: Optional[float] = None
     lstm: Optional[float] = None
     rules: Optional[float] = None
+
+    # Live-trained environment baseline (IsolationForest + LSTM from BaselineEngine)
+    baseline: Optional[float] = None
 
     # Named attack classification from supervised engine
     attack_type: Optional[str] = None
@@ -60,6 +63,7 @@ class EnsembleScorer:
         "isolation_forest": WEIGHT_IFOREST,
         "lstm":            WEIGHT_LSTM,
         "rules":           WEIGHT_RULES,
+        "baseline":        WEIGHT_BASELINE,
     }
 
     def _get_weights(self, attack_type: Optional[str]) -> Dict[str, float]:
@@ -82,6 +86,8 @@ class EnsembleScorer:
             available["lstm"] = scores.lstm
         if scores.rules is not None:
             available["rules"] = scores.rules
+        if scores.baseline is not None:
+            available["baseline"] = scores.baseline
 
         if not available:
             return EnsembleResult(

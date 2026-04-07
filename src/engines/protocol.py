@@ -9,7 +9,7 @@ str IP for lstm). The protocol checks structural conformance only.
 The RulesEngine has a different interface (evaluate) and is excluded.
 """
 
-from typing import Protocol, runtime_checkable
+from typing import Optional, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -19,4 +19,4 @@ class DetectionEngine(Protocol):
     @property
     def is_available(self) -> bool: ...
 
-    def anomaly_score(self, *args, **kwargs) -> float: ...
+    def anomaly_score(self, *args, **kwargs) -> Optional[float]: ...

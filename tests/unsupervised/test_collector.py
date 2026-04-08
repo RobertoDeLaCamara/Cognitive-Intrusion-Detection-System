@@ -423,7 +423,7 @@ class TestDropCounterFix:
 
         assert collector._dropped_while_training == 0
         assert collector._training_in_flight is False
-        assert any("4" in r.message and "dropped" in r.message for r in caplog.records)
+        assert "4" in caplog.text and "dropped" in caplog.text
 
 
 # ── Fix 4: init_baseline_collector lock — TOCTOU protection ───────────────

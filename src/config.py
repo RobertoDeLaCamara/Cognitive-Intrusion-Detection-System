@@ -176,7 +176,12 @@ LOG_FORMAT = os.getenv("LOG_FORMAT", "text")  # "text" or "json"
 
 # ── JA3 TLS fingerprinting ────────────────────────────────────────────────────
 JA3_ENABLED = os.getenv("JA3_ENABLED", "true").lower() == "true"
-MALICIOUS_JA3_FILE = os.getenv("MALICIOUS_JA3_FILE", "")  # path to known-bad hashes
+MALICIOUS_JA3_FILE = os.getenv("MALICIOUS_JA3_FILE", "")
+
+# ── Unsupervised baseline ─────────────────────────────────────────────────────
+BASELINE_COLLECTION_ENABLED = os.getenv("BASELINE_COLLECTION_ENABLED", "true").lower() == "true"
+BASELINE_DRIFT_WARN = float(os.getenv("BASELINE_DRIFT_WARN", "0.30"))  # warning threshold
+BASELINE_DRIFT_CRIT = float(os.getenv("BASELINE_DRIFT_CRIT", "0.60"))  # critical threshold  # path to known-bad hashes
 
 
 def setup_logging():

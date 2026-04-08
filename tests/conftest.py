@@ -1,5 +1,12 @@
 """Shared pytest fixtures for CNDS tests."""
 
+import os
+
+# Disable MLflow before any src import — BaselineEngine.__init__ calls _load()
+# which tries to connect to the homelab MLflow server (192.168.1.48:5050) and
+# hangs under test. setdefault leaves a real URI intact when set externally.
+os.environ.setdefault("MLFLOW_TRACKING_URI", "")
+
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession

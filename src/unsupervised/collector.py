@@ -30,6 +30,24 @@ class CollectedSample:
     ts_epoch: float
 
 
+@dataclass
+class CollectorSnapshot:
+    """Read-only point-in-time view of collector state.
+
+    Computed atomically under the collector lock — no I/O, no blocking.
+    """
+    n_total: int
+    n_distinct_src_ips: int
+    elapsed_sec: float
+    dst_port_entropy_bits: float
+    top_dst_ports: list           # top-20 port ints by count in the current window
+    training_in_flight: bool
+    dropped_while_training: int
+    window_start_ts: float
+    trigger_thresholds: dict      # {vectors, ips, time, entropy, hard_cap}
+    progress_ratios: dict         # {vectors, ips, time, entropy} ∈ [0.0, 1.0]
+
+
 class BaselineCollector:
     """Thread-safe, O(1) hot-path collector of feature vectors."""
 
@@ -157,6 +175,56 @@ class BaselineCollector:
             logger.error("Failed to start baseline training thread: %s", e)
             with self._lock:
                 self._training_in_flight = False
+
+    def snapshot(self) -> CollectorSnapshot:
+        """Return a read-only snapshot of current collector state.
+
+        Thread-safe; holds _lock for the duration of the read. Entropy and
+        top-ports are computed from the live dst_port_counts under lock so
+        the values are consistent with n_total and n_distinct_src_ips.
+        """
+        with self._lock:
+            n_total = len(self._buffer)
+            n_ips = len(self._src_ips)
+            elapsed = max(0.0, time.time() - self._window_start_ts)
+            entropy = _shannon_entropy_bits(self._dst_port_counts)
+            top_ports = [p for p, _ in self._dst_port_counts.most_common(20)]
+            in_flight = self._training_in_flight
+            dropped = self._dropped_while_training
+            wstart = self._window_start_ts
+
+        thresholds = {
+            "vectors": self._trigger.min_total_vectors,
+            "ips": self._trigger.min_distinct_src_ips,
+            "time": self._trigger.min_elapsed_sec,
+            "entropy": self._trigger.min_dst_port_entropy_bits,
+            "hard_cap": self.HARD_CAP,
+        }
+
+        def _ratio(current: float, threshold: float) -> float:
+            if threshold <= 0:
+                return 1.0
+            return min(current / threshold, 1.0)
+
+        ratios = {
+            "vectors": _ratio(n_total, thresholds["vectors"]),
+            "ips": _ratio(n_ips, thresholds["ips"]),
+            "time": _ratio(elapsed, thresholds["time"]),
+            "entropy": _ratio(entropy, thresholds["entropy"]),
+        }
+
+        return CollectorSnapshot(
+            n_total=n_total,
+            n_distinct_src_ips=n_ips,
+            elapsed_sec=elapsed,
+            dst_port_entropy_bits=entropy,
+            top_dst_ports=top_ports,
+            training_in_flight=in_flight,
+            dropped_while_training=dropped,
+            window_start_ts=wstart,
+            trigger_thresholds=thresholds,
+            progress_ratios=ratios,
+        )
 
     def _run_training(
         self,

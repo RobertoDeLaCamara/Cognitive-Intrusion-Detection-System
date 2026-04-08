@@ -8,13 +8,13 @@ import json
 import logging
 import os
 import tempfile
+import threading
+import time
+from collections import deque
 from typing import Callable, List, Optional
 
 import joblib
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.optim as optim
 from sklearn.ensemble import IsolationForest
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
@@ -75,9 +75,28 @@ class WindowTrainer:
         # threads that use the proxy for outbound connections.
         mlflow_registry.init()
 
+        # Rolling history of the last 20 trained windows (thread-safe).
+        self._history: deque = deque(maxlen=20)
+        self._history_lock = threading.Lock()
+
+    def get_history(self) -> list:
+        """Return a copy of the rolling window history (most recent last)."""
+        with self._history_lock:
+            return list(self._history)
+
     def train_window(
         self, samples: List[CollectedSample], provenance: ProvenanceMetadata
     ) -> None:
+        try:
+            import torch
+            import torch.nn as nn
+            import torch.optim as optim
+        except ImportError as exc:
+            raise ImportError(
+                "torch is required for baseline window training. "
+                "Install it with: pip install torch"
+            ) from exc
+
         if len(samples) < 1000:
             logger.warning(
                 "Baseline window too small (n=%d < 1000) — skipping training",
@@ -185,7 +204,23 @@ class WindowTrainer:
             threshold,
         )
 
-        # 7. Persist to MLflow (or fall back to fit-only with a warning).
+        # 7. Record in rolling history (always, regardless of MLflow availability).
+        entry = {
+            "trained_at_iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "provenance": provenance.to_dict(),
+            "training_stats": {
+                "val_recon_mean": val_recon_mean,
+                "val_recon_std": val_recon_std,
+                "threshold": threshold,
+                "n_train": n_train_seq,
+                "n_val": n_val_seq,
+                "n_features": n_features,
+            },
+        }
+        with self._history_lock:
+            self._history.append(entry)
+
+        # 8. Persist to MLflow (or fall back to fit-only with a warning).
         mlflow_ok = mlflow_registry.is_enabled()
         if not mlflow_ok:
             logger.warning(

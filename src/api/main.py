@@ -12,6 +12,7 @@ from .database import init_db
 from .routers import alerts, predict
 from .routers.websocket import router as ws_router
 from .routers.auth import router as auth_router
+from .routers.baseline import router as baseline_router
 from .metrics import setup_prometheus, setup_otel
 from .rate_limit import RateLimitMiddleware
 from ..config import API_KEY, CORS_ORIGINS, RATE_LIMIT_REQUESTS
@@ -26,6 +27,18 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     logger.info("Initialising database…")
     await init_db()
+
+    # Start the baseline observability scrape thread if the collector is active.
+    from ..pipeline import get_baseline_collector, get_window_trainer
+    from ..engines.registry import baseline as _baseline_engine
+    from .metrics import start_baseline_scrape
+    if get_baseline_collector() is not None:
+        start_baseline_scrape(
+            collector_getter=get_baseline_collector,
+            engine_getter=lambda: _baseline_engine,
+            history_getter=lambda: (get_window_trainer().get_history() if get_window_trainer() else []),
+        )
+
     logger.info("Cognitive Network Defense System API ready")
 
     # Start periodic cleanup task
@@ -98,6 +111,7 @@ app.include_router(alerts.router)
 app.include_router(predict.router)
 app.include_router(ws_router)
 app.include_router(auth_router)
+app.include_router(baseline_router)
 
 
 @app.get("/health")

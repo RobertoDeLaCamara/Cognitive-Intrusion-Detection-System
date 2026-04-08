@@ -26,15 +26,27 @@ logger = logging.getLogger(__name__)
 
 # ── Unsupervised baseline collector (lazily initialised) ───────────────────
 _baseline_collector: Optional[BaselineCollector] = None
+_window_trainer: Optional[WindowTrainer] = None
 _baseline_collector_lock = threading.Lock()
+
+
+def get_baseline_collector() -> Optional[BaselineCollector]:
+    """Return the global BaselineCollector, or None if not yet initialised."""
+    return _baseline_collector
+
+
+def get_window_trainer() -> Optional[WindowTrainer]:
+    """Return the global WindowTrainer, or None if not yet initialised."""
+    return _window_trainer
 
 
 def init_baseline_collector(enabled: bool = True) -> None:
     """Initialise the global unsupervised baseline collector.
 
     Safe to call multiple times; subsequent calls are no-ops.
+    Also starts the background Prometheus scrape / progress-log thread.
     """
-    global _baseline_collector
+    global _baseline_collector, _window_trainer
     with _baseline_collector_lock:
         if _baseline_collector is not None:
             return
@@ -45,6 +57,8 @@ def init_baseline_collector(enabled: bool = True) -> None:
             on_window_ready=trainer.train_window,
             enabled=enabled,
         )
+        _window_trainer = trainer
+
     logger.info("Unsupervised baseline collector initialised (enabled=%s)", enabled)
 
 # ── Alert persistence (async writer thread) ────────────────────────────────

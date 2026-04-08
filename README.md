@@ -479,21 +479,6 @@ Copy `.env.example` to `.env` and adjust as needed.
 
 ---
 
-## CI/CD Pipeline
-
-CI/CD pipeline stages (see `CI/CDfile`):
-
-1. **Checkout** — pull from Git Server
-2. **Build Image** — `docker build` tagged with build number and `latest`
-3. **Code Quality** (parallel)
-   - *Lint* — flake8 (max line length 120)
-   - *Security* — Safety dependency audit
-4. **Run Tests** — pytest with JUnit XML + coverage report
-5. **Quality Analysis Analysis** — static analysis pushed to Quality Analysis (`cnds` project)
-6. **Push to Registry** — push to private Docker registry at `[REGISTRY_IP]:5000`
-
----
-
 ## Roadmap
 
 See the [open issues](https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System/issues) for planned features and known bugs. Contributions welcome — check [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

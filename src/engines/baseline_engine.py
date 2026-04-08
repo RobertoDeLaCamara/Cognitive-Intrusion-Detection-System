@@ -14,10 +14,12 @@ Thread safety
                 second window completing while a reload is in flight does not race.
 """
 
+import datetime
 import logging
 import os
 import tempfile
 import threading
+import time
 from collections import defaultdict, deque
 from typing import Optional
 
@@ -57,6 +59,9 @@ class BaselineEngine:
         self._threshold: float = 0.0
         self._n_features: int = 0
         self._seq_len: int = BASELINE_SEQ_LEN
+
+        self._version: str = ""
+        self._last_reload_ts: float = 0.0
 
         self._swap_lock = threading.Lock()
         self._buf_lock = threading.Lock()
@@ -139,6 +144,8 @@ class BaselineEngine:
                 self._lstm = lstm_model
                 self._threshold = threshold
                 self._n_features = n_features
+                self._version = str(latest.version)
+                self._last_reload_ts = time.time()
 
             logger.info(
                 "BaselineEngine loaded: n_features=%d threshold=%.6f version=%s",
@@ -239,3 +246,25 @@ class BaselineEngine:
                     "BaselineEngine: hot-reload failed — previous model remains active"
                 )
             return success
+
+    def get_info(self) -> dict:
+        """Return a snapshot of engine state for observability endpoints."""
+        with self._swap_lock:
+            available = (
+                self._scaler is not None
+                and self._iforest is not None
+                and self._lstm is not None
+            )
+            return {
+                "available": available,
+                "n_features": self._n_features,
+                "threshold": self._threshold,
+                "version": self._version or None,
+                "last_reload_iso": (
+                    datetime.datetime.fromtimestamp(
+                        self._last_reload_ts, tz=datetime.timezone.utc
+                    ).isoformat()
+                    if self._last_reload_ts > 0
+                    else None
+                ),
+            }

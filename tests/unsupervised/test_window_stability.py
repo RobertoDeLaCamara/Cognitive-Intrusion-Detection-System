@@ -17,6 +17,8 @@ What a failure means:
 import numpy as np
 import pytest
 
+torch = pytest.importorskip("torch", reason="torch not installed — skipping stability tests")
+
 from src.unsupervised.window_trainer import WindowTrainer
 from src.unsupervised.collector import CollectedSample
 

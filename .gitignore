@@ -32,3 +32,4 @@ models/*.pt
 .vscode/
 *.swp
 
+.claude/settings.local.json

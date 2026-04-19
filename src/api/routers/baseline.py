@@ -8,10 +8,16 @@ GET /api/baseline/windows — rolling history of trained windows (last 20).
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query
+
+from ..auth import require_role
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/baseline", tags=["baseline"])
+router = APIRouter(
+    prefix="/api/baseline",
+    tags=["baseline"],
+    dependencies=[Depends(require_role("admin", "analyst", "viewer"))],
+)
 
 
 def _get_collector():
@@ -48,10 +54,11 @@ def baseline_status():
         snap = collector.snapshot()
         ratios = snap.progress_ratios
         min_ratio = min(ratios.values()) if ratios else 0.0
+        _MAX_ETA_SECONDS = 7 * 24 * 3600  # cap at 1 week — beyond that it's "effectively never"
         eta_sec = None
         if min_ratio > 0 and not snap.training_in_flight:
-            eta_sec = round(snap.elapsed_sec * (1.0 / min_ratio - 1.0))
-            eta_sec = max(0, eta_sec)
+            raw_eta = snap.elapsed_sec * (1.0 / min_ratio - 1.0)
+            eta_sec = min(int(max(0, raw_eta)), _MAX_ETA_SECONDS)
 
         collector_out = {
             "n_total": snap.n_total,

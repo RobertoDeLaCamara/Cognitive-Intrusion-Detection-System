@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.0.5] - 2026-04-19
+
+### Security
+- `GET /api/alerts/export` now requires `admin` or `analyst` role in JWT-only deployments (was unauthenticated)
+- `GET /api/baseline/status` and `/api/baseline/windows` now require `viewer` role minimum (was unauthenticated)
+
+### Fixed
+- `asyncio.Lock` in `/api/predict` dedup cache created eagerly at module load (was lazy, causing race condition under concurrent requests)
+- `StandardScaler` / LSTM no longer silently poisoned by NaN/Inf host vectors — bad rows are dropped with a WARNING before training
+- `mlflow.register_model()` moved outside `with mlflow.start_run()` context so the run is FINISHED before the registry entry is created
+- `last_time=0.0` in `BaselineCollector.observe()` no longer falls back to `time.time()` (sentinel pattern, fixes pcap replay timestamps)
+- Suppression cache refresh now holds an `asyncio.Lock` to prevent redundant concurrent DB queries
+- ETA estimate in `/api/baseline/status` capped at 7 days (prevents unbounded int from tiny `min_ratio` values)
+- `cnds_baseline_windows_trained` Prometheus metric is now a true monotone counter (previously capped at 20 by deque maxlen); renamed from `cnds_baseline_windows_trained_total` to match Prometheus naming convention
+- `siem/syslog/forwarder.py` persists `last_id` to `~/.cnds_forwarder_state.json` to avoid replaying alerts on restart
+- Threshold artifact written as JSON `{"threshold": ..., "percentile": ...}` (was raw float string); `BaselineEngine` reads both formats for backward compatibility
+- `geoip.is_enabled()` now correctly returns `False` when no database is configured (was always `True`)
+
+### Changed
+- `WindowTrainer` exposes `get_windows_trained_total()` — monotone counter of trained windows since process start
+- `start_baseline_scrape()` accepts optional `windows_total_getter` parameter to use the new counter
+
 ## [1.0.4] - 2026-03-31
 
 ### Changed

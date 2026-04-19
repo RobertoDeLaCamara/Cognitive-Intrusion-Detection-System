@@ -37,6 +37,7 @@ async def lifespan(app: FastAPI):
             collector_getter=get_baseline_collector,
             engine_getter=lambda: _baseline_engine,
             history_getter=lambda: (get_window_trainer().get_history() if get_window_trainer() else []),
+            windows_total_getter=lambda: (get_window_trainer().get_windows_trained_total() if get_window_trainer() else 0),
         )
 
     logger.info("Cognitive Network Defense System API ready")

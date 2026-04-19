@@ -15,6 +15,7 @@ Thread safety
 """
 
 import datetime
+import json
 import logging
 import os
 import tempfile
@@ -119,7 +120,11 @@ class BaselineEngine:
                 iforest = joblib.load(os.path.join(artifact_dir, IFOREST_FILE))
 
                 with open(os.path.join(artifact_dir, THRESHOLD_FILE)) as f:
-                    threshold = float(f.read().strip())
+                    raw = f.read().strip()
+                    try:
+                        threshold = float(json.loads(raw)["threshold"])
+                    except (json.JSONDecodeError, KeyError, TypeError):
+                        threshold = float(raw)  # backward-compat with old plain-float format
 
                 if not hasattr(scaler, "n_features_in_"):
                     raise ValueError(

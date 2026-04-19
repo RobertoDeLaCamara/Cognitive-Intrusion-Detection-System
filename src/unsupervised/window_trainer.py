@@ -78,11 +78,17 @@ class WindowTrainer:
         # Rolling history of the last 20 trained windows (thread-safe).
         self._history: deque = deque(maxlen=20)
         self._history_lock = threading.Lock()
+        self._windows_trained_total: int = 0
 
     def get_history(self) -> list:
         """Return a copy of the rolling window history (most recent last)."""
         with self._history_lock:
             return list(self._history)
+
+    def get_windows_trained_total(self) -> int:
+        """Return the cumulative count of successfully trained windows (monotone counter)."""
+        with self._history_lock:
+            return self._windows_trained_total
 
     def train_window(
         self, samples: List[CollectedSample], provenance: ProvenanceMetadata
@@ -106,6 +112,22 @@ class WindowTrainer:
 
         # 1. Stack feature vectors.
         X = np.stack([s.host_vec for s in samples]).astype(np.float32)
+
+        # Drop NaN/Inf rows before fitting the scaler — StandardScaler propagates NaN
+        # silently, producing a poisoned scaler whose mean_/scale_ are NaN.
+        nan_mask = ~np.isfinite(X).all(axis=1)
+        if nan_mask.any():
+            n_bad = int(nan_mask.sum())
+            logger.warning(
+                "Baseline window: %d/%d samples contain NaN/Inf — dropping before training",
+                n_bad, len(X),
+            )
+            X = X[~nan_mask]
+            if len(X) < 1000:
+                logger.warning(
+                    "After NaN purge, n=%d < 1000 — skipping training", len(X)
+                )
+                return
 
         # 2. Train/val split.
         X_train, X_val = train_test_split(
@@ -219,6 +241,7 @@ class WindowTrainer:
         }
         with self._history_lock:
             self._history.append(entry)
+            self._windows_trained_total += 1
 
         # 8. Persist to MLflow (or fall back to fit-only with a warning).
         mlflow_ok = mlflow_registry.is_enabled()
@@ -266,22 +289,24 @@ class WindowTrainer:
                     joblib.dump(iforest, iforest_path)
                     torch.save(model.state_dict(), lstm_path)
                     with open(threshold_path, "w") as f:
-                        f.write(f"{threshold}")
+                        json.dump(
+                            {"threshold": threshold, "percentile": self._threshold_percentile}, f
+                        )
                     with open(provenance_path, "w") as f:
                         json.dump(provenance.to_dict(), f, indent=2)
 
                     mlflow.log_artifacts(tmp, artifact_path=ARTIFACT_ROOT)
 
-                try:
-                    mlflow.register_model(
-                        f"runs:/{run.info.run_id}/{ARTIFACT_ROOT}", MODEL_NAME
-                    )
-                    registered_ok = True
-                except Exception as e:
-                    logger.warning("MLflow register_model failed: %s", e)
-            # Run is now FINISHED — safe to trigger the inference engine reload.
-            # Calling inside the run context risked reading a version while the
-            # producing run was still in RUNNING state.
+                run_id = run.info.run_id  # capture before the context manager closes the run
+            # Run is now FINISHED — register_model outside the context so the artifact
+            # set is immutable before the registry entry is created.
+            try:
+                mlflow.register_model(
+                    f"runs:/{run_id}/{ARTIFACT_ROOT}", MODEL_NAME
+                )
+                registered_ok = True
+            except Exception as e:
+                logger.warning("MLflow register_model failed: %s", e)
             if registered_ok and self._on_trained is not None:
                 try:
                     self._on_trained()

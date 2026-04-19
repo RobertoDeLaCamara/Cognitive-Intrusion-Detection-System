@@ -89,11 +89,15 @@ class BaselineCollector:
             else:
                 dst_port = int(getattr(record, "dst_port", 0) or 0)
                 protocol = str(getattr(record, "protocol", "") or "")
-            ts_epoch = float(
-                getattr(record, "last_time", None)
-                or getattr(record, "end_ts", None)
-                or time.time()
-            )
+            _sentinel = object()
+            _lt = getattr(record, "last_time", _sentinel)
+            _et = getattr(record, "end_ts", _sentinel)
+            if _lt is not _sentinel and _lt is not None:
+                ts_epoch = float(_lt)
+            elif _et is not _sentinel and _et is not None:
+                ts_epoch = float(_et)
+            else:
+                ts_epoch = time.time()
         except Exception as exc:
             logger.debug(
                 "BaselineCollector.observe: field extraction failed (%s) — skipping record",

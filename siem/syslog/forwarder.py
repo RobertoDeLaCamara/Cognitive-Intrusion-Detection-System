@@ -10,7 +10,9 @@ Usage:
 """
 
 import argparse
+import json
 import logging
+import os
 import socket
 import time
 from datetime import datetime, timezone
@@ -20,6 +22,23 @@ import httpx
 logger = logging.getLogger("cnds.cef_forwarder")
 
 _SEVERITY_MAP = {"low": 3, "medium": 5, "high": 8, "critical": 10}
+_STATE_FILE = os.path.expanduser("~/.cnds_forwarder_state.json")
+
+
+def _load_last_id() -> int:
+    try:
+        with open(_STATE_FILE) as f:
+            return int(json.load(f).get("last_id", 0))
+    except (FileNotFoundError, json.JSONDecodeError, TypeError, ValueError):
+        return 0
+
+
+def _save_last_id(last_id: int) -> None:
+    try:
+        with open(_STATE_FILE, "w") as f:
+            json.dump({"last_id": last_id}, f)
+    except OSError as e:
+        logger.warning("Could not persist forwarder state: %s", e)
 
 
 def alert_to_cef(alert: dict) -> str:
@@ -83,7 +102,8 @@ def main():
     logger.info("Forwarding %s+ alerts from %s → %s:%d/%s",
                 args.severity, args.cnds_url, args.syslog_host, args.syslog_port, args.syslog_proto)
 
-    last_id = 0
+    last_id = _load_last_id()
+    logger.info("Resuming from last_id=%d", last_id)
     while True:
         try:
             resp = httpx.get(
@@ -102,6 +122,7 @@ def main():
 
             if new_alerts:
                 logger.info("Forwarded %d alerts (last_id=%d)", len(new_alerts), last_id)
+                _save_last_id(last_id)
 
         except Exception as e:
             logger.error("Poll/forward error: %s", e)

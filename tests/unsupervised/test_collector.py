@@ -416,10 +416,16 @@ class TestDropCounterFix:
 
         assert collector._dropped_while_training == 4
 
-        # Release the trainer and wait for it to finish.
+        # Release the trainer and wait for the full _run_training (including finally block) to finish.
+        # training_done fires inside gated_callback — before the finally block resets dropped/in_flight.
+        # We poll _training_in_flight as the authoritative signal that finally completed.
+        import time
         with caplog.at_level(logging.WARNING, logger="src.unsupervised.collector"):
             training_gate.wait(timeout=5)
             training_done.wait(timeout=5)
+            deadline = time.monotonic() + 5
+            while collector._training_in_flight and time.monotonic() < deadline:
+                time.sleep(0.005)
 
         assert collector._dropped_while_training == 0
         assert collector._training_in_flight is False

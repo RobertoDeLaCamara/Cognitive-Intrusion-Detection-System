@@ -1,5 +1,6 @@
 """Unified prediction endpoint — runs all engines and returns ensemble result."""
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends
@@ -28,15 +29,7 @@ router = APIRouter(prefix="/api", tags=["predict"])
 
 # API-side dedup cache: (src_ip, attack_type) -> last_alert_timestamp
 _api_dedup: dict = {}
-_api_dedup_lock = None
-
-
-def _get_dedup_lock():
-    global _api_dedup_lock
-    if _api_dedup_lock is None:
-        import asyncio
-        _api_dedup_lock = asyncio.Lock()
-    return _api_dedup_lock
+_api_dedup_lock = asyncio.Lock()
 
 
 @router.post("/predict", response_model=PredictResponse)
@@ -105,7 +98,11 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
     # --- Ensemble ---
     result = _ensemble.score(scores)
 
-    # Confidence decay for repeated alerts
+    # Confidence decay for repeated alerts from this IP.
+    # NOTE: decay runs before dedup — both deduplicated and persisted alerts consume
+    # the decay budget. If the same IP changes attack type within DEDUP_WINDOW_SECS,
+    # the new type's first detection inherits the decayed score from prior traffic.
+    # Move apply_decay after the dedup check if you want decay only on persisted alerts.
     decayed_score = apply_decay(body.src_ip, result.score)
     result.score = decayed_score
     result.is_anomaly = decayed_score >= ENSEMBLE_THRESHOLD
@@ -126,7 +123,7 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
     if result.is_anomaly:
         dedup_key = (body.src_ip, scores.attack_type or "unknown")
         now = datetime.now(timezone.utc)
-        async with _get_dedup_lock():
+        async with _api_dedup_lock:
             last = _api_dedup.get(dedup_key)
             if last and (now - last).total_seconds() < DEDUP_WINDOW_SECS:
                 # Duplicate — return result without persisting

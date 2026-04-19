@@ -94,11 +94,13 @@ async def client(db_engine):
 
 @pytest.fixture(autouse=True)
 def reset_predict_state():
-    """Clear module-level dedup cache and lock between tests."""
+    """Clear module-level dedup cache between tests; restore a fresh lock after each test."""
+    import asyncio
     import src.api.routers.predict as pred_mod
     pred_mod._api_dedup.clear()
-    pred_mod._api_dedup_lock = None
     yield
+    pred_mod._api_dedup.clear()
+    pred_mod._api_dedup_lock = asyncio.Lock()
 
 
 # ── Common mock context for no-anomaly runs ────────────────────────────────

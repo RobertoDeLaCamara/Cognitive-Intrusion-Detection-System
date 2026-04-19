@@ -51,4 +51,5 @@ def lookup(ip: str) -> Optional[Dict]:
     return MOCK_GEOIP.get(ip)
 
 def is_enabled() -> bool:
-    return True
+    _init()
+    return _reader is not None

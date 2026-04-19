@@ -9,13 +9,14 @@ from unittest.mock import MagicMock, AsyncMock, patch
 
 class TestGeoIP:
     def test_lookup_returns_none_when_disabled(self):
-        from src.enrichment.geoip import lookup
-        # GEOIP_DB_PATH is empty by default → always returns None
-        assert lookup("8.8.8.8") is None
+        from src.enrichment import geoip
+        with patch.object(geoip, "MOCK_GEOIP", {}), patch.object(geoip, "_reader", None):
+            assert geoip.lookup("8.8.8.8") is None
 
     def test_is_enabled_false_by_default(self):
-        from src.enrichment.geoip import is_enabled
-        assert is_enabled() is False
+        from src.enrichment import geoip
+        with patch.object(geoip, "_reader", None):
+            assert geoip.is_enabled() is False
 
 
 # ── DNS Logger ─────────────────────────────────────────────────────────────────

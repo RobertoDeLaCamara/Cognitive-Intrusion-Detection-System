@@ -9,7 +9,7 @@ Base URL: `http://localhost:8000`
 | `/health` | GET | Engine availability + capture stats |
 | `/api/predict` | POST | Run all engines on supplied features |
 | `/api/alerts` | GET | List alerts (filter: `severity`, `src_ip`, `acknowledged`) |
-| `/api/alerts/export` | GET | Export alerts as CSV/JSON (filter: `format`, `severity`, `hours`) |
+| `/api/alerts/export` | GET | Export alerts as CSV/JSON — requires `admin` or `analyst` role |
 | `/api/alerts/trends` | GET | Alert counts bucketed by hour/day (filter: `hours`, `bucket`) |
 | `/api/alerts/{alert_id}` | GET | Get single alert by ID |
 | `/api/alerts/{alert_id}` | PATCH | Acknowledge alert, add notes, link to incident |
@@ -18,6 +18,8 @@ Base URL: `http://localhost:8000`
 | `/api/suppression-rules` | GET / POST | List or create suppression rules (POST requires admin/analyst) |
 | `/api/suppression-rules/{rule_id}` | DELETE | Remove a suppression rule (requires admin) |
 | `/api/adaptive-weights` | GET | Compute adaptive engine weights from feedback |
+| `/api/baseline/status` | GET | Live collector snapshot, trigger progress, drift score — requires `viewer`+ |
+| `/api/baseline/windows` | GET | Rolling history of last N trained windows — requires `viewer`+ |
 | `/api/dns-log` | GET | DNS query logs (filter: `src_ip`) |
 | `/api/auth/token` | POST | Issue JWT token (when `JWT_SECRET` is set) |
 | `/api/auth/users` | GET / POST | User management (requires admin) |

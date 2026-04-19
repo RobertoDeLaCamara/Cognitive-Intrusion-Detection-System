@@ -109,7 +109,8 @@ def _init_metrics():
         "Samples dropped in the current training run (resets to 0 when training completes)"
     )
     _baseline_windows_trained_total = prom.Gauge(
-        "cnds_baseline_windows_trained_total", "Total baseline windows trained since process start"
+        "cnds_baseline_windows_trained",
+        "Total baseline windows trained since process start (monotone counter exposed as Gauge)"
     )
     _baseline_engine_available = prom.Gauge(
         "cnds_baseline_engine_available", "1 when the BaselineEngine has a loaded model, else 0"
@@ -186,6 +187,7 @@ def start_baseline_scrape(
     history_getter: Callable,
     scrape_interval: int = 5,
     log_interval: int = 30,
+    windows_total_getter: Optional[Callable] = None,
 ) -> None:
     """Start a daemon thread that scrapes the baseline collector every scrape_interval seconds.
 
@@ -211,7 +213,9 @@ def start_baseline_scrape(
                 engine = engine_getter()
                 engine_info = engine.get_info() if engine is not None else {}
                 history = history_getter() or []
-                windows_trained = len(history)
+                windows_trained = (
+                    windows_total_getter() if windows_total_getter is not None else len(history)
+                )
 
                 # Drift score against last trained window
                 drift_score = None

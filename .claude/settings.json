@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "agent",
+            "if": "Edit(src/)|Write(src/)",
+            "prompt": "A source file in src/ was just edited. The stdin JSON contains the file path in tool_input.file_path or tool_response.filePath. Read that file, identify any CRITICAL or HIGH issues only (security vulnerabilities, correctness bugs, race conditions, or data-loss risks). If the file is a test file or has no issues, respond with a single line: 'No critical issues found.' Keep the response under 150 words. Do NOT suggest style improvements or LOW-priority nits.",
+            "timeout": 90,
+            "statusMessage": "Reviewing changes...",
+            "model": "claude-haiku-4-5-20251001"
+          }
+        ]
+      }
+    ]
+  }
+}

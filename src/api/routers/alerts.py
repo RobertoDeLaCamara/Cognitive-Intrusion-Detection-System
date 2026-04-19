@@ -37,7 +37,7 @@ async def list_alerts(
     return result.scalars().all()
 
 
-@router.get("/alerts/export")
+@router.get("/alerts/export", dependencies=[Depends(require_role("admin", "analyst"))])
 async def export_alerts(
     format: str = Query("json", pattern="^(json|csv)$"),
     severity: Optional[str] = None,

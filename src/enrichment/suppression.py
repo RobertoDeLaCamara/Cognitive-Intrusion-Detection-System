@@ -7,6 +7,7 @@ Rules are cached in memory and refreshed periodically to avoid
 querying the database on every alert.
 """
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone
@@ -22,20 +23,22 @@ logger = logging.getLogger(__name__)
 _cache: List[SuppressionRule] = []
 _cache_ts: float = 0.0
 _CACHE_TTL = 10.0  # seconds
+_cache_lock = asyncio.Lock()
 
 
 async def _refresh_cache(db: AsyncSession) -> None:
     global _cache, _cache_ts
-    now = time.time()
-    if now - _cache_ts < _CACHE_TTL:
-        return
-    result = await db.execute(
-        select(SuppressionRule).where(
-            SuppressionRule.expires_at > datetime.now(timezone.utc)
+    async with _cache_lock:
+        now = time.time()
+        if now - _cache_ts < _CACHE_TTL:
+            return
+        result = await db.execute(
+            select(SuppressionRule).where(
+                SuppressionRule.expires_at > datetime.now(timezone.utc)
+            )
         )
-    )
-    _cache = list(result.scalars().all())
-    _cache_ts = now
+        _cache = list(result.scalars().all())
+        _cache_ts = now
 
 
 def invalidate_cache() -> None:

@@ -118,7 +118,7 @@ Called by the pipeline on every completed flow. Extracts fields from `record` us
 | `dst_ip` | `str` | `record.dst_ip` |
 | `dst_port` | `int` | `record.key[3]` or `record.dst_port` |
 | `protocol` | `str` | `record.key[4]` or `record.protocol` |
-| `ts_epoch` | `float` | `record.last_time`, `record.end_ts`, or `time.time()` |
+| `ts_epoch` | `float` | `record.last_time` (if present and not None), then `record.end_ts`, then `time.time()` — sentinel pattern, `0.0` is a valid timestamp |
 
 **`fire_reason` values:**
 
@@ -181,13 +181,24 @@ Fits both models on a collected window and persists artifacts to MLflow. Called 
 
 **MLflow initialisation:** `mlflow_registry.init()` is called once at construction time (not per-window). This is intentional — `init()` strips proxy environment variables process-wide, and calling it from a background thread on every window would race with other threads that use the proxy for outbound connections.
 
+**Public methods:**
+
+| Method | Returns | Description |
+|---|---|---|
+| `train_window(samples, provenance)` | `None` | Fit models on a collected window (see below) |
+| `get_history()` | `list` | Thread-safe copy of the last ≤20 trained-window entries (most recent last) |
+| `get_windows_trained_total()` | `int` | Monotone counter of successfully trained windows since process start |
+
+The `get_windows_trained_total()` counter is used by the Prometheus scrape thread to expose the `cnds_baseline_windows_trained` gauge, which unlike `get_history()` does not saturate at 20.
+
 **`train_window(samples, provenance) -> None`**
 
 Training pipeline, step by step:
 
 1. Rejects windows with fewer than 1,000 samples (logs a warning and returns).
 2. Stacks `host_vec` arrays into a single float32 matrix `X`.
-3. Splits `X` into train (80 %) and validation (20 %) sets with a fixed random seed.
+3. **Drops any rows containing NaN or Inf** (logs a WARNING with the count). If fewer than 1,000 finite rows remain, skips training. This prevents `StandardScaler.fit_transform()` from silently producing a poisoned scaler with `NaN` mean/scale.
+4. Splits `X` into train (80 %) and validation (20 %) sets with a fixed random seed.
 4. Fits `StandardScaler` on the training split; applies to both splits.
 5. Fits `IsolationForest` (200 estimators, `n_jobs=-1`) on the scaled training split.
 6. Constructs sliding-window sequences of length `seq_len` from the scaled splits using `_to_sequences()`. Skips training if either split produces zero sequences.
@@ -195,7 +206,7 @@ Training pipeline, step by step:
 8. Computes per-sequence MSE on the validation sequences; sets `threshold` = 99th percentile.
 9. Writes `n_sequences`, `n_train`, `n_val` back to the `ProvenanceMetadata` object.
 10. If MLflow is not enabled, logs a warning and returns without persisting.
-11. Otherwise, opens an MLflow run named `"baseline-window"`, logs metrics and params, writes all five artifact files to a temp directory, calls `mlflow.log_artifacts()` under `ARTIFACT_ROOT`, and calls `mlflow.register_model()` with the run's artifact URI.
+11. Otherwise, opens an MLflow run named `"baseline-window"`, logs metrics and params, writes all five artifact files to a temp directory, calls `mlflow.log_artifacts()` under `ARTIFACT_ROOT`. The run is then **closed** (status → FINISHED) before `mlflow.register_model()` is called. This ensures the artifact set is immutable before the registry entry is created, preventing `BaselineEngine` from loading an incomplete artifact set.
 
 **LSTM training (fixed hyperparameters):**
 
@@ -257,7 +268,7 @@ All artifacts are logged under the `unsupervised_baseline/` prefix in the MLflow
 | `scaler.joblib` | `SCALER_FILE` | joblib | `StandardScaler` fitted on the training split |
 | `iforest.joblib` | `IFOREST_FILE` | joblib | `IsolationForest` model |
 | `lstm_autoencoder.pt` | `LSTM_FILE` | PyTorch state dict | LSTM Autoencoder weights. **Note:** this is a `.pt` file (PyTorch `state_dict`), not a Keras `.keras` file. Load with `model.load_state_dict(torch.load(...))`. |
-| `threshold.txt` | `THRESHOLD_FILE` | plain text float | 99th-percentile reconstruction MSE from the validation split. A sequence whose MSE exceeds this value is anomalous. |
+| `threshold.txt` | `THRESHOLD_FILE` | JSON `{"threshold": float, "percentile": float}` | 99th-percentile reconstruction MSE from the validation split. A sequence whose MSE exceeds this value is anomalous. `BaselineEngine` accepts both the new JSON format and the legacy plain-float format for backward compatibility. |
 | `provenance.json` | `PROVENANCE_FILE` | JSON | Full `ProvenanceMetadata` dict for the window that produced this model version. |
 
 The registered model name is `"cnds-unsupervised-baseline"` (`MODEL_NAME` constant). The MLflow experiment is `"cnds-unsupervised-baseline"` (`experiment_name` default on `WindowTrainer`).

@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, AsyncMock, patch
 class TestGeoIP:
     def test_lookup_returns_none_when_disabled(self):
         from src.enrichment import geoip
-        with patch.object(geoip, "MOCK_GEOIP", {}), patch.object(geoip, "_reader", None):
+        with patch.object(geoip, "_reader", None):
             assert geoip.lookup("8.8.8.8") is None
 
     def test_is_enabled_false_by_default(self):

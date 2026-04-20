@@ -132,6 +132,13 @@ class BaselineEngine:
                         "artifact may have been saved with scikit-learn < 1.0"
                     )
                 n_features = int(scaler.n_features_in_)
+                _EXPECTED_HOST_FEATURES = 18  # HostExtractor.extract_features() output size
+                if n_features != _EXPECTED_HOST_FEATURES:
+                    logger.warning(
+                        "BaselineEngine: artifact n_features=%d but HostExtractor produces %d — "
+                        "anomaly scores may be unreliable; retrain the baseline",
+                        n_features, _EXPECTED_HOST_FEATURES,
+                    )
                 lstm_model = LSTMAutoencoder(n_features=n_features)
                 # weights_only=True is mandatory — WindowTrainer saves state_dict only.
                 # See artifact_schema.py for the matching save-side contract.

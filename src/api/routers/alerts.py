@@ -106,7 +106,7 @@ async def export_alerts(
     } for a in alerts]
 
     output = io.StringIO()
-    json.dump(data, output, indent=2)
+    json.dump(data, output, indent=2, default=str)
     output.seek(0)
     return StreamingResponse(
         iter([output.getvalue()]),

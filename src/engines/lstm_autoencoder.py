@@ -41,7 +41,8 @@ class LSTMAutoencoderEngine:
         self._load(model_path, config_path)
 
     def _load(self, model_path: str, config_path: str) -> None:
-        # Load config first
+        # Load config once; used for both inference params and architecture kwargs
+        cfg: dict = {}
         if os.path.exists(config_path):
             try:
                 with open(config_path) as f:
@@ -50,7 +51,7 @@ class LSTMAutoencoderEngine:
                 self._n_features = cfg.get("n_features", DEFAULT_N_FEATURES)
                 self._threshold = cfg.get("reconstruction_threshold", 0.1)
             except Exception as e:
-                logger.warning("LSTM config load failed: %s", e)
+                logger.error("LSTM config parse failed — using defaults, model may diverge from training: %s", e)
 
         # Try MLflow first for LSTM
         mlflow_model = mlflow_registry.load_latest_pytorch("lstm")
@@ -67,23 +68,11 @@ class LSTMAutoencoderEngine:
                 from .lstm_model import LSTMAutoencoder
                 cfg_kwargs = {
                     "n_features": self._n_features,
-                    "hidden_dim": 64,
-                    "latent_dim": 32,
-                    "num_layers": 2,
-                    "dropout": 0.2,
+                    "hidden_dim": cfg.get("hidden_dim", 64),
+                    "latent_dim": cfg.get("latent_dim", 32),
+                    "num_layers": cfg.get("num_layers", 2),
+                    "dropout": cfg.get("dropout", 0.2),
                 }
-                # Load config-driven architecture if available
-                if os.path.exists(config_path):
-                    try:
-                        with open(config_path) as f:
-                            import json as _json
-                            lcfg = _json.load(f)
-                        cfg_kwargs.update({
-                            k: lcfg[k] for k in ("hidden_dim", "latent_dim", "num_layers", "dropout")
-                            if k in lcfg
-                        })
-                    except Exception:
-                        pass
                 self._model = LSTMAutoencoder(**cfg_kwargs)
                 state = torch.load(model_path, map_location="cpu", weights_only=True)
                 self._model.load_state_dict(state)

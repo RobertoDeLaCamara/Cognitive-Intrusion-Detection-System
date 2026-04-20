@@ -22,7 +22,7 @@ from src.capture.packet_capture import PacketCapture, PacketProcessor
 from src.capture.dispatcher import Dispatcher
 from src.engines.registry import supervised, iforest, lstm, baseline
 from src import pipeline
-from src.pipeline import on_flow_complete
+from src.pipeline import on_flow_complete, drain_alert_queue
 
 logging.basicConfig(
     level=logging.INFO,
@@ -88,6 +88,7 @@ def main():
         capture.stop()
         processor.stop()
         dispatcher.stop()
+        drain_alert_queue(timeout=5.0)
         stats = processor.stats
         logger.info("Final stats: %s | dispatcher: %s", stats, dispatcher.stats)
         sys.exit(0)

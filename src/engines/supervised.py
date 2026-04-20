@@ -160,7 +160,7 @@ class SupervisedEngine:
 
     def _build_vec(self, flow_features: np.ndarray,
                    payload_features: Optional[np.ndarray]) -> np.ndarray:
-        vec = flow_features
+        flat = np.asarray(flow_features).ravel()
         if self._expects_payload and payload_features is not None:
-            vec = np.concatenate([flow_features, payload_features])
-        return vec.reshape(1, -1)
+            flat = np.concatenate([flat, np.asarray(payload_features).ravel()])
+        return flat.reshape(1, -1)

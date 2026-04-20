@@ -9,6 +9,7 @@ import queue
 import socket
 import threading
 import time
+import concurrent.futures
 import numpy as np
 from typing import List, Optional
 
@@ -144,10 +145,20 @@ def _persist_alert(record, scores, result, severity, triggered, ja3_info=None):
         logger.warning("Alert queue full — dropping alert for %s", record.src_ip)
 
 
+def drain_alert_queue(timeout: float = 5.0) -> None:
+    """Signal the writer to stop and wait for pending alerts to flush."""
+    _writer_stop.set()
+    if _writer_thread is not None and _writer_thread.is_alive():
+        _writer_thread.join(timeout=timeout)
+        if _writer_thread.is_alive():
+            logger.warning("Alert writer did not finish within %.1fs — some alerts may be lost", timeout)
+
+
 # ── Trusted outbound DNS cache ─────────────────────────────────────────────
 _dns_cache: dict = {}
 _DNS_CACHE_TTL = 3600
 _dns_lock = threading.Lock()
+_dns_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="dns-resolve")
 
 
 def _resolve_hostname(ip: str) -> str:
@@ -157,8 +168,9 @@ def _resolve_hostname(ip: str) -> str:
         if entry and now < entry[1]:
             return entry[0]
     try:
-        hostname = socket.gethostbyaddr(ip)[0]
-    except (socket.herror, socket.gaierror, OSError):
+        fut = _dns_executor.submit(socket.gethostbyaddr, ip)
+        hostname = fut.result(timeout=2.0)[0]
+    except Exception:
         hostname = ""
     with _dns_lock:
         _dns_cache[ip] = (hostname, now + _DNS_CACHE_TTL)
@@ -178,6 +190,7 @@ def _is_trusted_outbound(src_ip: str, dst_ip: str) -> bool:
 # ── Alert deduplication ────────────────────────────────────────────────────
 _dedup_cache: dict = {}
 _dedup_lock = threading.Lock()
+_dedup_last_cleanup: float = 0.0
 
 
 def on_flow_complete(
@@ -232,11 +245,13 @@ def on_flow_complete(
             if now - last_fired < DEDUP_WINDOW_SECS:
                 return
             _dedup_cache[dedup_key] = now
-            if len(_dedup_cache) > 10000:
+            global _dedup_last_cleanup
+            if now - _dedup_last_cleanup > 300:
                 cutoff = now - DEDUP_WINDOW_SECS
                 stale = [k for k, t in _dedup_cache.items() if t < cutoff]
                 for k in stale:
                     del _dedup_cache[k]
+                _dedup_last_cleanup = now
 
         parts = [
             f"src={record.src_ip}",

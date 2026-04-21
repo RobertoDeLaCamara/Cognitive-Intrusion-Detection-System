@@ -269,42 +269,23 @@ class TestAnomalyScoreContract:
     def test_returns_float_in_unit_interval(self, available_engine):
         """Full buffer (>= seq_len) — both branches active, score in [0, 1].
 
-        The production code does `import torch` inside the function body, so it
-        resolves torch from sys.modules at call time.  We configure the stub
-        that was installed by the session fixture directly on sys.modules["torch"].
-
-        Key subtlety: stub_torch sets from_numpy's *side_effect*, which takes
-        precedence over return_value.  We must override the side_effect to get a
-        fully controllable tensor-like back that supports .unsqueeze().
+        Uses patch() instead of direct sys.modules manipulation so the test
+        works whether torch is a real install (Docker) or a session-scoped stub.
         """
         ip = "192.168.1.1"
-        # Fill the ring buffer to capacity
         for _ in range(SEQ_LEN):
             available_engine.update(ip, _make_features())
 
-        torch_stub = sys.modules["torch"]
-
-        # Build a tensor mock whose attribute chain stays consistent:
-        #   from_numpy(arr).unsqueeze(0)  → x
-        #   lstm(x)                        → recon  (MagicMock)
-        #   (x - recon)**2                 → delta2 (MagicMock)
-        #   torch.mean(delta2).item()      → 0.0
         fake_tensor = MagicMock()
-        fake_tensor.unsqueeze.return_value = fake_tensor   # x.unsqueeze(0) → x
+        fake_tensor.unsqueeze.return_value = fake_tensor
 
-        # Override side_effect so return_value is honoured
-        torch_stub.from_numpy.side_effect = None
-        torch_stub.from_numpy.return_value = fake_tensor
-
-        # Configure no_grad as a working context manager
-        torch_stub.no_grad.return_value = _NoGradCtx()
-
-        # torch.mean(...).item() must return a plain float (0.0 = perfect recon)
         mean_result = MagicMock()
         mean_result.item.return_value = 0.0
-        torch_stub.mean.return_value = mean_result
 
-        score = available_engine.anomaly_score(ip, _make_features())
+        with patch("torch.from_numpy", return_value=fake_tensor), \
+             patch("torch.no_grad", return_value=_NoGradCtx()), \
+             patch("torch.mean", return_value=mean_result):
+            score = available_engine.anomaly_score(ip, _make_features())
 
         assert score is not None, "Expected a float, got None"
         assert isinstance(score, float)

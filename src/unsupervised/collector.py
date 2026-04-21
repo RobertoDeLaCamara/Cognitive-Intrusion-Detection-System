@@ -246,8 +246,9 @@ class BaselineCollector:
             with self._lock:
                 dropped = self._dropped_while_training
                 self._dropped_while_training = 0
-                self._training_in_flight = False
             if dropped:
                 logger.warning(
                     "Baseline training complete — %d samples dropped during training run", dropped
                 )
+            with self._lock:
+                self._training_in_flight = False

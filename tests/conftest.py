@@ -3,7 +3,7 @@
 import os
 
 # Disable MLflow before any src import — BaselineEngine.__init__ calls _load()
-# which tries to connect to the homelab MLflow server (192.168.1.48:5050) and
+# which tries to connect to the homelab MLflow server (192.168.1.147:5050) and
 # hangs under test. setdefault leaves a real URI intact when set externally.
 os.environ.setdefault("MLFLOW_TRACKING_URI", "")
 

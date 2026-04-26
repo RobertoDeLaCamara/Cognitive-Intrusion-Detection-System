@@ -107,7 +107,7 @@ IF_N_ESTIMATORS         = int(os.getenv("IF_N_ESTIMATORS", "200"))
 IF_MIN_SAMPLES          = int(os.getenv("IF_MIN_SAMPLES", "100"))
 
 # ── MLflow (Phase 5) ──────────────────────────────────────────────────────────
-MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://192.168.1.48:5050")  # homelab MLflow server
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://192.168.1.147:5050")  # homelab MLflow server
 MLFLOW_REGISTRY_NAME = os.getenv("MLFLOW_REGISTRY_NAME", "cnds")
 
 # ── Database ────────────────────────────────────────────────────────────────────

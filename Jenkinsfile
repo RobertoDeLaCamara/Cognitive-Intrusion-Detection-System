@@ -8,10 +8,10 @@ pipeline {
     }
 
     environment {
-        REGISTRY   = "192.168.1.48:5000"
+        REGISTRY   = "192.168.1.147:5000"
         IMAGE_NAME = "cnds"
-        NO_PROXY   = 'localhost,127.0.0.1,192.168.1.0/24,192.168.1.48,192.168.1.62,192.168.1.45'
-        no_proxy   = 'localhost,127.0.0.1,192.168.1.0/24,192.168.1.48,192.168.1.62,192.168.1.45'
+        NO_PROXY   = 'localhost,127.0.0.1,192.168.1.0/24,192.168.1.147,192.168.1.62,192.168.1.45'
+        no_proxy   = 'localhost,127.0.0.1,192.168.1.0/24,192.168.1.147,192.168.1.62,192.168.1.45'
     }
 
     stages {
@@ -103,7 +103,7 @@ pipeline {
                             -Dsonar.tests=tests \
                             -Dsonar.python.version=3.11 \
                             -Dsonar.python.coverage.reportPaths=coverage.xml \
-                            -Dsonar.host.url=http://192.168.1.48:9000 \
+                            -Dsonar.host.url=http://192.168.1.147:9000 \
                             -Dsonar.login="\$SONAR_USER" \
                             -Dsonar.password="\$SONAR_PASS" \
                             -Dsonar.scm.disabled=true

@@ -64,7 +64,15 @@ Configuration is validated on startup. Invalid settings (e.g., weights not summi
 | Variable | Default | Description |
 |---|---|---|
 | `MODELS_DIR` | `models` | Directory containing model files |
-| `RF_MODEL_FILE` | `rf_model.joblib` | Random Forest model filename |
+| `FT_MODEL_FILE` | `unified/unified_ft_transformer.pt` | FT-Transformer checkpoint (preferred supervised) |
+| `FT_SCALER_FILE` | `unified/unified_scaler.pkl` | StandardScaler matched to the FT checkpoint |
+| `FT_USE_GPU` | `false` | Run FT-T inference on CUDA when available |
+| `FT_SCORE_THRESHOLD` | `0.50` | Min FT anomaly score (1 − P(Benign)) to contribute |
+| `MLFLOW_FT_REGISTRY_NAME` | `ml-ids-unified-ft-transformer` | MLflow registered model name to load FT from |
+| `MLFLOW_FT_STAGE` | `None` | MLflow stage to pin (default = latest version) |
+| `RF_MODEL_FILE` | `rf_model.joblib` | Random Forest model filename (fallback) |
+| `RF_LITE_MODEL_FILE` | `rf_lite_model.joblib` | Bundled lite RF model (committed, second-tier fallback) |
+| `RF_SCORE_THRESHOLD` | `0.90` | Min RF anomaly score to avoid false positives |
 | `IF_MODEL_FILE` | `isolation_forest.joblib` | Isolation Forest model filename |
 | `IF_SCALER_FILE` | `if_scaler.joblib` | IF scaler filename |
 | `LSTM_MODEL_FILE` | `lstm_autoencoder.pt` | LSTM model filename |

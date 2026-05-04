@@ -10,6 +10,13 @@ htmlcov
 *.db
 *.sqlite3
 .env
-models/*.joblib
-models/*.pkl
-models/*.pt
+# Exclude all model artifacts by default…
+models/**/*.joblib
+models/**/*.pkl
+models/**/*.pt
+# …but ship the bundled RF lite fallback (committed) and the unified
+# FT-Transformer artifacts when they are present on the build host.
+!models/rf_lite_model.joblib
+!models/unified/unified_ft_transformer.pt
+!models/unified/unified_scaler.pkl
+!models/unified/unified_metadata.json

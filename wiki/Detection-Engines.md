@@ -6,7 +6,8 @@ CNDS runs four detection engines in parallel. Each engine receives different fea
 
 | Engine | Input | Model | Detects |
 |---|---|---|---|
-| Supervised | 76 CICFlowMeter flow features (+ 10 payload features if retrained) | Random Forest (sklearn Pipeline) | Named attacks: DoS, PortScan, Brute-force, Web attacks, Infiltration |
+| Supervised (preferred) | 76 CICFlowMeter flow features | FT-Transformer (~2.4M params, Optuna-tuned, F1 macro 0.6197) | 10 attack classes: Benign, Analysis, Backdoor, DoS, Exploits, Fuzzers, Generic, Reconnaissance, Shellcode, Worms |
+| Supervised (fallback) | 76 CICFlowMeter flow features (+ 10 payload features if retrained) | Random Forest (sklearn Pipeline) | Same 10 classes, used only when no FT-T checkpoint is present |
 | Isolation Forest | 18 per-IP host features | IsolationForest + StandardScaler | Novel / zero-day volumetric anomalies |
 | LSTM Autoencoder | 18-feature time-series per IP | PyTorch sequence autoencoder | Slow attacks, temporal behaviour drift |
 | Rules | Flow metadata + payload bytes + JA3 hashes | Threshold rules | ICMP floods, SYN scans, SQLi, XSS, LFI, large payloads, asymmetric upload, malicious TLS fingerprints |
@@ -28,13 +29,30 @@ class DetectionEngine(Protocol):
 
 The Rules engine has a different interface (`evaluate`) and is handled separately.
 
-## Supervised Engine
+## Supervised Engine (FT-Transformer preferred, Random Forest fallback)
+
+The supervised slot has two interchangeable implementations sharing the same
+`predict()` / `anomaly_score()` interface. The registry picks
+**FT-Transformer when its checkpoint is available**, otherwise falls back
+to Random Forest.
+
+### FT-Transformer (preferred)
+
+- **Files:** `src/engines/ft_transformer_engine.py`, `src/models/ft_transformer.py`
+- **Model:** `models/unified/unified_ft_transformer.pt` (or MLflow registry `ml-ids-unified-ft-transformer/<latest>`).
+- **Architecture:** per-feature affine tokenizer → 3 Pre-LN Transformer encoder blocks → linear head. ~2.4M params, Optuna-tuned. See [`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](../../ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md) for diagrams.
+- **Input:** 76 CICFlowMeter-compatible flow features.
+- **Output:** attack type label + confidence score.
+- **Detects:** 10 UNSW-NB15 classes — Benign, Analysis, Backdoor, DoS, Exploits, Fuzzers, Generic, Reconnaissance, Shellcode, Worms.
+- **Test F1 macro:** 0.6197 (XGBoost baseline 0.6095, default FT-T 0.5446).
+
+### Random Forest (fallback)
 
 - **File:** `src/engines/supervised.py`
-- **Model:** `models/rf_model.joblib` — a scikit-learn Pipeline containing preprocessing + Random Forest classifier.
+- **Model:** `models/rf_model.joblib` — a scikit-learn Pipeline containing preprocessing + Random Forest classifier. Bundled lite version `models/rf_lite_model.joblib` (1.6 MB) ships with the repo.
 - **Input:** 76 CICFlowMeter-compatible flow features (optionally 86 if retrained with payload features via `scripts/retrain_with_payload.py`).
 - **Output:** attack type label + confidence score.
-- **Detects:** DoS (Hulk, Slowloris, SlowHTTPTest, GoldenEye), PortScan, FTP/SSH Brute-force, Web attacks (XSS, SQL Injection, Brute Force), Infiltration, Heartbleed, Bot.
+- **Detects:** Same 10 classes; activates only when no FT-T checkpoint is present.
 
 ## Isolation Forest
 

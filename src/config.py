@@ -100,6 +100,18 @@ IF_SCALER_PATH      = os.path.join(MODELS_DIR, os.getenv("IF_SCALER_FILE", "if_s
 LSTM_MODEL_PATH     = os.path.join(MODELS_DIR, os.getenv("LSTM_MODEL_FILE", "lstm_autoencoder.pt"))
 LSTM_CONFIG_PATH    = os.path.join(MODELS_DIR, os.getenv("LSTM_CONFIG_FILE", "lstm_config.json"))
 
+# ── Unified FT-Transformer (supersedes RF when present) ──────────────────────
+FT_MODEL_PATH       = os.path.join(
+    MODELS_DIR, os.getenv("FT_MODEL_FILE", "unified/unified_ft_transformer.pt")
+)
+FT_SCALER_PATH      = os.path.join(
+    MODELS_DIR, os.getenv("FT_SCALER_FILE", "unified/unified_scaler.pkl")
+)
+FT_USE_GPU          = os.getenv("FT_USE_GPU", "false").lower() == "true"
+FT_SCORE_THRESHOLD  = float(os.getenv("FT_SCORE_THRESHOLD", "0.50"))
+MLFLOW_FT_REGISTRY_NAME = os.getenv("MLFLOW_FT_REGISTRY_NAME", "ml-ids-unified-ft-transformer")
+MLFLOW_FT_STAGE     = os.getenv("MLFLOW_FT_STAGE", "None")  # MLflow default stage if none set
+
 # ── Isolation Forest training ─────────────────────────────────────────────────
 IF_TRAINING_STATUS_FILE = os.getenv("IF_TRAINING_STATUS_FILE", "/tmp/cnds_if_training_status.json")
 IF_CONTAMINATION        = float(os.getenv("IF_CONTAMINATION", "0.05"))
@@ -185,7 +197,16 @@ BASELINE_DRIFT_CRIT = float(os.getenv("BASELINE_DRIFT_CRIT", "0.60"))  # critica
 
 
 def setup_logging():
-    """Configure logging. Call once at startup."""
+    """Configure logging. Call once at startup.
+
+    No-op under pytest: pytest installs its own logging handlers (notably for
+    `caplog`) at session start, and `logging.basicConfig(force=True)` /
+    `logging.root.handlers.clear()` would silently drop them — turning
+    `caplog.text` into an empty string for any test whose code path imports
+    `src.api.main` (which calls this function at module load).
+    """
+    if "pytest" in sys.modules:
+        return
     if LOG_FORMAT == "json":
         try:
             from pythonjsonlogger.json import JsonFormatter

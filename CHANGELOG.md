@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2026-05-04
+
+### Added
+- **Unified FT-Transformer supervised engine** — `FTTransformerEngine` (`src/engines/ft_transformer_engine.py`) wraps the Optuna-tuned FT-Transformer trained jointly for ML-IDS and cnds. Test F1 macro 0.6197 on UNSW-NB15 (vs 0.6095 XGBoost baseline). Smoke-test reproduces 0.6194 through the cnds engine path.
+- **Importable model class** — `src/models/ft_transformer.py` exposes the `FTTransformer` `nn.Module`, `load_checkpoint`/`build_from_checkpoint` helpers, and the `UNIFIED_CLASS_LABELS` tuple for consumers that need to decode class ids.
+- **MLflow registry loading** — engine pulls `models:/ml-ids-unified-ft-transformer/<latest>` from the homelab MLflow server, with automatic local-checkpoint fallback (`models/unified/unified_ft_transformer.pt` + `unified_scaler.pkl`).
+- **Config knobs** — `FT_MODEL_FILE`, `FT_SCALER_FILE`, `FT_USE_GPU`, `FT_SCORE_THRESHOLD`, `MLFLOW_FT_REGISTRY_NAME`, `MLFLOW_FT_STAGE`.
+- **Smoke test script** — `scripts/smoke_test_ft_unified.py` reproduces the published test F1 macro on the held-out 15 % split.
+- **Integration tests** — `tests/test_ft_transformer_engine.py` (7 tests) exercises the load → scale → forward → softmax path on real attack/benign rows from the dataset.
+- **Live capture runbook** — `doc/UNIFIED_FT_LIVE_RUNBOOK.md` documents the manual hping3 + nmap end-to-end test against real traffic.
+
+### Changed
+- **Engine registry** — `src/engines/registry.py` now picks `FTTransformerEngine` when its checkpoint is available, otherwise falls back to the legacy `SupervisedEngine` (Random Forest). Both implement the same `predict` / `anomaly_score` interface, so `pipeline.py`, the ensemble, and the API are unchanged.
+- **Test isolation** — `tests/conftest.py` sets `FT_MODEL_FILE=__disabled_in_tests__` so the registry singleton does not pull torch into `sys.modules` during pytest collection (which would break `test_baseline_engine`'s fake-torch fixture).
+- **Model construction** — `FTTransformer.__init__` now wraps tokenizer + encoder construction in `torch.no_grad()` and uses two-step `nn.Parameter` init to survive autograd state contamination from the same fake-torch fixture.
+- **`.dockerignore`** — switched to `models/**/*.{joblib,pkl,pt}` plus explicit allow-list for the bundled RF lite, the FT-Transformer checkpoint, the FT scaler, and the FT metadata. The previous patterns (`models/*.joblib` etc.) silently excluded `models/rf_lite_model.joblib` — committed for out-of-the-box detection — from every Docker image, leaving the supervised slot disabled when MLflow was unreachable.
+
+### Fixed
+- **Logging under pytest** — `setup_logging()` is now a no-op when `pytest` is in `sys.modules`. Before, `src/api/main.py` calling it at module load wiped pytest's `caplog` handlers, which silently broke `caplog.text` assertions for every test that imported the API (the `test_full_cycle_drop_then_fire_then_log` regression).
+- **`stub_torch` fixture in `tests/engines/test_baseline_engine.py`** — reworked from `scope="session"` (with a guard that silently no-op'd whenever torch was already in `sys.modules`) to `scope="function"` with a snapshot/restore of every `torch.*` key, so the fake mock is always installed during these tests and the real module is fully restored afterwards. Previously, sibling files (`test_window_stability.py`, `test_ft_transformer_engine.py`) saw a half-mocked torch and failed with `AttributeError: 'builtin_function_or_method' object has no attribute 'side_effect'` and `ModuleNotFoundError: torch._C is not a package`.
+
 ## [1.0.9] - 2026-04-06
 
 ### Added

@@ -1,6 +1,6 @@
 # CNDS — Modelos de ML/AI: Entrenamiento y Reentrenamiento
 
-Este documento cubre en detalle los tres modelos de machine learning del sistema (Random Forest, Isolation Forest, LSTM Autoencoder), su ingeniería de features, los parámetros exactos de configuración, los procedimientos de entrenamiento inicial y reentrenamiento, la calibración del ensemble, el sistema de pesos adaptativos y la integración con ML Tracking.
+Este documento cubre en detalle los modelos de machine learning del sistema — el motor supervisado unificado FT-Transformer (con Random Forest como fallback), Isolation Forest y LSTM Autoencoder — su ingeniería de features, los parámetros exactos de configuración, los procedimientos de entrenamiento inicial y reentrenamiento, la calibración del ensemble, el sistema de pesos adaptativos y la integración con MLflow.
 
 ---
 
@@ -11,7 +11,9 @@ Este documento cubre en detalle los tres modelos de machine learning del sistema
    - 2.1 [76 Flow Features (CICFlowMeter)](#21-76-flow-features-cicflowmeter)
    - 2.2 [18 Host Features](#22-18-host-features)
    - 2.3 [10 Payload Features](#23-10-payload-features)
-3. [Modelo 1: Random Forest (Supervisado)](#3-modelo-1-random-forest-supervisado)
+3. [Modelo 1: Supervisado (FT-Transformer + Random Forest)](#3-modelo-1-supervisado-ft-transformer-preferido--random-forest-fallback)
+   - 3.0 [FT-Transformer (preferido)](#30-ft-transformer-preferido-producción-2026-05-04)
+   - 3.1 [Random Forest (fallback)](#31-random-forest-fallback)
 4. [Modelo 2: Isolation Forest (No Supervisado)](#4-modelo-2-isolation-forest-no-supervisado)
 5. [Modelo 3: LSTM Autoencoder (Temporal)](#5-modelo-3-lstm-autoencoder-temporal)
 6. [Rules Engine (Heurístico)](#6-rules-engine-heurístico)
@@ -284,7 +286,130 @@ Cada patrón se pre-filtra con una regex barata antes de ejecutar el patrón com
 
 ---
 
-## 3. Modelo 1: Random Forest (Supervisado)
+## 3. Modelo 1: Supervisado (FT-Transformer preferido + Random Forest fallback)
+
+El slot supervisado tiene dos implementaciones intercambiables. Ambas
+consumen el mismo vector de 76 features de flujo CICFlowMeter, devuelven
+`(label, confidence)` desde `predict()`, y un score calibrado en `[0, 1]`
+desde `anomaly_score()`. El registry elige **FT-Transformer cuando hay
+checkpoint disponible**, en caso contrario degrada al pipeline Random
+Forest. Ambos motores comparten la misma interfaz, por lo que el
+`pipeline.py`, el ensemble y la API funcionan sin cambios.
+
+### 3.0 FT-Transformer (preferido, producción 2026-05-04)
+
+**Archivos:** `src/engines/ft_transformer_engine.py`, `src/models/ft_transformer.py`
+**Checkpoint local:** `models/unified/unified_ft_transformer.pt`
+**MLflow registry:** `models:/ml-ids-unified-ft-transformer/<latest>`
+
+#### Arquitectura
+
+FT-Transformer (Gorishniy et al., NeurIPS 2021) — tokenizador affine por
+feature + 3 bloques transformer encoder Pre-LN + cabeza linear. Total
+~2.4M parámetros. Hiperparámetros tunados con Optuna (25 trials,
+TPESampler + MedianPruner):
+
+```python
+{'d_token': 256, 'n_blocks': 3, 'n_heads': 8, 'ff_factor': 2.0,
+ 'dropout': 0.0985, 'lr': 3.9e-4, 'weight_decay': 7.15e-5,
+ 'batch_size': 2048, 'class_weight': 'sqrt_inverse', 'use_focal': False}
+```
+
+**Diagramas de la arquitectura:** ver
+[`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](../../ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md)
+(6 diagramas Mermaid: data flow, tokenizer, encoder block, parameter
+budget, runtime integration, atención por ejemplo).
+
+#### Dataset y etiquetas
+
+Entrenado sobre el redistribución CIC del UNSW-NB15 (carpeta nombrada
+`CIC-IDS2017/` por convención histórica, contenido es UNSW-NB15). 10
+clases:
+
+| id | label |
+|---|---|
+| 0 | Benign |
+| 1 | Analysis |
+| 2 | Backdoor |
+| 3 | DoS |
+| 4 | Exploits |
+| 5 | Fuzzers |
+| 6 | Generic |
+| 7 | Reconnaissance |
+| 8 | Shellcode |
+| 9 | Worms |
+
+Tupla expuesta como `UNIFIED_CLASS_LABELS` en
+`cnds/src/models/ft_transformer.py`.
+
+#### Métricas
+
+- **Test F1 macro:** 0.6197 (full test split, 67k filas).
+- **Smoke test reproducible:** 0.6194 vía
+  `scripts/smoke_test_ft_unified.py` (delta 0.0003).
+- **Comparativa:** XGBoost baseline 0.6095, FT-T default 0.5446. La
+  ganancia +1.0 punto macro viene mayoritariamente de clases minoritarias
+  (Backdoor 0.44→0.58, Generic 0.65→0.75, Worms 0.34→0.46).
+
+#### Inferencia
+
+```python
+import numpy as np
+from src.engines.ft_transformer_engine import FTTransformerEngine
+
+engine = FTTransformerEngine()        # carga MLflow → fallback local
+label, conf = engine.predict(flow_vec_76)         # ('DoS', 0.91)
+score       = engine.anomaly_score(flow_vec_76)   # 1 - P(Benign), thresholded
+```
+
+Pipeline interno (autocast bfloat16 si CUDA disponible):
+
+```python
+x = np.nan_to_num(x.astype(np.float32), nan=0, posinf=1e9, neginf=-1e9)
+x = scaler.transform(x).astype(np.float32)
+with torch.inference_mode():
+    if cuda: with torch.amp.autocast('cuda', dtype=torch.bfloat16): logits = model(x)
+    else:    logits = model(x)
+probs = logits.softmax(-1)
+```
+
+#### Cadena de carga (orden de prioridad)
+
+| Prioridad | Fuente | Cuándo |
+|---|---|---|
+| 1 | MLflow registry | `MLFLOW_TRACKING_URI` configurado y artefacto registrado |
+| 2 | `models/unified/unified_ft_transformer.pt` + `unified_scaler.pkl` | Checkpoint local copiado desde ML-IDS |
+
+Si ninguno disponible el motor se autodeshabilita y el registry degrada
+al Random Forest descrito abajo.
+
+#### Variables de entorno
+
+| Variable | Default | Descripción |
+|---|---|---|
+| `FT_MODEL_FILE` | `unified/unified_ft_transformer.pt` | Path relativo a `MODELS_DIR` |
+| `FT_SCALER_FILE` | `unified/unified_scaler.pkl` | StandardScaler emparejado |
+| `FT_USE_GPU` | `false` | Inferencia en CUDA si disponible |
+| `FT_SCORE_THRESHOLD` | `0.50` | Score mínimo (1 − P(Benign)) para contribuir |
+| `MLFLOW_FT_REGISTRY_NAME` | `ml-ids-unified-ft-transformer` | Nombre del modelo registrado en MLflow |
+| `MLFLOW_FT_STAGE` | `None` | Stage MLflow a fijar (default = última versión) |
+
+#### Smoke test y validación
+
+```bash
+# Reproducir F1 macro sobre el test split completo (~64 s en CPU)
+python scripts/smoke_test_ft_unified.py --device cpu
+
+# Tests de integración (carga, predicciones, validación dataset-driven)
+pytest tests/test_ft_transformer_engine.py -v   # 7 tests
+
+# Runbook live (hping3/nmap manual, requiere root e iface):
+# doc/UNIFIED_FT_LIVE_RUNBOOK.md
+```
+
+---
+
+### 3.1 Random Forest (fallback)
 
 **Archivo:** `src/engines/supervised.py`
 **Modelo:** `models/rf_model.joblib` (scikit-learn `Pipeline`)

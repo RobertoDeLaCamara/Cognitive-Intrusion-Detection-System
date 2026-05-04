@@ -15,7 +15,8 @@
    ├─ PayloadAnalyzer → regex pattern matches + 10 numeric payload features
    └─ JA3 Extractor   → TLS ClientHello fingerprint (hash + raw string)
         │
-        ├─► [Supervised Engine]     Random Forest (76 flow + 10 payload features)
+        ├─► [Supervised Engine]     FT-Transformer preferred (76 flow features, UNSW-NB15)
+        │                          ↳ falls back to Random Forest if no checkpoint
         ├─► [Isolation Forest]      Novelty score  (18 host features)
         ├─► [LSTM Autoencoder]      Sequence score (18 host features)
         └─► [Rules Engine]          Threshold + pattern + JA3 rules
@@ -55,10 +56,13 @@ src/
 │   ├── payload_analyzer.py   # Regex patterns + 10 numeric payload features
 │   ├── ja3.py                # JA3 TLS fingerprint extraction
 │   └── utils.py              # Shared helpers (byte_entropy, etc.)
+├── models/
+│   └── ft_transformer.py     # FTTransformer class + load helpers + UNIFIED_CLASS_LABELS
 ├── engines/
 │   ├── protocol.py           # DetectionEngine Protocol interface
-│   ├── registry.py           # Shared engine singletons
-│   ├── supervised.py         # Random Forest wrapper
+│   ├── registry.py           # Shared engine singletons (FT preferred, RF fallback)
+│   ├── supervised.py         # Random Forest wrapper (legacy fallback)
+│   ├── ft_transformer_engine.py  # FT-Transformer engine (MLflow → local fallback)
 │   ├── isolation_forest.py   # Isolation Forest wrapper
 │   ├── lstm_autoencoder.py   # LSTM Autoencoder wrapper
 │   ├── lstm_model.py        # LSTM Autoencoder architecture (nn.Module)

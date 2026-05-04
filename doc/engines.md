@@ -6,14 +6,52 @@ CNDS uses four complementary detection engines. Each engine observes a different
 
 | Engine | Weight | Features | What it detects |
 |---|---|---|---|
-| Random Forest | 40% | 76 flow features | Named attack classes (10 types) |
+| Supervised (FT-Transformer or RF fallback) | 40% | 76 flow features | Named attack classes (10 types) |
 | Isolation Forest | 30% | 18 host features | Volume/behavioral anomalies |
 | LSTM Autoencoder | 20% | Temporal host sequences | Slow/drift behavioral changes |
 | Rules Engine | 10% | All signals | High-confidence threshold patterns |
 
 ---
 
-## 1. Random Forest (Supervised Classification)
+## 1. Supervised classifier (FT-Transformer preferred, Random Forest fallback)
+
+The supervised slot has two interchangeable implementations. Both consume the
+same 76 CICFlowMeter flow-feature vector, return `(label, confidence)` from
+`predict()`, and a calibrated `[0, 1]` score from `anomaly_score()`. The
+registry picks **FT-Transformer when its checkpoint is present**, otherwise
+falls back to the Random Forest pipeline.
+
+### 1a. FT-Transformer (preferred)
+
+**Files:** `src/engines/ft_transformer_engine.py`, `src/models/ft_transformer.py`
+
+#### Purpose
+Classify network flows into one of 10 attack categories using a tabular
+Transformer trained jointly for ML-IDS and cnds. Provides higher per-class
+F1 on minority attacks than the legacy RF and produces the named
+`attack_type` label that appears on every alert.
+
+#### Model
+- **Algorithm:** FT-Transformer (Gorishniy et al., NeurIPS 2021) — per-feature affine tokenizer + 3 Pre-LN transformer encoder blocks + linear head. ~2.4M parameters, Optuna-tuned.
+- **Features:** 76 CICFlowMeter flow features (same order as `FlowExtractor`).
+- **Training dataset:** UNSW-NB15 (CIC redistribution; ~447k labeled flows, 10 classes).
+- **Test metric:** F1 macro **0.6197** (vs XGBoost baseline 0.6095, default FT-T 0.5446).
+- **Class-weighting strategy:** `sqrt_inverse` — full inverse over-corrects on minorities, focal loss adds nothing over sqrt-weighted CE.
+- **Anomaly score:** `1 - P(Benign)` — calibrated against the actual benign probability.
+- **FP threshold:** scores below `FT_SCORE_THRESHOLD` (default `0.50`) are zeroed.
+- **Architecture diagrams:** see [`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](../../ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md).
+
+#### Model load chain (priority order)
+
+| Priority | Source | When available |
+|---|---|---|
+| 1 | MLflow registry | `MLFLOW_TRACKING_URI` is set; model `ml-ids-unified-ft-transformer/<MLFLOW_FT_STAGE>` exists |
+| 2 | `models/unified/unified_ft_transformer.pt` + `unified_scaler.pkl` | Local checkpoint copied from ML-IDS |
+
+If neither is available the engine self-disables and the registry falls
+back to Random Forest below.
+
+### 1b. Random Forest (fallback)
 
 **File:** `src/engines/supervised.py`
 
@@ -31,11 +69,11 @@ Classify network flows into one of 9 known attack categories or `Benign`. This e
 
 | Priority | Source | When available |
 |---|---|---|
-| 1 | ML Tracking registry | `ML Tracking_TRACKING_URI` is set and model is registered |
+| 1 | MLflow registry | `MLFLOW_TRACKING_URI` is set and model is registered |
 | 2 | `models/rf_model.joblib` | Locally trained full model (gitignored, 124MB+) |
 | 3 | `models/rf_lite_model.joblib` | **Bundled lite model — ships with the repo** |
 
-The lite model (1.6MB, 91% accuracy on CIC-UNSW-NB15) provides functional detection out-of-the-box on a fresh `git clone`. The full model or ML Tracking version are used automatically when available.
+The lite model (1.6MB, 91% accuracy on CIC-UNSW-NB15) provides functional detection out-of-the-box on a fresh `git clone`. The full model or MLflow version are used automatically when available.
 
 ### Attack Classes
 

@@ -1,6 +1,6 @@
 # CNDS — Cognitive Network Defense System
 
-Real-time network intrusion detection system using a four-engine weighted ensemble: Random Forest (40%), Isolation Forest (30%), LSTM Autoencoder (20%), and rule-based heuristics (10%). Live Scapy packet capture → async worker queue → flow dispatcher → feature extractors → ensemble → MITRE ATT&CK enrichment → alert.
+Real-time network intrusion detection system using a four-engine weighted ensemble: Supervised classifier (40 % — FT-Transformer when its checkpoint is present, Random Forest fallback otherwise), Isolation Forest (30 %), LSTM Autoencoder (20 %), and rule-based heuristics (10 %). Live Scapy packet capture → async worker queue → flow dispatcher → feature extractors → ensemble → MITRE ATT&CK enrichment → alert.
 
 ## Quick Start
 
@@ -59,7 +59,7 @@ models/                          gitignored — must train separately
 
 ## Non-Obvious Facts
 
-- Model files (`rf_model.joblib`, `isolation_forest.joblib`, `lstm_autoencoder.pt`) are gitignored and must be provided or trained separately.
+- Model files (`unified/unified_ft_transformer.pt`, `rf_model.joblib`, `isolation_forest.joblib`, `lstm_autoencoder.pt`) are gitignored and must be provided or trained separately. The FT-Transformer also loads from the MLflow registry `ml-ids-unified-ft-transformer` when configured.
 - SQLite does not support concurrent writers — use `DATABASE_URL=postgresql+asyncpg://...` in production.
 - Live capture requires `root` or `CAP_NET_RAW`.
 - Engine weights must sum to 1.0 ± 0.01; validation fails at import if misconfigured.

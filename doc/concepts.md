@@ -11,7 +11,7 @@ This document explains the security, networking, and machine learning concepts r
 3. [Network Flows and the 5-Tuple](#3-network-flows-and-the-5-tuple)
 4. [CICFlowMeter and the CIC-IDS2017 Dataset](#4-cicflowmeter-and-the-cic-ids2017-dataset)
 5. [JA3 TLS Fingerprinting](#5-ja3-tls-fingerprinting)
-6. [Random Forest](#6-random-forest)
+6. [Supervised engine — FT-Transformer (preferred) and Random Forest (fallback)](#6-the-supervised-engine--ft-transformer-preferred-and-random-forest-fallback)
 7. [Isolation Forest](#7-isolation-forest)
 8. [LSTM Autoencoder](#8-lstm-autoencoder)
 9. [Ensemble Methods](#9-ensemble-methods)
@@ -51,7 +51,7 @@ Most production IDS tools use one or the other. CNDS uses **both simultaneously*
 
 ### Where CNDS fits
 
-CNDS is a **network IDS** with an **ensemble of four engines** — two supervised (Random Forest, Rules), two unsupervised (Isolation Forest, LSTM). This combination addresses the main failure modes of each approach in isolation: the supervised engines are precise on known attacks, while the unsupervised engines catch novel behaviors that have no signature.
+CNDS is a **network IDS** with an **ensemble of four engines** — two supervised (FT-Transformer with Random Forest fallback, plus Rules), two unsupervised (Isolation Forest, LSTM). This combination addresses the main failure modes of each approach in isolation: the supervised engines are precise on known attacks, while the unsupervised engines catch novel behaviors that have no signature.
 
 ---
 
@@ -258,7 +258,54 @@ JA3 can be evaded by randomizing the ClientHello field order or values. Newer ev
 
 ---
 
-## 6. Random Forest
+## 6. The supervised engine — FT-Transformer (preferred) and Random Forest (fallback)
+
+The supervised slot in CNDS has two interchangeable models. Both consume
+the same 76 CICFlowMeter flow-feature vector and return a `(label,
+confidence)` pair. The registry picks **FT-Transformer when its
+checkpoint is present** and falls back to Random Forest otherwise. They
+are described in turn below.
+
+### FT-Transformer (preferred)
+
+A **tabular Transformer**: every numeric feature is projected to a 256-dim
+embedding by its own learned affine map (one `W_j, b_j` per feature),
+producing 76 token vectors. A learnable `[CLS]` token is prepended,
+yielding a sequence of length 77. Three Pre-LayerNorm Transformer encoder
+blocks let every token attend to every other token via 8-head
+self-attention (head_dim = 32). The `[CLS]` output position is then
+passed through a final LayerNorm and a `Linear(256 → 10)` head to produce
+the 10-class logits.
+
+Why a Transformer for tabular data? Decision-tree splits decompose the
+feature space along single-feature thresholds at a time; SYN-flood
+detection happens to need the *combination* of high `Flow Packets/s` AND
+high `SYN Flag Count` AND zero `ACK Flag Count`. Multi-head attention
+weighs subsets of features simultaneously instead of approximating the
+combination via successive splits, which is why the FT-Transformer beats
+the gradient-boosted baseline on minority attack classes (Worms,
+Backdoor, Generic).
+
+The model is **Optuna-tuned** (25 trials, TPESampler + MedianPruner) over
+architecture, regularisation, optimisation, and class-imbalance
+strategies. The winning configuration uses `class_weight='sqrt_inverse'`
+(`w_j = sqrt(N / (n_classes * count_j))`) — the full inverse weighting
+over-corrects on minorities and hurts overall macro F1; focal loss adds
+nothing over sqrt-weighted CE. Test F1 macro: **0.6197** (XGBoost
+baseline 0.6095, default FT-T 0.5446).
+
+For the full architecture diagrams (data flow, tokenizer, encoder block,
+parameter budget, attention example) see
+[`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](../../ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md).
+
+### Random Forest (fallback)
+
+When no FT-Transformer checkpoint is on disk and no MLflow registry is
+configured, the registry falls back to the legacy Random Forest pipeline.
+This keeps the system functional out of the box (`models/rf_lite_model.joblib`
+ships with the repo). The same 76-feature vector goes in and the same
+`(label, confidence)` interface comes out, so the rest of CNDS does not
+need to know which model is active.
 
 ### Decision trees
 
@@ -287,7 +334,7 @@ Random Forests implicitly compute feature importance: features that produce the 
 
 ### In CNDS
 
-The RF is trained on CIC-IDS2017 (2.8M labeled flows, 14 classes). At inference, a 76-element (or 86-element with payload) flow feature vector is fed in, and the model returns the predicted attack class and its confidence. If the class is `BENIGN`, the engine contributes a score of 0.0 to the ensemble. Any attack class contributes its confidence score.
+The RF is trained on the CIC redistribution of UNSW-NB15 (~447k labeled flows, 10 classes — the dataset folder is named `CIC-IDS2017/` for historical reasons but the labels are UNSW-NB15). At inference, a 76-element (or 86-element with payload) flow feature vector is fed in, and the model returns the predicted attack class and its confidence. If the class is `Benign`, the engine contributes a score of 0.0 to the ensemble. Any attack class contributes its confidence score (or `1 - P(Benign)` if scoring through `anomaly_score()`). This RF code path only runs when no FT-Transformer checkpoint is available.
 
 ---
 
@@ -401,7 +448,7 @@ The four CNDS engines are diverse by design — they use **completely different 
 
 | Engine | Features | Algorithm type | Error profile |
 |---|---|---|---|
-| Random Forest | 76 flow features (per flow) | Supervised classification | Misses novel attacks not in training data |
+| Supervised (FT-Transformer or RF) | 76 flow features (per flow) | Supervised classification | Misses novel attacks not in training data |
 | Isolation Forest | 18 host features (per IP) | Unsupervised anomaly | False positives on unusual-but-benign traffic |
 | LSTM Autoencoder | Temporal sequences (per IP) | Unsupervised temporal | Cold-start gap; misses single-packet attacks |
 | Rules Engine | All features (threshold) | Deterministic heuristics | Misses attacks below threshold; rigid |
@@ -759,7 +806,7 @@ ML Tracking is an open-source platform for managing the machine learning lifecyc
 
 ### Why it matters for CNDS
 
-CNDS trains three ML models — Random Forest, Isolation Forest, LSTM Autoencoder. Without version control, you end up with files named `rf_model_v2_final_REAL.joblib` and no reliable way to know which version is in production, what metrics it achieved, or how to roll back if a new model regresses.
+CNDS uses three ML models — the supervised classifier (FT-Transformer or Random Forest fallback), Isolation Forest, and LSTM Autoencoder. Without version control, you end up with files named `rf_model_v2_final_REAL.joblib` and no reliable way to know which version is in production, what metrics it achieved, or how to roll back if a new model regresses.
 
 ML Tracking solves this:
 - Every training run logs its hyperparameters, training metrics (accuracy, F1, threshold), and the model artifact.
@@ -797,7 +844,7 @@ When `ML Tracking_TRACKING_URI` is empty, the entire registry layer is skipped s
 
 ## 20. Glossary of Attack Types
 
-The following attack types appear in CNDS alerts as the `attack_type` field, sourced from the CIC-IDS2017 dataset and the supervised Random Forest classifier.
+The following attack types appear in CNDS alerts as the `attack_type` field, sourced from the UNSW-NB15 label space (10 classes) used by the supervised classifier — the FT-Transformer in production, or the Random Forest fallback when no FT checkpoint is present.
 
 ### Denial of Service (DoS)
 

@@ -11,14 +11,19 @@ build/
 .coverage
 htmlcov/
 
-# Model files (large binaries — train locally or pull from MLflow)
-models/*.joblib
-models/*.pkl
-models/*.pt
-# Exceptions: lite model ships with the repo for out-of-the-box detection
+# Model files (large binaries — train locally or pull from MLflow).
+# Patterns use ** so artifacts under models/unified/ are also excluded.
+models/**/*.joblib
+models/**/*.pkl
+models/**/*.pt
+# Exceptions: lite RF model ships with the repo for out-of-the-box detection.
 !models/rf_lite_model.joblib
-# Keep metadata JSON
-!models/*.json
+# Keep metadata JSON files (small) — feature names, class labels, etc.
+!models/**/*.json
+
+# Local MLflow artifact cache (created when running scripts/notebooks
+# without a remote tracking URI configured).
+mlruns/
 
 # Database
 *.db

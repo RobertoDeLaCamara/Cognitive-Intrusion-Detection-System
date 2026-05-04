@@ -6,7 +6,7 @@ Four independent detection engines run on every expired flow and produce scores 
 
 | Engine | Algorithm | Input | Weight | Output |
 |--------|-----------|-------|--------|--------|
-| Supervised | Random Forest | 76 flow features (+ 10 payload opt.) | 40% | attack_type, confidence [0,1] |
+| Supervised | FT-Transformer (preferred) — Random Forest fallback | 76 flow features (+ 10 payload opt. for RF) | 40% | attack_type, confidence [0,1] |
 | Isolation Forest | Unsupervised ensemble | 18 host features | 30% | anomaly_score [0,1] |
 | LSTM Autoencoder | Temporal reconstruction | 18 host features × seq_len | 20% | reconstruction_error [0,1] |
 | Rules | Heuristic thresholds | raw packet stats, payload, JA3 | 10% | binary score + triggered_rules |
@@ -76,13 +76,27 @@ Extracted by `src/features/payload_analyzer.py`. Per-flow numeric features from 
 
 ## Engine Details
 
-### Random Forest (Supervised)
+### Supervised classifier — FT-Transformer (preferred)
+
+- Files: `src/engines/ft_transformer_engine.py`, `src/models/ft_transformer.py`
+- Model: PyTorch FT-Transformer (Gorishniy et al., NeurIPS 2021), Optuna-tuned
+- Architecture: per-feature affine tokenizer → 3 Pre-LN encoder blocks → linear head; ~2.4M params
+- Best config: `d_token=256, n_blocks=3, n_heads=8, ff_factor=2.0, dropout=0.0985, class_weight='sqrt_inverse'`
+- Features: 76 CICFlowMeter flow features
+- 10 output classes (UNSW-NB15): Benign, Analysis, Backdoor, DoS, Exploits, Fuzzers, Generic, Reconnaissance, Shellcode, Worms
+- Test F1 macro: 0.6197 (XGBoost baseline 0.6095, default FT-T 0.5446)
+- Model file: `models/unified/unified_ft_transformer.pt` + `unified_scaler.pkl` (gitignored)
+- MLflow registry: `models:/ml-ids-unified-ft-transformer/<latest>`
+- Architecture diagrams: see [`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](../../ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md)
+
+### Random Forest (Supervised — fallback)
 
 - File: `src/engines/supervised.py`
-- Model: scikit-learn `RandomForestClassifier` trained on CIC-IDS2017
+- Model: scikit-learn `RandomForestClassifier` trained on the CIC redistribution of UNSW-NB15
 - Features: 76 flow features; optionally extended to 86 with payload features (via `scripts/retrain_with_payload.py`)
-- 14 Output classes: BENIGN, DoS Hulk, DoS GoldenEye, DoS slowloris, DoS Slowhttptest, DDoS, PortScan, FTP-Patator, SSH-Patator, Web Attack-Brute Force, Web Attack-XSS, Web Attack-SQL Injection, Infiltration, Bot, Heartbleed
-- Model file: `models/rf_model.joblib` (gitignored)
+- Output classes: same 10 UNSW-NB15 labels as the FT-Transformer
+- Model file: `models/rf_model.joblib` (gitignored) or bundled `models/rf_lite_model.joblib` (1.6 MB, committed)
+- Selected automatically when no FT-Transformer checkpoint is present
 
 ### Isolation Forest (Unsupervised)
 
@@ -166,12 +180,41 @@ calibrated = sigmoid(logit / CALIBRATION_TEMPERATURE)
 
 ## Training Workflow
 
-### 1. Supervised (Random Forest)
+### 1a. Supervised (FT-Transformer — preferred)
+
+The FT-Transformer is trained in the **ML-IDS** repo, not here, because it
+shares a single artifact across both projects:
 
 ```bash
-# Train on CIC-IDS2017 dataset
-# Dataset must be in data/CIC-IDS2017/
-python scripts/train_supervised.py
+# In ML-IDS:
+python notebooks/ft_transformer_optuna_sweep.py     # 25-trial sweep + retrain
+# Outputs: ML-IDS/models/unified/unified_ft_transformer.pt + unified_scaler.pkl
+# Registered in MLflow as ml-ids-unified-ft-transformer/1
+```
+
+To consume it from cnds:
+
+```bash
+mkdir -p models/unified
+cp /path/to/ML-IDS/models/unified/unified_ft_transformer.pt  models/unified/
+cp /path/to/ML-IDS/models/unified/unified_scaler.pkl         models/unified/
+cp /path/to/ML-IDS/models/unified/unified_metadata.json      models/unified/
+```
+
+Or rely on MLflow auto-load by setting `MLFLOW_TRACKING_URI` and the S3
+credentials. Validate end-to-end with:
+
+```bash
+python scripts/smoke_test_ft_unified.py --device cpu       # F1 macro on test split
+pytest tests/test_ft_transformer_engine.py -v              # 7 integration tests
+```
+
+### 1b. Supervised (Random Forest — fallback)
+
+```bash
+# Train on the CIC redistribution of UNSW-NB15
+# Dataset must be in data/CIC-UNSW-NB15/
+python scripts/train_rf.py --data-dir /path/to/CIC-UNSW-NB15
 
 # Optional: include payload features (86 features)
 python scripts/retrain_with_payload.py

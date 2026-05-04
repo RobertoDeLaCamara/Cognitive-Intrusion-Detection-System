@@ -21,7 +21,15 @@ cp .env.example .env
 Model binaries are excluded from git. Copy your trained models into `models/`:
 
 ```bash
-# Supervised engine — Random Forest Pipeline (76 features)
+# Supervised engine — preferred: unified FT-Transformer (76 features, 10 classes)
+mkdir -p models/unified
+cp /path/to/ML-IDS/models/unified/unified_ft_transformer.pt  models/unified/
+cp /path/to/ML-IDS/models/unified/unified_scaler.pkl         models/unified/
+cp /path/to/ML-IDS/models/unified/unified_metadata.json      models/unified/
+# OR set MLFLOW_TRACKING_URI to auto-load from the registry:
+#   models:/ml-ids-unified-ft-transformer/<latest>
+
+# Supervised engine — fallback: legacy Random Forest Pipeline (used when no FT-T checkpoint)
 cp /path/to/rf_model.joblib               models/
 
 # Isolation Forest + scaler

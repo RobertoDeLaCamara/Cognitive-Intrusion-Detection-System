@@ -24,9 +24,17 @@ cp .env.example .env
 Models are gitignored. You must train them before running the detector.
 
 ```bash
-# 1. Supervised (Random Forest) — requires CIC-IDS2017 dataset
-#    Place dataset CSVs in data/CIC-IDS2017/
-python scripts/train_supervised.py
+# 0. Supervised (FT-Transformer, preferred) — trained in the ML-IDS repo
+#    See ML-IDS/notebooks/ft_transformer_optuna_sweep.py.
+#    Copy the artifacts into cnds, or load from MLflow.
+mkdir -p models/unified
+cp /path/to/ML-IDS/models/unified/unified_ft_transformer.pt  models/unified/
+cp /path/to/ML-IDS/models/unified/unified_scaler.pkl         models/unified/
+cp /path/to/ML-IDS/models/unified/unified_metadata.json      models/unified/
+
+# 1. Supervised (Random Forest, fallback) — requires CIC-UNSW-NB15 dataset
+#    Place dataset CSVs in data/CIC-UNSW-NB15/
+python scripts/train_rf.py --data-dir /path/to/CIC-UNSW-NB15
 
 # 2. Isolation Forest — requires normal-traffic baseline
 sudo python main.py --duration 600        # 10 min capture → data/baseline_host.csv
@@ -36,7 +44,8 @@ python scripts/train_isolation_forest.py --input data/baseline_host.csv
 python scripts/train_lstm.py --input data/baseline_host.csv
 
 # Verify models exist:
-ls models/
+ls models/ models/unified/
+# unified/unified_ft_transformer.pt  unified/unified_scaler.pkl  unified/unified_metadata.json
 # rf_model.joblib  isolation_forest.joblib  if_scaler.joblib
 # lstm_autoencoder.pt  lstm_config.json
 ```
@@ -184,9 +193,13 @@ src/
 │   ├── host_extractor.py        18-feature per-IP profiling
 │   ├── payload_analyzer.py      Regex + numeric features + ReDoS timeout
 │   └── ja3.py                   TLS fingerprinting
+├── models/
+│   └── ft_transformer.py        FTTransformer class + load helpers + UNIFIED_CLASS_LABELS
 ├── engines/
 │   ├── protocol.py              DetectionEngine structural protocol
-│   ├── supervised.py            Random Forest wrapper
+│   ├── registry.py              Engine singletons (FT preferred, RF fallback)
+│   ├── ft_transformer_engine.py FT-Transformer engine (MLflow → local fallback)
+│   ├── supervised.py            Random Forest wrapper (legacy fallback)
 │   ├── isolation_forest.py      IF + StandardScaler
 │   ├── lstm_autoencoder.py      PyTorch temporal AE
 │   └── rules.py                 Heuristic thresholds

@@ -49,10 +49,12 @@ CNDS is structured as a linear pipeline: capture → feature extraction → dete
 │                        Detection Engines                            │
 │                                                                     │
 │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │
-│  │ Random Forest    │  │ Isolation Forest │  │ LSTM Autoencoder │  │
+│  │ Supervised       │  │ Isolation Forest │  │ LSTM Autoencoder │  │
 │  │ weight: 40%      │  │ weight: 30%      │  │ weight: 20%      │  │
 │  │ 76 flow features │  │ 18 host features │  │ 20-step seq/IP   │  │
-│  │ 14 attack types  │  │ anomaly score    │  │ reconstruction   │  │
+│  │ 10 attack types  │  │ anomaly score    │  │ reconstruction   │  │
+│  │ FT-T preferred / │  │                  │  │                  │  │
+│  │ RF fallback      │  │                  │  │                  │  │
 │  └────────┬─────────┘  └────────┬─────────┘  └────────┬─────────┘  │
 │           │                     │                     │            │
 │           │            ┌────────┘                     │            │
@@ -474,7 +476,8 @@ Key configuration categories:
 
 | Scenario | Behavior |
 |---|---|
-| `rf_model.joblib` missing | Supervised engine `is_available=False`; weight redistributed to other engines |
+| FT-T checkpoint missing AND `rf_*.joblib` missing | Supervised engine `is_available=False`; weight redistributed to other engines |
+| FT-T checkpoint missing only | Registry falls back to `SupervisedEngine` (Random Forest); supervised slot stays active |
 | `lstm_autoencoder.pt` missing | LSTM engine unavailable; remaining engines continue |
 | All ML models missing | Rules engine runs at 100% weight; detections still fire |
 | PostgreSQL unreachable | Alert persisted to in-memory queue; retried on reconnect |

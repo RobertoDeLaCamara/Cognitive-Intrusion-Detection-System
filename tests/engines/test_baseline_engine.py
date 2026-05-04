@@ -29,25 +29,49 @@ import pytest
 # Session-scoped torch stub — must run before any src import that touches torch
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="function", autouse=True)
 def stub_torch():
-    """Insert a minimal fake torch into sys.modules.
+    """Replace torch in sys.modules with a MagicMock for each test in this file.
 
-    Mirrors the pattern in tests/unsupervised/conftest.py.
-    Runs once for the entire test session; safe if torch is already stubbed.
+    Function-scoped (not session-scoped) so the swap is local to this module:
+      - real torch is restored after every test, so other test modules
+        (e.g. test_ft_transformer_engine.py) keep getting the genuine module;
+      - the fake is reinstalled on each test even when torch was previously
+        imported by collection of other modules — the earlier
+        `if "torch" not in sys.modules` guard silently no-op'd whenever
+        another module had already triggered an import, leaving these tests
+        with the real builtin and the `from_numpy.side_effect = None`
+        assignments raising AttributeError.
     """
-    if "torch" not in sys.modules:
-        torch_mock = MagicMock()
-        torch_mock.nn = MagicMock()
-        torch_mock.nn.Module = object          # LSTMAutoencoder inherits from nn.Module
-        torch_mock.optim = MagicMock()
-        torch_mock.no_grad = MagicMock(return_value=_NoGradCtx())
-        torch_mock.from_numpy = MagicMock(side_effect=lambda x: MagicMock(spec=[], name="tensor"))
-        torch_mock.load = MagicMock(return_value={"fake": "state"})
-        sys.modules["torch"] = torch_mock
-        sys.modules["torch.nn"] = torch_mock.nn
-        sys.modules["torch.optim"] = torch_mock.optim
-    yield
+    # Snapshot every torch.* key so lazy-loaded submodules (torch._C,
+    # torch._dynamo, torch._inductor, …) survive the swap. Restoring just
+    # ("torch", "torch.nn", "torch.optim") leaves real-torch submodules
+    # half-loaded against a now-restored top-level module, which makes the
+    # next test fail with "torch._C is not a package".
+    saved = {k: sys.modules[k] for k in list(sys.modules) if k == "torch" or k.startswith("torch.")}
+    for k in list(sys.modules):
+        if k == "torch" or k.startswith("torch."):
+            del sys.modules[k]
+    torch_mock = MagicMock()
+    torch_mock.nn = MagicMock()
+    torch_mock.nn.Module = object          # LSTMAutoencoder inherits from nn.Module
+    torch_mock.optim = MagicMock()
+    torch_mock.no_grad = MagicMock(return_value=_NoGradCtx())
+    torch_mock.from_numpy = MagicMock(side_effect=lambda x: MagicMock(spec=[], name="tensor"))
+    torch_mock.load = MagicMock(return_value={"fake": "state"})
+    sys.modules["torch"] = torch_mock
+    sys.modules["torch.nn"] = torch_mock.nn
+    sys.modules["torch.optim"] = torch_mock.optim
+    try:
+        yield
+    finally:
+        # Drop any torch.* keys that the test (or production code under
+        # test) registered while the mock was active, then restore the
+        # original snapshot wholesale.
+        for k in list(sys.modules):
+            if k == "torch" or k.startswith("torch."):
+                del sys.modules[k]
+        sys.modules.update(saved)
 
 
 class _NoGradCtx:

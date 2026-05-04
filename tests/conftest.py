@@ -7,6 +7,32 @@ import os
 # hangs under test. setdefault leaves a real URI intact when set externally.
 os.environ.setdefault("MLFLOW_TRACKING_URI", "")
 
+# Disable FT-Transformer auto-load in the registry singleton. Loading the FT
+# engine triggers a real `import torch` at collection time, which prevents
+# tests/engines/test_baseline_engine.py from substituting its fake torch
+# fixture (the real names are already bound). Tests that need the FT engine
+# instantiate it explicitly via test_ft_transformer_engine.py.
+os.environ.setdefault("FT_MODEL_FILE", "__disabled_in_tests__")
+
+
+def pytest_collection_modifyitems(config, items):
+    """Move tests that swap real torch for a MagicMock to the END of the run.
+
+    `tests/engines/test_baseline_engine.py` swaps `sys.modules["torch"]` with
+    a MagicMock via an autouse fixture, which corrupts the in-process state
+    of real torch (Tensor comparison ops, `torch.nn.init` references) for
+    any test running afterwards — even with explicit teardown and reloads,
+    because some torch C-level state is process-global. Letting these
+    mock-based tests run last preserves a clean torch for tests that need
+    the real one (FT-Transformer engine, window stability).
+    """
+    LATE = ("tests/engines/test_baseline_engine.py",)
+    early, late = [], []
+    for item in items:
+        rel = str(item.fspath).removeprefix(str(item.session.fspath) + "/")
+        (late if rel in LATE else early).append(item)
+    items[:] = early + late
+
 import pytest
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession

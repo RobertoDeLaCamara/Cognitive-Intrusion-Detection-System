@@ -19,7 +19,8 @@
    ├─ PayloadAnalyzer → regex pattern matches + 10 numeric payload features
    └─ JA3 Extractor   → TLS ClientHello fingerprint (hash + raw string)
         │
-        ├─► [Supervised Engine]     Random Forest (76 flow + 10 payload features)
+        ├─► [Supervised Engine]     FT-Transformer (preferred, 76 flow features, UNSW-NB15 schema)
+        │                          ↳ falls back to Random Forest if no checkpoint
         ├─► [Isolation Forest]      Novelty score  (18 host features)
         ├─► [LSTM Autoencoder]      Sequence score (18 host features)
         └─► [Rules Engine]          Threshold + pattern + JA3 rules
@@ -40,7 +41,8 @@
 
 | Engine | Input | Model | Detects |
 |---|---|---|---|
-| **Supervised** | 76 CICFlowMeter flow features (+ 10 payload features if retrained) | Random Forest (sklearn Pipeline) | Named attacks: DoS, PortScan, Brute-force, Web attacks, Infiltration |
+| **Supervised (preferred)** | 76 CICFlowMeter flow features | FT-Transformer (PyTorch, ~2.4M params) — Optuna-tuned, F1 macro 0.6197 on UNSW-NB15 test split | 10 attack classes: Benign, Analysis, Backdoor, DoS, Exploits, Fuzzers, Generic, Reconnaissance, Shellcode, Worms |
+| **Supervised (fallback)** | 76 CICFlowMeter flow features (+ 10 payload features if retrained) | Random Forest (sklearn Pipeline) | Same 10 attack classes; activates only when no FT-T checkpoint is present |
 | **Isolation Forest** | 18 per-IP host features | IsolationForest + StandardScaler | Novel / zero-day volumetric anomalies |
 | **LSTM Autoencoder** | 18-feature time-series per IP | PyTorch sequence AE | Slow attacks, temporal behaviour drift |
 | **Rules** | Flow metadata + payload bytes + JA3 hashes | Threshold rules | ICMP floods, SYN scans, SQLi, XSS, LFI, large payloads, asymmetric upload, malicious TLS fingerprints |
@@ -143,12 +145,19 @@ cp .env.example .env
 
 ### 2. Add models
 
-The **supervised engine ships a bundled lite model** (`models/rf_lite_model.joblib`, 1.6MB) committed to the repo — no download needed. It provides functional detection (91% accuracy on CIC-UNSW-NB15) out of the box.
+The supervised engine selects one of two checkpoints automatically:
 
-To upgrade to the full model or add the other engines:
+1. **Preferred — Unified FT-Transformer** (`models/unified/unified_ft_transformer.pt`, ~6.5 MB, gitignored). Trained on UNSW-NB15 and registered in MLflow as `ml-ids-unified-ft-transformer/1`. Loads from MLflow first, falls back to the local file. See [`doc/UNIFIED_FT_LIVE_RUNBOOK.md`](doc/UNIFIED_FT_LIVE_RUNBOOK.md) for the full setup and live test runbook.
+2. **Fallback — Random Forest lite** (`models/rf_lite_model.joblib`, 1.6 MB, committed). Activates automatically if no FT-T checkpoint is present. Provides functional detection (91 % accuracy on CIC-UNSW-NB15) out of the box.
 
 ```bash
-# Train full supervised model (requires CIC-UNSW-NB15 dataset, ~24s)
+# Pull the unified FT-Transformer (recommended) — copy from ML-IDS or download from MLflow
+mkdir -p models/unified
+cp /path/to/ML-IDS/models/unified/unified_ft_transformer.pt  models/unified/
+cp /path/to/ML-IDS/models/unified/unified_scaler.pkl         models/unified/
+cp /path/to/ML-IDS/models/unified/unified_metadata.json      models/unified/
+
+# OR train the legacy full Random Forest (requires CIC-UNSW-NB15 dataset, ~24s)
 python scripts/train_rf.py --data-dir /path/to/CIC-UNSW-NB15
 
 # Isolation Forest + scaler (optional)
@@ -161,6 +170,26 @@ cp /path/to/lstm_config.json              models/   # tracked in git
 ```
 
 CNDS works with any subset of models — missing engines are gracefully skipped.
+
+#### What ships in the Docker image
+
+The `Dockerfile` build context includes (via `.dockerignore` allow-rules):
+
+| File | When | Purpose |
+|---|---|---|
+| `models/rf_lite_model.joblib` | Always (committed) | RF fallback — keeps the supervised slot active even with no MLflow and no FT checkpoint |
+| `models/unified/unified_ft_transformer.pt` | If present on the build host | Preferred FT-Transformer; loads ahead of the RF fallback |
+| `models/unified/unified_scaler.pkl` | Same | StandardScaler matched to the FT checkpoint |
+| `models/unified/unified_metadata.json` | Same | Feature names + class metadata |
+| `models/lstm_config.json` | Always (committed) | LSTM architecture config (model weights are pulled at runtime) |
+
+Behaviour matrix at runtime:
+
+| Scenario | Supervised engine |
+|---|---|
+| No MLflow, no `models/unified/` on the build host | Random Forest lite (bundled) |
+| No MLflow, `models/unified/` populated at build | FT-Transformer (loaded from local checkpoint) |
+| MLflow reachable from the container | FT-Transformer (loaded from `models:/ml-ids-unified-ft-transformer/<latest>`); local files are still a hot fallback if the registry call fails |
 
 ### 3. Run
 
@@ -322,9 +351,15 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `ALERT_COOLDOWN_SECS` | `60` | Seconds before a duplicate alert can fire again |
 | `DEDUP_WINDOW_SECS` | `300` | Alert deduplication window (seconds) |
 | `MODELS_DIR` | `models` | Directory containing model files |
-| `RF_MODEL_FILE` | `rf_model.joblib` | Full RF model (gitignored, train locally) |
-| `RF_LITE_MODEL_FILE` | `rf_lite_model.joblib` | Bundled lite RF model (committed, fallback) |
+| `RF_MODEL_FILE` | `rf_model.joblib` | Full RF model (gitignored, fallback only) |
+| `RF_LITE_MODEL_FILE` | `rf_lite_model.joblib` | Bundled lite RF model (committed, second-tier fallback) |
 | `RF_SCORE_THRESHOLD` | `0.90` | Min RF anomaly score to avoid false positives |
+| `FT_MODEL_FILE` | `unified/unified_ft_transformer.pt` | FT-Transformer checkpoint (gitignored, preferred) |
+| `FT_SCALER_FILE` | `unified/unified_scaler.pkl` | StandardScaler matched to the FT checkpoint |
+| `FT_USE_GPU` | `false` | Run FT-T inference on CUDA when available |
+| `FT_SCORE_THRESHOLD` | `0.50` | Min FT anomaly score (1 − P(Benign)) to contribute |
+| `MLFLOW_FT_REGISTRY_NAME` | `ml-ids-unified-ft-transformer` | MLflow registered model name to load FT from |
+| `MLFLOW_FT_STAGE` | `None` | MLflow stage to pin (default = latest version) |
 | `IF_MODEL_FILE` | `isolation_forest.joblib` | Isolation Forest model filename |
 | `IF_SCALER_FILE` | `if_scaler.joblib` | IF scaler filename |
 | `LSTM_MODEL_FILE` | `lstm_autoencoder.pt` | LSTM model filename |
@@ -383,8 +418,9 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   ├── env.py                   # Alembic config wired to CNDS models
 │   └── versions/                # Auto-generated migration scripts
 ├── scripts/
-│   ├── retrain_with_payload.py  # Retrain RF with 86 features (76 flow + 10 payload)
-│   └── pcap_replay.py          # PCAP replay for offline threat hunting / model eval
+│   ├── retrain_with_payload.py    # Retrain RF with 86 features (76 flow + 10 payload)
+│   ├── pcap_replay.py             # PCAP replay for offline threat hunting / model eval
+│   └── smoke_test_ft_unified.py   # Reproduce FT-Transformer F1 macro on the held-out test split
 ├── siem/                        # SIEM integration templates
 │   ├── README.md                # Setup guide for all platforms
 │   ├── splunk/
@@ -399,17 +435,23 @@ Copy `.env.example` to `.env` and adjust as needed.
 │       └── forwarder.py         # CEF syslog forwarder (QRadar, ArcSight, Sentinel)
 ├── dashboard/
 │   └── app.py                   # Streamlit real-time dashboard
-├── models/                      # ML model files
-│   ├── rf_lite_model.joblib     # Bundled lite RF (1.6MB, committed — works out of the box)
-│   ├── rf_model.joblib          # Full RF pipeline (gitignored — train with scripts/train_rf.py)
-│   ├── isolation_forest.joblib  # Isolation Forest (gitignored)
-│   ├── if_scaler.joblib         # StandardScaler for IF (gitignored)
-│   ├── lstm_autoencoder.pt      # LSTM Autoencoder weights (gitignored)
-│   └── lstm_config.json         # LSTM architecture config (committed)
+├── models/                       # ML model files
+│   ├── unified/
+│   │   ├── unified_ft_transformer.pt   # Preferred supervised model (gitignored)
+│   │   ├── unified_scaler.pkl          # StandardScaler matched to the FT checkpoint
+│   │   └── unified_metadata.json       # Feature names, class counts, training metrics
+│   ├── rf_lite_model.joblib      # Bundled lite RF (1.6MB, committed — fallback)
+│   ├── rf_model.joblib           # Full RF pipeline (gitignored — fallback only)
+│   ├── isolation_forest.joblib   # Isolation Forest (gitignored)
+│   ├── if_scaler.joblib          # StandardScaler for IF (gitignored)
+│   ├── lstm_autoencoder.pt       # LSTM Autoencoder weights (gitignored)
+│   └── lstm_config.json          # LSTM architecture config (committed)
 ├── src/
 │   ├── config.py                # All settings (env-var driven)
 │   ├── pipeline.py              # Detection pipeline callback (flow → engines → alert)
-│   ├── ML Tracking_registry.py       # Unified ML Tracking model registry
+│   ├── mlflow_registry.py       # Unified MLflow model registry
+│   ├── models/
+│   │   └── ft_transformer.py    # FTTransformer class + load/build helpers + UNIFIED_CLASS_LABELS
 │   ├── capture/
 │   │   ├── packet_capture.py    # Scapy capture + async worker queue
 │   │   └── dispatcher.py        # Fan-out to feature pipelines on flow expiry
@@ -421,8 +463,9 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   │   └── utils.py             # Shared utilities (byte entropy, etc.)
 │   ├── engines/
 │   │   ├── protocol.py          # DetectionEngine interface (Protocol)
-│   │   ├── registry.py          # Shared engine singletons
-│   │   ├── supervised.py        # Random Forest wrapper
+│   │   ├── registry.py          # Shared engine singletons (FT preferred, RF fallback)
+│   │   ├── supervised.py        # Random Forest wrapper (legacy fallback)
+│   │   ├── ft_transformer_engine.py  # FT-Transformer engine (MLflow → local fallback)
 │   │   ├── isolation_forest.py  # Isolation Forest wrapper
 │   │   ├── lstm_autoencoder.py  # LSTM Autoencoder wrapper
 │   │   ├── lstm_model.py        # LSTM Autoencoder architecture (nn.Module)
@@ -473,6 +516,7 @@ Copy `.env.example` to `.env` and adjust as needed.
     ├── test_payload_features.py
     ├── test_rules_engine.py
     ├── test_siem.py             # CEF syslog forwarder tests
+    ├── test_ft_transformer_engine.py  # FT-Transformer integration tests (load + predict + dataset checks)
     └── unsupervised/
         └── test_collector.py    # BaselineCollector, CompositeTrigger, ProvenanceMetadata unit tests
 ```

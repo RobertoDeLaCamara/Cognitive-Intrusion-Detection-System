@@ -120,6 +120,27 @@ pipeline {
                 sh "docker push ${REGISTRY}/${IMAGE_NAME}:latest"
             }
         }
+
+        // ── arm64 build (disabled — requires raspi-62 as Jenkins agent) ──────
+        // To enable: add raspi-62 (Pi 5, aarch64) as a Jenkins agent with
+        // label 'raspi-62', then uncomment this stage. Uses classic docker build
+        // (not buildx) so --build-arg TARGETARCH=arm64 must be passed explicitly.
+        //
+        // stage('Build Image arm64') {
+        //     agent { label 'raspi-62' }
+        //     steps {
+        //         checkout scm
+        //         sh """
+        //             docker build \
+        //                 --build-arg TARGETARCH=arm64 \
+        //                 -t ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}-arm64 \
+        //                 -t ${REGISTRY}/${IMAGE_NAME}:latest-arm64 \
+        //                 .
+        //         """
+        //         sh "docker push ${REGISTRY}/${IMAGE_NAME}:${env.BUILD_NUMBER}-arm64"
+        //         sh "docker push ${REGISTRY}/${IMAGE_NAME}:latest-arm64"
+        //     }
+        // }
     }
 
     post {

@@ -33,6 +33,9 @@ def _validate_config():
     if not (0.0 < CALIBRATION_TEMPERATURE <= 10.0):
         errors.append(f"CALIBRATION_TEMPERATURE must be in (0,10], got {CALIBRATION_TEMPERATURE}")
 
+    if not (0.1 <= FT_TEMPERATURE <= 10.0):
+        errors.append(f"FT_TEMPERATURE must be in [0.1, 10.0], got {FT_TEMPERATURE}")
+
     if FLOW_TIMEOUT <= 0:
         errors.append(f"FLOW_TIMEOUT must be positive, got {FLOW_TIMEOUT}")
 
@@ -109,6 +112,10 @@ FT_SCALER_PATH      = os.path.join(
 )
 FT_USE_GPU          = os.getenv("FT_USE_GPU", "false").lower() == "true"
 FT_SCORE_THRESHOLD  = float(os.getenv("FT_SCORE_THRESHOLD", "0.50"))
+# Temperature scaling applied to logits before softmax (T > 1 reduces over-confidence).
+# Transformer classifiers are typically over-confident out of the box; T=2.0 is the
+# empirically motivated default. Set to 1.0 to disable.
+FT_TEMPERATURE      = float(os.getenv("FT_TEMPERATURE", "2.0"))
 MLFLOW_FT_REGISTRY_NAME = os.getenv("MLFLOW_FT_REGISTRY_NAME", "ml-ids-unified-ft-transformer")
 MLFLOW_FT_STAGE     = os.getenv("MLFLOW_FT_STAGE", "None")  # MLflow default stage if none set
 

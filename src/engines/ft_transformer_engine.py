@@ -8,6 +8,7 @@ Inference pipeline (matches notebooks/ft_transformer_optuna_sweep.py):
     x = nan_to_num(x, posinf=1e9, neginf=-1e9)
     x = scaler.transform(x)
     logits = model(x)            # AMP bf16 on CUDA, fp32 on CPU
+    logits = logits / FT_TEMPERATURE   # temperature scaling (default 2.0)
     probs = softmax(logits)
     pred = argmax(probs)
 
@@ -29,6 +30,7 @@ from ..config import (
     FT_MODEL_PATH,
     FT_SCALER_PATH,
     FT_SCORE_THRESHOLD,
+    FT_TEMPERATURE,
     FT_USE_GPU,
 )
 from .. import mlflow_registry
@@ -44,6 +46,7 @@ class FTTransformerEngine:
         model_path: str = FT_MODEL_PATH,
         scaler_path: str = FT_SCALER_PATH,
         use_gpu: bool = FT_USE_GPU,
+        temperature: float = FT_TEMPERATURE,
     ) -> None:
         self._model = None
         self._scaler = None
@@ -55,6 +58,7 @@ class FTTransformerEngine:
         self._model_path = model_path
         self._scaler_path = scaler_path
         self._use_gpu = use_gpu
+        self._temperature = temperature
         self._load()
 
     # ── Loading ────────────────────────────────────────────────────────────
@@ -247,6 +251,8 @@ class FTTransformerEngine:
                     logits = self._model(t)
             else:
                 logits = self._model(t)
+            if self._temperature != 1.0:
+                logits = logits / self._temperature
             probs = logits.softmax(-1).float().cpu().numpy()[0]
         return probs
 

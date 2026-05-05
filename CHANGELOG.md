@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.1] - 2026-05-05
+
+### Added
+- **`FT_TEMPERATURE` env var** — temperature scaling factor applied to FT-Transformer logits before softmax (default `2.0`). Reduces systematic over-confidence in Transformer classifiers (observed max probability drops from ~0.97 to ~0.85 on typical attack flows). Set to `1.0` to disable. Documented in `.env.example`, `src/config.py`, and `doc/ml-models.md`.
+- **ARM64 Docker support** — `ARG TARGETARCH=amd64` added to `Dockerfile`. `amd64` builds pull the explicit `+cpu` PyTorch wheel from the PyTorch index; `arm64` (e.g. Raspberry Pi 5) pulls the standard PyPI `manylinux2014_aarch64` wheel; `arm/v7` has no official PyTorch wheel and degrades gracefully to the RF fallback.
+
+### Changed
+- **`scikit-learn>=1.6.1,<2.0` pin in `requirements.txt`** — upper bound added to prevent a scikit-learn 2.0 ABI break from silently invalidating the serialized `StandardScaler` in `unified_scaler.pkl`.
+
+---
+
 ## [1.1.0] - 2026-05-04
 
 ### Added

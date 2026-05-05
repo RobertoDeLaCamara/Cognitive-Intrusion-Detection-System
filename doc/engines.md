@@ -4,12 +4,13 @@
 
 CNDS uses four complementary detection engines. Each engine observes a different signal, operates on a different feature representation, and detects a different category of threats. Their scores are fused by the ensemble scorer.
 
-| Engine | Weight | Features | What it detects |
+| Engine | Default Weight | Features | What it detects |
 |---|---|---|---|
-| Supervised (FT-Transformer or RF fallback) | 40% | 76 flow features | Named attack classes (10 types) |
-| Isolation Forest | 30% | 18 host features | Volume/behavioral anomalies |
-| LSTM Autoencoder | 20% | Temporal host sequences | Slow/drift behavioral changes |
-| Rules Engine | 10% | All signals | High-confidence threshold patterns |
+| Supervised (FT-Transformer or RF fallback) | 35% | 76 flow features | Named attack classes (10 types) |
+| Isolation Forest | 25% | 18 host features | Volume/behavioral anomalies |
+| LSTM Autoencoder | 15% | Temporal host sequences | Slow/drift behavioral changes |
+| Rules Engine | 5% | All signals | High-confidence threshold patterns |
+| Baseline (unsupervised live pipeline) | 20% | 18 host features | Adaptive behavioral anomalies |
 
 ---
 
@@ -260,10 +261,11 @@ ja3_hash in malicious_ja3_set
 
 Default weights (sum to 1.0):
 ```
-WEIGHT_SUPERVISED = 0.40
-WEIGHT_IFOREST    = 0.30
-WEIGHT_LSTM       = 0.20
-WEIGHT_RULES      = 0.10
+WEIGHT_SUPERVISED = 0.35
+WEIGHT_IFOREST    = 0.25
+WEIGHT_LSTM       = 0.15
+WEIGHT_RULES      = 0.05
+WEIGHT_BASELINE   = 0.20
 ```
 
 Override per attack type with `ATTACK_TYPE_WEIGHTS` JSON:
@@ -278,10 +280,10 @@ Override per attack type with `ATTACK_TYPE_WEIGHTS` JSON:
 When an engine is unavailable (model missing), its weight is distributed proportionally to the remaining engines:
 
 ```
-Example: LSTM unavailable (weight 0.20)
-Before: supervised=0.40, iforest=0.30, lstm=0.20, rules=0.10
-After:  supervised=0.50, iforest=0.375, lstm=0.00, rules=0.125
-        (each remaining engine scales by 1/(1-0.20))
+Example: LSTM unavailable (weight 0.15)
+Before: supervised=0.35, iforest=0.25, lstm=0.15, rules=0.05, baseline=0.20
+After:  supervised≈0.41, iforest≈0.29, lstm=0.00, rules≈0.06, baseline≈0.24
+        (each remaining engine scales by 1/(1-0.15))
 ```
 
 ### Confidence Calibration
@@ -318,7 +320,8 @@ The rules engine is always available and provides a minimum detection floor. In 
 
 | Engine | Latency | Memory | CPU | False Positive Risk |
 |---|---|---|---|---|
-| Random Forest | ~1 ms | ~200 MB (model) | Medium (inference) | Low (labeled training) |
+| FT-Transformer (primary) | ~3–8 ms | ~30 MB (model) | Medium (inference_mode, CPU) | Low (labeled training, 10 classes) |
+| Random Forest (fallback) | ~1 ms | ~200 MB (full model) | Medium (inference) | Low (labeled training) |
 | Isolation Forest | ~0.1 ms | ~50 MB (model) | Low | Medium (topology changes) |
 | LSTM Autoencoder | ~5 ms | ~100 MB (model) | High (GPU optional) | Low (sequence context) |
 | Rules Engine | ~0.01 ms | Negligible | Very Low | Very Low (threshold-based) |

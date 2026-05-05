@@ -21,6 +21,8 @@
 | [use-cases.md](use-cases.md) | SOC analysts, security architects | Operational use cases, attack scenarios, analyst workflows |
 | [digital-twin-sandbox.md](digital-twin-sandbox.md) | Engineers, demo operators | Local network digital twin, offline demo, sandbox testing |
 | [deployment.md](deployment.md) | DevOps, platform engineers | Installation, configuration, production operations |
+| [ft_transformer_architecture.md](ft_transformer_architecture.md) | ML engineers | FT-Transformer internals: tokenizer, encoder blocks, forward pass diagram, hyperparameters, temperature scaling |
+| [UNIFIED_FT_LIVE_RUNBOOK.md](UNIFIED_FT_LIVE_RUNBOOK.md) | Engineers, QA | Manual end-to-end test of the FT-Transformer engine on live traffic |
 
 ---
 
@@ -96,6 +98,9 @@ docker-compose up
 
 | Version | Notes |
 |---|---|
+| 1.1.1 | `FT_TEMPERATURE` env var (default 2.0), ARM64 Docker support, scikit-learn<2.0 pin |
+| 1.1.0 | Unified FT-Transformer supervised engine (F1 macro 0.6197), MLflow registry load, smoke test |
+| 1.0.9 | Bundled RF lite model (1.6 MB), 3-tier model load chain |
 | 1.0.3 | TRUSTED_OUTBOUND device profiles, periodic cleanup |
 | 1.0.2 | MITRE ATT&CK mapping, JA3 TLS fingerprinting, SIEM integration |
 | 1.0.1 | GeoIP pipeline, structured logging, API deduplication, engine protocol |

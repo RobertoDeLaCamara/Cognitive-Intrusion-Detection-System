@@ -170,41 +170,35 @@ CNDS computes IAT statistics (mean, std, max, min) both globally across the flow
 
 ---
 
-## 4. CICFlowMeter and the CIC-IDS2017 Dataset
+## 4. CICFlowMeter and the Training Dataset
 
 ### CICFlowMeter
 
 CICFlowMeter is an open-source network traffic flow generator and analyzer developed by the **Canadian Institute for Cybersecurity (CIC)**. It takes PCAP files as input and outputs CSV files where each row is a flow described by ~80 statistical features — packet lengths, IATs, TCP flags, active/idle periods, etc.
 
-CICFlowMeter defines a specific set of feature names and calculation methods. These definitions are the standard used by the CIC-IDS2017 dataset, and by extension, by CNDS's Random Forest.
+CICFlowMeter defines a specific set of feature names and calculation methods. The 76 features in `FLOW_FEATURE_NAMES` are a direct subset of the CICFlowMeter output, enabling CNDS to be trained on publicly available labeled data without custom feature engineering.
 
-The 76 features in `FLOW_FEATURE_NAMES` are a direct subset of the CICFlowMeter output, enabling CNDS to be trained on publicly available labeled data without custom feature engineering.
+### UNSW-NB15 Dataset (primary training corpus)
 
-### CIC-IDS2017 Dataset
-
-The CIC-IDS2017 dataset is the training corpus for CNDS's Random Forest. It was created by the Canadian Institute for Cybersecurity in 2017 by:
-
-1. Building a realistic network with real end-user behavior (web browsing, email, streaming).
-2. Running known attacks against the network over five days while capturing all traffic.
-3. Processing the PCAPs with CICFlowMeter to produce labeled CSVs.
+Both the FT-Transformer and the Random Forest fallback are trained on the **UNSW-NB15** dataset as redistributed by the Canadian Institute for Cybersecurity (the local data folder is named `CIC-IDS2017/` for historical reasons, but the content is UNSW-NB15).
 
 **Scale:**
-- ~2.8 million labeled flow records
-- 14 distinct classes (BENIGN + 13 attack types)
-- Captures spread across Monday–Friday to include diurnal variation
+- ~447k labeled flow records (after CICFlowMeter processing)
+- 10 classes: Benign + 9 attack types (Analysis, Backdoor, DoS, Exploits, Fuzzers, Generic, Reconnaissance, Shellcode, Worms)
+- Generated at UNSW Canberra using real attack tools against a controlled testbed
 
-**Why use CIC-IDS2017?**
+**Why UNSW-NB15?**
 
-Most network traffic datasets have one of two problems: they are either too old (the KDD Cup 1999 dataset, still widely used, was generated on hardware and protocols from 26 years ago) or they are proprietary. CIC-IDS2017 is publicly available, uses modern protocols, and includes a diverse set of attack types generated with real tools (nmap, Hydra, HULK, Slowloris, etc.).
+UNSW-NB15 is publicly available, uses modern attack categories aligned with current threat taxonomies, and provides both raw PCAPs and CICFlowMeter-processed CSVs. Its 10-class taxonomy maps cleanly onto the MITRE ATT&CK techniques most relevant to network-level detection.
 
 **Known limitations:**
 
-- The dataset is from 2017. It does not include attack traffic for techniques that emerged after that year.
-- It is heavily imbalanced: BENIGN traffic constitutes ~80% of samples, which skews classifiers toward the majority class unless corrected.
-- Some attack types are underrepresented (Infiltration has very few samples).
-- The feature distributions may not match your specific network — a Random Forest trained on CIC-IDS2017 will perform differently on a university network versus an industrial control network.
+- The dataset is from 2015–2018. It does not cover techniques introduced after those years.
+- It is heavily imbalanced: Benign traffic dominates (~250k of ~447k samples). The FT-Transformer mitigates this with `sqrt_inverse` class weighting.
+- Rare classes (Worms: 172 samples, Analysis: 269 samples) have lower per-class F1 even in the tuned model.
+- The feature distributions may not match your specific network.
 
-These limitations are why CNDS uses three additional engines (Isolation Forest, LSTM, Rules) alongside the Random Forest — they compensate for the RF's blind spots.
+These limitations are why CNDS uses three additional engines (Isolation Forest, LSTM, Rules) alongside the supervised classifier — they compensate for blind spots on novel or out-of-distribution traffic.
 
 ---
 
@@ -507,14 +501,19 @@ calibrated = sigmoid(scaled)      ← convert back to probability
 - **T > 1.0 (softer):** The logit is divided by a number greater than 1, shrinking it toward 0, which pushes the sigmoid output toward 0.5. The model becomes less confident.
 - **T < 1.0 (sharper):** The logit grows, pushing the sigmoid output toward 0 or 1. The model becomes more decisive.
 
-In CNDS, `CALIBRATION_TEMPERATURE` is set per-deployment. The default is 1.0. If you observe that the ensemble score distribution is clustered near 0.9–1.0 even for borderline detections (overconfidence), raising the temperature toward 1.5–2.0 will spread the scores out and make the threshold more meaningful.
+In CNDS, temperature scaling is applied in two places:
+
+1. **`FT_TEMPERATURE`** (default `2.0`) — applied to the FT-Transformer's raw logits *before* softmax, inside `FTTransformerEngine._forward()`. This corrects the Transformer's systematic over-confidence at the model output level. The result is a well-calibrated probability distribution that feeds cleanly into the ensemble.
+
+2. **`CALIBRATION_TEMPERATURE`** (default `1.0`) — applied to the *ensemble score* (the weighted average of all engine scores) *after* fusion, inside `EnsembleScorer`. This is a global ensemble-level knob. The default of 1.0 is a no-op; raise it toward 1.5–2.0 only if the ensemble itself remains over-confident after `FT_TEMPERATURE` is already set.
 
 ### How to calibrate empirically
 
-1. Run CNDS on a known-labeled traffic set (e.g., a portion of CIC-IDS2017 replayed through `pcap_replay.py`).
+1. Run CNDS on a known-labeled traffic set (e.g., a portion of UNSW-NB15 replayed through `pcap_replay.py`).
 2. Plot the histogram of ensemble scores for true positives and true negatives separately.
-3. If the true negative scores have a long tail above 0.5, increase temperature.
-4. If true positives cluster too close to the threshold (0.55), decrease temperature.
+3. If the true negative scores have a long tail above 0.5, increase `CALIBRATION_TEMPERATURE`.
+4. If true positives cluster too close to the threshold (0.55), decrease `CALIBRATION_TEMPERATURE`.
+5. To diagnose over-confidence at the FT-T model level specifically, inspect `P(predicted_class)` in the engine logs and adjust `FT_TEMPERATURE`.
 
 ---
 
@@ -844,57 +843,38 @@ When `ML Tracking_TRACKING_URI` is empty, the entire registry layer is skipped s
 
 ## 20. Glossary of Attack Types
 
-The following attack types appear in CNDS alerts as the `attack_type` field, sourced from the UNSW-NB15 label space (10 classes) used by the supervised classifier — the FT-Transformer in production, or the Random Forest fallback when no FT checkpoint is present.
+The `attack_type` field on every CNDS alert is produced by the supervised classifier. The primary engine — **FT-Transformer** — uses the **UNSW-NB15** label space (10 classes). If no FT-Transformer checkpoint is available, the system falls back to the **Random Forest**, which was also trained on the CIC redistribution of UNSW-NB15.
 
-### Denial of Service (DoS)
+### UNSW-NB15 Label Space (FT-Transformer — production)
 
-DoS attacks overwhelm a target with traffic to exhaust its resources (CPU, memory, bandwidth, connection table) and make it unavailable to legitimate users.
+The 10 classes exposed as `UNIFIED_CLASS_LABELS` in `src/models/ft_transformer.py`:
 
-| Label | Tool / Technique | Mechanism |
+| Class ID | Label | Description |
 |---|---|---|
-| **DoS Hulk** | HULK tool | Generates unique HTTP requests with random headers to bypass caching and exhaust the web server's thread pool |
-| **DoS GoldenEye** | GoldenEye tool | HTTP KeepAlive + cache control headers to keep connections open |
-| **DoS Slowloris** | Slowloris tool | Opens many HTTP connections and sends headers slowly (one byte at a time) to hold the connection slots without completing requests |
-| **DoS Slowhttptest** | Slowhttptest | Similar to Slowloris but targets POST body transmission |
+| 0 | **Benign** | Normal traffic |
+| 1 | **Analysis** | Deep packet inspection / protocol-level analysis attacks |
+| 2 | **Backdoor** | Backdoor implants and RAT (Remote Access Trojan) traffic |
+| 3 | **DoS** | Denial-of-Service attacks (any variant) |
+| 4 | **Exploits** | Active exploitation of software vulnerabilities |
+| 5 | **Fuzzers** | Random/semi-random input to find crash conditions or vulnerabilities |
+| 6 | **Generic** | Generic attack traffic not fitting a specific category |
+| 7 | **Reconnaissance** | Network scanning and host discovery |
+| 8 | **Shellcode** | Traffic containing or associated with shellcode injection |
+| 9 | **Worms** | Self-propagating malware traffic |
 
-**Why four DoS types instead of one?** They have distinct flow signatures. Hulk generates high packet rates with variable sizes. Slowloris generates very low packet rates with tiny packets and very long durations. The RF learns these patterns separately.
+**Class imbalance note:** The training set is heavily skewed toward Benign (~250k) and Exploits (~21k); rare classes like Worms (172 samples) and Analysis (269 samples) have lower per-class F1 even in the tuned model.
 
-### Port Scanning
-
-| Label | Technique |
-|---|---|
-| **PortScan** | TCP SYN scan (nmap -sS) — sends SYN to each port; if RST received, port is closed; if no response, port is filtered; if SYN-ACK, port is open (RST is immediately sent to not complete the handshake) |
-
-### Brute Force
-
-| Label | Target | Tool |
-|---|---|---|
-| **FTP-Patator** | FTP authentication | Patator tool |
-| **SSH-Patator** | SSH authentication | Patator tool |
-| **Web Attack – Brute Force** | HTTP login forms | Custom scripts |
-
-### Web Application Attacks
-
-| Label | Attack | Description |
-|---|---|---|
-| **Web Attack – SQL Injection** | SQLi | Injecting SQL code into HTTP parameters to manipulate the database (e.g., `' OR '1'='1`) |
-| **Web Attack – XSS** | Cross-Site Scripting | Injecting JavaScript into web pages to execute in victims' browsers (e.g., `<script>alert(1)</script>`) |
-
-### Advanced / Persistent
-
-| Label | Description |
-|---|---|
-| **Bot** | Botnet command-and-control traffic — the compromised machine periodically contacts the C2 server for instructions. Characterized by regular small HTTP/HTTPS flows to unusual destinations |
-| **Infiltration** | Network infiltration — the attacker has already gained access and is using the network for lateral movement or data staging. Generates diverse anomalous internal traffic |
-| **Heartbleed** | CVE-2014-0160 — a vulnerability in OpenSSL's heartbeat extension that allows reading up to 64 KB of server memory per malicious request, leaking private keys, passwords, and session tokens |
-
-### Common Indicators in Flow Features
+### Key flow feature signatures
 
 | Attack | Key flow features |
 |---|---|
-| DoS Hulk | `flow_pkts_s` very high, `flow_iat_mean` near zero, `fwd_pkt_len_mean` variable |
-| Slowloris | `flow_duration` very long (hours), `fwd_pkts_s` very low, `init_fwd_win_byts` small |
-| PortScan | `syn_flag_cnt` high, `tot_fwd_pkts` < 3, `flow_duration` very short |
-| SSH Brute Force | `dst_port = 22`, many short flows with identical byte sizes, high `flow_pkts_s` |
-| SQLi / XSS | Payload pattern match flags, `fwd_pkt_len_mean` elevated (longer HTTP request) |
-| Bot (C2) | Regular `flow_iat_mean`, `bot_ratio` (unusual ratio), consistent small sizes |
+| DoS (class 3) | `flow_pkts_s` very high, `flow_iat_mean` near zero, `syn_flag_cnt` elevated |
+| Reconnaissance (class 7) | `syn_flag_cnt` high, `tot_fwd_pkts` < 3, `flow_duration` very short |
+| Exploits (class 4) | Elevated `fwd_pkt_len_mean`, high `fwd_pkt_len_std`, `init_fwd_win_byts` large |
+| Fuzzers (class 5) | Irregular `flow_iat_std`, variable `fwd_pkt_len_mean`, high `down_up_ratio` |
+| Backdoor/Worms (classes 2, 9) | Regular `flow_iat_mean` (C2 beaconing), consistent small packet sizes |
+| Shellcode (class 8) | High `max_payload_entropy`, irregular packet lengths, short flows |
+
+### Random Forest fallback label space
+
+When the RF is active (no FT-T checkpoint), it uses the same UNSW-NB15 10-class taxonomy, since both models were trained on the CIC redistribution of that dataset (`CIC-IDS2017/` folder, UNSW-NB15 content). The class labels and IDs are identical.

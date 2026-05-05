@@ -54,6 +54,15 @@ cp .env.example .env
 docker-compose up -d
 ```
 
+**Multi-architecture builds:** The Dockerfile supports `amd64` (default), `arm64` (e.g. Raspberry Pi 5), and `arm/v7`. Build for a specific platform with:
+
+```bash
+docker buildx build --platform linux/amd64 -t cnds:latest .
+docker buildx build --platform linux/arm64 -t cnds:arm64 .
+```
+
+On `arm64`, PyTorch is installed from the standard PyPI index (`manylinux2014_aarch64` wheel). On `arm/v7`, no official PyTorch wheel is available — the Dockerfile skips the torch install and `FTTransformerEngine` degrades to the RF fallback automatically.
+
 **Services started:**
 
 | Service | Container | Port | Description |
@@ -108,10 +117,11 @@ HOST_WINDOW_SIZE=100            # Sliding window size (packets) per tracked IP
 MAX_TRACKED_IPS=5000            # LRU eviction ceiling for host state
 
 # ── Detection Ensemble ───────────────────────────────────────────────────
-WEIGHT_SUPERVISED=0.40
-WEIGHT_IFOREST=0.30
-WEIGHT_LSTM=0.20
-WEIGHT_RULES=0.10
+WEIGHT_SUPERVISED=0.35
+WEIGHT_IFOREST=0.25
+WEIGHT_LSTM=0.15
+WEIGHT_RULES=0.05
+WEIGHT_BASELINE=0.20
 ENSEMBLE_THRESHOLD=0.55         # Score above which is_anomaly=True
 CALIBRATION_TEMPERATURE=1.0     # Temperature scaling (1.0 = no-op)
 
@@ -125,6 +135,16 @@ LARGE_PAYLOAD_BYTES=65000       # Payload size threshold
 
 # ── Models ───────────────────────────────────────────────────────────────
 MODELS_DIR=models
+# FT-Transformer (primary supervised engine)
+FT_MODEL_FILE=unified/unified_ft_transformer.pt
+FT_SCALER_FILE=unified/unified_scaler.pkl
+FT_USE_GPU=false                # Set true to use CUDA with bfloat16 autocast
+FT_SCORE_THRESHOLD=0.50         # Min 1-P(Benign) to contribute to ensemble
+# Temperature scaling on FT logits before softmax.
+# T > 1 reduces over-confidence (transformers are typically over-confident).
+# T = 1.0 disables. Default 2.0 reduces max probability from ~0.97 to ~0.85.
+FT_TEMPERATURE=2.0
+# Random Forest fallback (used when FT checkpoint is absent)
 RF_MODEL_FILE=rf_model.joblib
 IF_MODEL_FILE=isolation_forest.joblib
 LSTM_MODEL_FILE=lstm_autoencoder.pt
@@ -251,9 +271,12 @@ Migration files are in `alembic/versions/`. The two existing migrations are:
 
 Binary model files are not distributed with the repository. They must be obtained or trained separately.
 
-| File | Size (approx.) | Training required |
+| File | Size (approx.) | Notes |
 |---|---|---|
-| `models/rf_model.joblib` | 50–200 MB | CIC-IDS2017 labeled flow data |
+| `models/unified/unified_ft_transformer.pt` | ~6.5 MB | **Primary supervised engine.** Copy from ML-IDS or download from MLflow. |
+| `models/unified/unified_scaler.pkl` | ~2.4 KB | StandardScaler paired with the FT checkpoint. Must match the checkpoint. |
+| `models/rf_lite_model.joblib` | ~1.6 MB | **Bundled fallback — ships with the repo.** Used when no FT checkpoint is present. |
+| `models/rf_model.joblib` | 50–200 MB | Optional: full RF model. Preferred over the lite model when FT-T is absent. |
 | `models/isolation_forest.joblib` | 10–50 MB | Normal traffic baseline |
 | `models/if_scaler.joblib` | < 1 MB | Same baseline as IF model |
 | `models/lstm_autoencoder.pt` | 5–50 MB | Normal traffic sequence data |

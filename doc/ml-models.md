@@ -46,8 +46,9 @@ Paquete de red (Scapy)
 ┌─────────────────────────────────────────────────────────────┐
 │               Inference (4 motores en paralelo)             │
 │                                                             │
-│  RF  ──── 76 flow features ──────→ (attack_type, conf)     │
-│  IF  ──── 18 host features ──────→ anomaly_score [0,1]     │
+│  FT-T ─── 76 flow features ──────→ (attack_type, conf)     │  ← preferido
+│  RF   ─── 76 flow features ──────→ (attack_type, conf)     │  ← fallback sin ckpt
+│  IF   ─── 18 host features ──────→ anomaly_score [0,1]     │
 │  LSTM ─── seq de 20 × 18 feat. ──→ reconstruction_error    │
 │  Rules ── flow + host + payload ─→ (1.0 si regla dispara)  │
 └──────────────┬──────────────────────────────────────────────┘
@@ -68,7 +69,8 @@ Los tres modelos ML operan sobre **representaciones de features distintas** y de
 
 | Modelo | Input | Detecta | Requisito |
 |---|---|---|---|
-| Random Forest | 76 flow features | Ataques conocidos con nombre | Dataset etiquetado (CIC-IDS2017) |
+| FT-Transformer (preferido) | 76 flow features | 10 clases UNSW-NB15 | Checkpoint `unified_ft_transformer.pt` |
+| Random Forest (fallback) | 76 flow features | Ataques conocidos con nombre | Sin checkpoint FT-T disponible |
 | Isolation Forest | 18 host features | Anomalías volumétricas/comportamentales | Tráfico normal de referencia |
 | LSTM Autoencoder | Secuencias temporales 20×18 | Cambios lentos / beaconing | Tráfico normal de al menos 2h |
 
@@ -370,8 +372,16 @@ x = scaler.transform(x).astype(np.float32)
 with torch.inference_mode():
     if cuda: with torch.amp.autocast('cuda', dtype=torch.bfloat16): logits = model(x)
     else:    logits = model(x)
+    if FT_TEMPERATURE != 1.0:
+        logits = logits / FT_TEMPERATURE   # temperature scaling — reduce over-confidence
 probs = logits.softmax(-1)
 ```
+
+##### Nota sobre temperature scaling
+
+Los modelos Transformer clasificadores tienden a ser sistemáticamente sobreconfiados: sus probabilidades máximas se agrupan cerca de 1.0 incluso para flujos ambiguos. `FT_TEMPERATURE=2.0` divide los logits por 2 antes del softmax, suavizando la distribución de probabilidades (la confianza máxima típica baja de ~0.97 a ~0.85). Esto mejora la calibración del ensemble: el motor supervisado ya no domina el score ponderado en todos los flujos.
+
+Para desactivar: `FT_TEMPERATURE=1.0`. Para calibrar empíricamente, graficar el histograma de `P(predicted_class)` sobre tráfico benigno conocido — si el modo supera 0.90, aumentar la temperatura; si el percentil 50 cae por debajo de 0.60 en ataques conocidos, reducirla.
 
 #### Cadena de carga (orden de prioridad)
 
@@ -391,6 +401,7 @@ al Random Forest descrito abajo.
 | `FT_SCALER_FILE` | `unified/unified_scaler.pkl` | StandardScaler emparejado |
 | `FT_USE_GPU` | `false` | Inferencia en CUDA si disponible |
 | `FT_SCORE_THRESHOLD` | `0.50` | Score mínimo (1 − P(Benign)) para contribuir |
+| `FT_TEMPERATURE` | `2.0` | Factor de temperature scaling aplicado a logits antes de softmax (T > 1 reduce over-confidence; 1.0 desactiva). Ver [sección de calibración](#nota-sobre-temperature-scaling). |
 | `MLFLOW_FT_REGISTRY_NAME` | `ml-ids-unified-ft-transformer` | Nombre del modelo registrado en MLflow |
 | `MLFLOW_FT_STAGE` | `None` | Stage MLflow a fijar (default = última versión) |
 
@@ -731,10 +742,11 @@ El Rules Engine no tiene parámetros aprendidos pero sí **umbrales configurable
 
 ```python
 _BASE_WEIGHTS = {
-    "supervised":       WEIGHT_SUPERVISED,    # 0.40
-    "isolation_forest": WEIGHT_IFOREST,       # 0.30
-    "lstm":             WEIGHT_LSTM,          # 0.20
-    "rules":            WEIGHT_RULES,         # 0.10
+    "supervised":       WEIGHT_SUPERVISED,    # 0.35 (default)
+    "isolation_forest": WEIGHT_IFOREST,       # 0.25
+    "lstm":             WEIGHT_LSTM,          # 0.15
+    "rules":            WEIGHT_RULES,         # 0.05
+    "baseline":         WEIGHT_BASELINE,      # 0.20
 }
 ```
 
@@ -749,11 +761,11 @@ total_base = sum(base_weights.get(e, 0.0) for e in available)
 weights = {e: base_weights.get(e, 0.0) / total_base for e in available}
 ```
 
-**Ejemplo — RF no disponible:**
+**Ejemplo — motor supervisado no disponible:**
 ```
-Antes:  supervised=0.40, iforest=0.30, lstm=0.20, rules=0.10
-total_disponible = 0.30 + 0.20 + 0.10 = 0.60
-Después: iforest=0.30/0.60=0.50, lstm=0.20/0.60=0.33, rules=0.10/0.60=0.17
+Antes:  supervised=0.35, iforest=0.25, lstm=0.15, rules=0.05, baseline=0.20
+total_disponible = 0.25 + 0.15 + 0.05 + 0.20 = 0.65
+Después: iforest=0.25/0.65≈0.38, lstm=0.15/0.65≈0.23, rules=0.05/0.65≈0.08, baseline=0.20/0.65≈0.31
 ```
 
 ### Pesos por tipo de ataque (`ATTACK_TYPE_WEIGHTS`)
@@ -1401,16 +1413,29 @@ Si un modelo recién entrenado no alcanza estos umbrales en `pcap_replay.py`, no
 
 Todos los parámetros configurables vía `.env`, con sus valores por defecto y sus efectos:
 
+### Parámetros del FT-Transformer
+
+| Variable | Default | Rango | Descripción |
+|---|---|---|---|
+| `FT_TEMPERATURE` | 2.0 | [0.1, 10.0] | Temperature scaling sobre logits antes de softmax. T > 1 reduce over-confidence; T = 1.0 desactiva. |
+| `FT_SCORE_THRESHOLD` | 0.50 | [0, 1] | Score mínimo de `1 − P(Benign)` para contribuir al ensemble |
+| `FT_USE_GPU` | false | — | Inferencia en CUDA con autocast bfloat16 si `true` |
+
+**Nota sobre dependencias Python:** `scikit-learn` está pinado a `>=1.6.1,<2.0` para proteger la compatibilidad del `StandardScaler` serializado en `unified_scaler.pkl`. Una actualización a scikit-learn 2.0+ puede invalidar el scaler existente — si se actualiza la dependencia, regenerar el scaler con el mismo conjunto de entrenamiento.
+
+---
+
 ### Parámetros del Ensemble
 
 | Variable | Default | Rango | Efecto al aumentar |
 |---|---|---|---|
-| `WEIGHT_SUPERVISED` | 0.40 | [0, 1] | Más peso al RF (mayor precisión en ataques conocidos) |
-| `WEIGHT_IFOREST` | 0.30 | [0, 1] | Más sensible a anomalías volumétricas |
-| `WEIGHT_LSTM` | 0.20 | [0, 1] | Más sensible a comportamiento temporal |
-| `WEIGHT_RULES` | 0.10 | [0, 1] | Más sensible a patrones de umbral |
+| `WEIGHT_SUPERVISED` | 0.35 | [0, 1] | Más peso al motor supervisado (FT-T o RF fallback) |
+| `WEIGHT_IFOREST` | 0.25 | [0, 1] | Más sensible a anomalías volumétricas |
+| `WEIGHT_LSTM` | 0.15 | [0, 1] | Más sensible a comportamiento temporal |
+| `WEIGHT_RULES` | 0.05 | [0, 1] | Más sensible a patrones de umbral |
+| `WEIGHT_BASELINE` | 0.20 | [0, 1] | Peso del motor baseline (unsupervised pipeline en vivo) |
 | `ENSEMBLE_THRESHOLD` | 0.55 | [0, 1] | Bajar → más FPs, más detección; Subir → menos FPs, más FNs |
-| `CALIBRATION_TEMPERATURE` | 1.0 | (0, 10] | Bajar → sharper scores; Subir → softer scores |
+| `CALIBRATION_TEMPERATURE` | 1.0 | (0, 10] | Bajar → sharper scores; Subir → softer scores (ensemble) |
 
 ### Parámetros del Random Forest
 

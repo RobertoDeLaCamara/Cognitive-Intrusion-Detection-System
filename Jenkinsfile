@@ -103,7 +103,7 @@ pipeline {
                             -Dsonar.tests=tests \
                             -Dsonar.python.version=3.11 \
                             -Dsonar.python.coverage.reportPaths=coverage.xml \
-                            -Dsonar.host.url=http://your-sonarqube-host:9000 \
+                            -Dsonar.host.url=http://192.168.1.147:9000 \
                             -Dsonar.login="\$SONAR_USER" \
                             -Dsonar.password="\$SONAR_PASS" \
                             -Dsonar.scm.disabled=true

@@ -37,4 +37,5 @@ mlruns/
 .vscode/
 *.swp
 
-.claude/settings.local.json
+# AI assistant config
+.claude/

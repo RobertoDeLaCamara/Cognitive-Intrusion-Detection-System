@@ -33,7 +33,7 @@ target so the loopback shortcut isn't taken.
 
 ```bash
 ip -4 addr | awk '/inet /{print $NF, $2}'
-# Pick the iface bound to 192.168.1.49.
+# Pick the iface bound to your local subnet.
 ```
 
 ## Start cnds with the FT engine
@@ -45,8 +45,8 @@ source venv/bin/activate
 
 # Make MLflow + MinIO reachable so the engine can fall back to
 # the registry (the local checkpoint takes priority anyway).
-export MLFLOW_TRACKING_URI=http://192.168.1.147:5050
-export MLFLOW_S3_ENDPOINT_URL=http://192.168.1.189:9000
+export MLFLOW_TRACKING_URI=http://your-mlflow-host:5050
+export MLFLOW_S3_ENDPOINT_URL=http://your-minio-host:9000
 export AWS_ACCESS_KEY_ID=roberto
 export AWS_SECRET_ACCESS_KEY=patilla1
 # The proxy must be bypassed for all 192.168.1.x traffic.
@@ -90,7 +90,7 @@ tail -F /tmp/cnds_*.log 2>/dev/null || journalctl --user -fn 100
 ### SYN flood (target: a non-production host)
 
 ```bash
-sudo hping3 -S -p 80 --flood -c 200 192.168.1.62
+sudo hping3 -S -p 80 --flood -c 200 <TARGET_IP>
 ```
 
 Expected detection: `attack_type=DoS` (class 3) with high `score`.
@@ -98,7 +98,7 @@ Expected detection: `attack_type=DoS` (class 3) with high `score`.
 ### Port scan
 
 ```bash
-sudo nmap -sS -p 1-1000 -T4 192.168.1.62
+sudo nmap -sS -p 1-1000 -T4 <TARGET_IP>
 ```
 
 Expected detection: `attack_type=Reconnaissance` (class 7) and the
@@ -107,7 +107,7 @@ Expected detection: `attack_type=Reconnaissance` (class 7) and the
 ### UDP fuzzing
 
 ```bash
-sudo hping3 --udp -p 53 --rand-source --flood -c 500 192.168.1.62
+sudo hping3 --udp -p 53 --rand-source --flood -c 500 <TARGET_IP>
 ```
 
 Expected detection: `attack_type=Fuzzers` (class 5) — small datasets

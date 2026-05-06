@@ -126,7 +126,7 @@ IF_N_ESTIMATORS         = int(os.getenv("IF_N_ESTIMATORS", "200"))
 IF_MIN_SAMPLES          = int(os.getenv("IF_MIN_SAMPLES", "100"))
 
 # ── MLflow (Phase 5) ──────────────────────────────────────────────────────────
-MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "http://192.168.1.147:5050")  # homelab MLflow server
+MLFLOW_TRACKING_URI = os.getenv("MLFLOW_TRACKING_URI", "")  # set to your MLflow server URL
 MLFLOW_REGISTRY_NAME = os.getenv("MLFLOW_REGISTRY_NAME", "cnds")
 
 # ── Database ────────────────────────────────────────────────────────────────────
@@ -187,7 +187,7 @@ IP_BLOCKLIST = set(filter(None, os.getenv("IP_BLOCKLIST", "").split(",")))
 # JSON mapping: {"<src_ip>": ["domain.suffix", ...]}
 # Flows from a listed src_ip whose dst resolves to one of its trusted suffixes
 # are skipped before the detection pipeline runs.
-# Example: {"192.168.1.60": ["synology.com", "quickconnect.to", "synology.cn"]}
+# Example: {"192.168.1.x": ["synology.com", "quickconnect.to", "synology.cn"]}
 TRUSTED_OUTBOUND: dict = _json.loads(os.getenv("TRUSTED_OUTBOUND", "{}"))
 
 # ── Logging ────────────────────────────────────────────────────────────────────

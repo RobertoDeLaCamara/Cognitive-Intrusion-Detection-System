@@ -8,10 +8,10 @@ pipeline {
     }
 
     environment {
-        REGISTRY   = "your-registry-host:5000"
+        REGISTRY   = "192.168.1.147:5000"
         IMAGE_NAME = "cnds"
-        NO_PROXY   = 'localhost,127.0.0.1,192.168.1.0/24'
-        no_proxy   = 'localhost,127.0.0.1,192.168.1.0/24'
+        NO_PROXY   = 'localhost,127.0.0.1,192.168.1.0/24,192.168.1.147,192.168.1.62'
+        no_proxy   = 'localhost,127.0.0.1,192.168.1.0/24,192.168.1.147,192.168.1.62'
     }
 
     stages {

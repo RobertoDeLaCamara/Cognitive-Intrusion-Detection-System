@@ -22,6 +22,7 @@ from .features.flow_extractor import FlowRecord
 from .unsupervised.collector import BaselineCollector
 from .unsupervised.triggers import CompositeTrigger
 from .unsupervised.window_trainer import WindowTrainer
+from .enrichment.threat_intel import check_ip as ti_check_ip, check_ja3 as ti_check_ja3, get_store as ti_get_store
 
 logger = logging.getLogger(__name__)
 
@@ -205,6 +206,16 @@ def on_flow_complete(
     if _is_trusted_outbound(record.src_ip, record.dst_ip):
         return
 
+    # ── Threat intelligence check ───────────────────────────────────────────────
+    ti_malicious, ti_source = ti_check_ip(record.src_ip)
+    if not ti_malicious:
+        ti_malicious, ti_source = ti_check_ip(record.dst_ip)
+    ti_ja3_malicious = False
+    if ja3_info and ja3_info.get("hash"):
+        ti_ja3_malicious, _ = ti_check_ja3(ja3_info["hash"])
+    # Ensure threat intel refresh happens in background
+    ti_get_store()
+
     scores = EngineScores()
 
     if supervised.is_available:
@@ -232,6 +243,8 @@ def on_flow_complete(
     rule_score, triggered = rules.evaluate(record, flow_vec, payload_matches, ja3_info)
     scores.rules = rule_score
     scores.triggered_rules = triggered
+    scores.ti_malicious_ip = ti_malicious
+    scores.ti_malicious_ja3 = ti_ja3_malicious
 
     result = ensemble.score(scores)
 

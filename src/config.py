@@ -197,6 +197,14 @@ LOG_FORMAT = os.getenv("LOG_FORMAT", "text")  # "text" or "json"
 JA3_ENABLED = os.getenv("JA3_ENABLED", "true").lower() == "true"
 MALICIOUS_JA3_FILE = os.getenv("MALICIOUS_JA3_FILE", "")
 
+# ── Threat Intelligence Feeds ──────────────────────────────────────────────────
+ABUSEIPDB_URL = os.getenv("ABUSEIPDB_URL", "")
+ABUSEIPDB_API_KEY = os.getenv("ABUSEIPDB_API_KEY", "")
+MALICIOUS_JA3_URL = os.getenv("MALICIOUS_JA3_URL", "")
+MISP_URL = os.getenv("MISP_URL", "")
+MISP_API_KEY = os.getenv("MISP_API_KEY", "")
+THREAT_INTEL_REFRESH_MINUTES = int(os.getenv("THREAT_INTEL_REFRESH_MINUTES", "60"))
+
 # ── Unsupervised baseline ─────────────────────────────────────────────────────
 BASELINE_COLLECTION_ENABLED = os.getenv("BASELINE_COLLECTION_ENABLED", "true").lower() == "true"
 BASELINE_DRIFT_WARN = float(os.getenv("BASELINE_DRIFT_WARN", "0.30"))  # warning threshold

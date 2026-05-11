@@ -1,6 +1,6 @@
 # Cognitive Network Defense System
 
-**CNDS** is a real-time network intrusion detection system that fuses four detection engines — supervised ML, unsupervised anomaly detection, temporal sequence modeling, and rule-based heuristics — into a single weighted ensemble. A Scapy capture loop feeds packets into parallel feature pipelines; alerts are exposed over a FastAPI REST interface backed by SQLite (or PostgreSQL).
+**CNDS** is a real-time network intrusion detection system that fuses **five** detection engines — supervised ML, unsupervised anomaly detection, temporal sequence modeling, rule-based heuristics, and **external threat intelligence feeds** — into a single weighted ensemble. A Scapy capture loop feeds packets into parallel feature pipelines; alerts are exposed over a FastAPI REST interface backed by SQLite (or PostgreSQL).
 
 ---
 
@@ -18,16 +18,17 @@
    ├─ HostExtractor   → 18 per-IP host features
    ├─ PayloadAnalyzer → regex pattern matches + 10 numeric payload features
    └─ JA3 Extractor   → TLS ClientHello fingerprint (hash + raw string)
-        │
+        │                                                                             
         ├─► [Supervised Engine]     FT-Transformer (preferred, 76 flow features, UNSW-NB15 schema)
         │                          ↳ falls back to Random Forest if no checkpoint
         ├─► [Isolation Forest]      Novelty score  (18 host features)
         ├─► [LSTM Autoencoder]      Sequence score (18 host features)
-        └─► [Rules Engine]          Threshold + pattern + JA3 rules
+        ├─► [Rules Engine]          Threshold + pattern + JA3 rules
+        └─► [Threat Intelligence]   External IOC feeds (AbuseIPDB, JA3, MISP)
                 │
                 ▼
         [Ensemble Scorer]
-         weighted confidence fusion
+         weighted confidence fusion + TI boost
                 │
         ┌───────┴────────┐
         │   Alert fired  │  → MITRE ATT&CK mapping
@@ -46,8 +47,9 @@
 | **Isolation Forest** | 18 per-IP host features | IsolationForest + StandardScaler | Novel / zero-day volumetric anomalies |
 | **LSTM Autoencoder** | 18-feature time-series per IP | PyTorch sequence AE | Slow attacks, temporal behaviour drift |
 | **Rules** | Flow metadata + payload bytes + JA3 hashes | Threshold rules | ICMP floods, SYN scans, SQLi, XSS, LFI, large payloads, asymmetric upload, malicious TLS fingerprints |
+| **Threat Intelligence** | IPs, JA3 hashes, domains | External feeds (AbuseIPDB, JA3 blacklists, MISP) | Known-bad IPs, malicious JA3 fingerprints, threat intel domains |
 
-Default ensemble weights: Supervised 40 %, Isolation Forest 30 %, LSTM 20 %, Rules 10 %.
+Default ensemble weights: Supervised 35 %, Isolation Forest 25 %, LSTM 15 %, Rules 5 %, Baseline 20 %.
 Any missing engine has its weight redistributed proportionally across the active engines.
 
 ### Unsupervised Baseline Training
@@ -107,6 +109,29 @@ CNDS extracts [JA3](https://github.com/salesforce/ja3) fingerprints from TLS Cli
 - Flagged by the rules engine as `malicious_ja3` → mapped to MITRE T1071 + T1573
 
 GREASE values (RFC 8701) are filtered before hashing.
+
+### Threat Intelligence Feed Integration
+
+CNDS can enrich detection with indicators of compromise (IOCs) from external threat intelligence feeds. When a flow's source/destination IP or JA3 hash matches a known-bad indicator, the ensemble score receives a **+0.30 boost** and the alert is tagged with `threat_intel_malicious_ip` or `threat_intel_malicious_ja3`.
+
+**Supported feeds:**
+
+| Feed | Environment Variable | Description |
+|------|---------------------|-------------|
+| [AbuseIPDB](https://www.abuseipdb.com/) | `ABUSEIPDB_URL`, `ABUSEIPDB_API_KEY` | CSV blacklist of malicious IPs |
+| JA3 hash lists | `MALICIOUS_JA3_URL` | Raw URL with one malicious JA3 hash per line |
+| [MISP](https://www.misp-project.org/) | `MISP_URL`, `MISP_API_KEY` | Pull IP/domain indicators from your MISP instance |
+
+Feeds are refreshed every `THREAT_INTEL_REFRESH_MINUTES` (default: 60) in a background thread. No network calls are made on the detection hot path — all lookups hit an in-memory set. If a feed is unreachable, the existing data is preserved and a warning is logged.
+
+**Example config:**
+```bash
+# .env
+ABUSEIPDB_URL=https://api.abuseipdb.com/api/v2/blacklist
+ABUSEIPDB_API_KEY=your-key-here
+MALICIOUS_JA3_URL=https://raw.githubusercontent.com/strangerealintel/ja3-fingerprints/main/ja3-hashes.txt
+THREAT_INTEL_REFRESH_MINUTES=60
+```
 
 ### SIEM Integration
 
@@ -338,10 +363,11 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `MAX_TRACKED_IPS` | `5000` | Max IPs tracked by host extractor / LSTM buffers |
 | `MIN_PACKETS_FOR_ML` | `10` | Min packets before ML engines activate |
 | `ENSEMBLE_THRESHOLD` | `0.55` | Score above which an alert fires |
-| `WEIGHT_SUPERVISED` | `0.40` | Supervised engine weight |
-| `WEIGHT_IFOREST` | `0.30` | Isolation Forest weight |
-| `WEIGHT_LSTM` | `0.20` | LSTM weight |
-| `WEIGHT_RULES` | `0.10` | Rules weight |
+| `WEIGHT_SUPERVISED` | `0.35` | Supervised engine weight |
+| `WEIGHT_IFOREST` | `0.25` | Isolation Forest weight |
+| `WEIGHT_LSTM` | `0.15` | LSTM weight |
+| `WEIGHT_RULES` | `0.05` | Rules weight |
+| `WEIGHT_BASELINE` | `0.20` | Unsupervised baseline engine weight |
 | `LARGE_PAYLOAD_BYTES` | `10000` | Forward payload size (bytes) that triggers the large-payload rule |
 | `MAX_PAYLOAD_SAMPLES` | `50` | Max payload samples stored per flow for feature extraction |
 | `PAYLOAD_SAMPLE_BYTES` | `4096` | Max bytes kept per payload sample |
@@ -401,6 +427,12 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `JA3_ENABLED` | `true` | Extract JA3 fingerprints from TLS ClientHello |
 | `MALICIOUS_JA3_FILE` | _(empty)_ | Path to known-malicious JA3 hashes (one per line); empty disables |
 | `BASELINE_COLLECTION_ENABLED` | `true` | Enable unsupervised baseline collection and training |
+| `ABUSEIPDB_URL` | _(empty)_ | AbuseIPDB blacklist URL; empty disables IP feed |
+| `ABUSEIPDB_API_KEY` | _(empty)_ | AbuseIPDB API key |
+| `MALICIOUS_JA3_URL` | _(empty)_ | URL to fetch known-malicious JA3 hashes (one per line) |
+| `MISP_URL` | _(empty)_ | MISP instance URL; empty disables MISP feed |
+| `MISP_API_KEY` | _(empty)_ | MISP API key |
+| `THREAT_INTEL_REFRESH_MINUTES` | `60` | How often to refresh threat intel feeds (minutes) |
 
 ---
 
@@ -487,6 +519,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   │   ├── notifications.py     # Webhook/Slack alert notifications
 │   │   ├── confidence_decay.py  # Exponential score decay for repeat alerts
 │   │   ├── ip_lists.py          # IP allowlist / blocklist
+│   │   ├── threat_intel.py      # Threat intelligence feed integration (AbuseIPDB, JA3, MISP)
 │   │   └── dns_logger.py        # DNS query logging from captured traffic
 │   └── api/
 │       ├── main.py              # FastAPI application
@@ -514,6 +547,8 @@ Copy `.env.example` to `.env` and adjust as needed.
     ├── test_ja3.py              # JA3 fingerprint extraction tests
     ├── test_mitre.py            # MITRE ATT&CK mapping tests
     ├── test_payload_features.py
+    ├── test_ip_lists.py          # IP allowlist/blocklist tests
+    ├── test_threat_intel.py      # Threat intelligence feed tests (31 tests, 98% cov)
     ├── test_rules_engine.py
     ├── test_siem.py             # CEF syslog forwarder tests
     ├── test_ft_transformer_engine.py  # FT-Transformer integration tests (load + predict + dataset checks)

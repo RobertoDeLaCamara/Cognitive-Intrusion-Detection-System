@@ -35,6 +35,10 @@ class EngineScores:
     # Rules that fired
     triggered_rules: List[str] = field(default_factory=list)
 
+    # Threat intelligence (external feeds)
+    ti_malicious_ip: bool = False       # src or dst IP matches threat intel
+    ti_malicious_ja3: bool = False      # JA3 hash matches threat intel
+
 
 @dataclass
 class EnsembleResult:
@@ -109,6 +113,16 @@ class EnsembleScorer:
 
         combined = sum(weights[e] * available[e] for e in available)
         combined = float(max(0.0, min(1.0, combined)))
+
+        # ── Threat intelligence boost ──────────────────────────────────────────
+        # If threat intel flags IP or JA3 as malicious, boost score,
+        # but don't exceed 1.0
+        if scores.ti_malicious_ip or scores.ti_malicious_ja3:
+            combined = min(1.0, combined + 0.30)
+            if scores.ti_malicious_ip:
+                scores.triggered_rules.append("threat_intel_malicious_ip")
+            if scores.ti_malicious_ja3:
+                scores.triggered_rules.append("threat_intel_malicious_ja3")
 
         calibrated = _calibrate(combined, CALIBRATION_TEMPERATURE)
 

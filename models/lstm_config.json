@@ -5,5 +5,5 @@
   "num_layers": 2,
   "dropout": 0.2,
   "n_features": 18,
-  "reconstruction_threshold": 2.9326195120811462
+  "reconstruction_threshold": 2.9730082154273987
 }

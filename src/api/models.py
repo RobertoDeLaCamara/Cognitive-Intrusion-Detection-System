@@ -117,7 +117,9 @@ class MitigationAction(Base):
     status      = Column(SAEnum(MitigationStatus), default=MitigationStatus.PENDING)
     reason      = Column(Text, nullable=True)
     alert_id    = Column(Integer, ForeignKey("alerts.id"), nullable=True)
-    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    # naive UTC: asyncpg (used by the guardian's async session) rejects
+    # tz-aware datetimes bound against a "timestamp without time zone" column.
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
     expires_at  = Column(DateTime, nullable=True, index=True)   # null once confirmed permanent
     resolved_at = Column(DateTime, nullable=True)
 

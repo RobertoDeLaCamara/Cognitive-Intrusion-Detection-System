@@ -25,6 +25,8 @@ alembic>=1.13.0
 
 # Optional: PostgreSQL
 asyncpg>=0.29.0
+# Sync driver required by Alembic (env.py converts +asyncpg -> +psycopg2)
+psycopg2-binary>=2.9.9
 
 # Auth (Phase 7)
 PyJWT>=2.8.0
@@ -50,6 +52,10 @@ bcrypt>=4.1.0
 
 # Optional: Webhook notifications (Phase 8)
 httpx>=0.26.0
+
+# Threat intelligence feeds (src/enrichment/threat_intel.py) — hard dependency,
+# unconditional import, not currently declared anywhere.
+requests>=2.31.0
 
 # Transitive dependency pins (security)
 urllib3>=2.6.3

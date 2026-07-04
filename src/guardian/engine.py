@@ -16,7 +16,7 @@ the packet-capture worker threads are never touched.
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Optional
 
 from sqlalchemy import select, func
@@ -25,6 +25,7 @@ from ..api.database import AsyncSessionLocal
 from ..api.models import Alert, MitigationAction, MitigationStatus
 from ..enrichment.ip_lists import _matches
 from ..enrichment.notifications import notify_alert
+from ..timeutils import utcnow
 from ..config import (
     GUARDIAN_MIN_SEVERITY,
     GUARDIAN_POLL_INTERVAL_SECS,
@@ -44,16 +45,6 @@ _SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 _backend = AdGuardBackend()
 _last_seen_alert_id: Optional[int] = None
 _circuit_paused_notified = False
-
-
-def _utcnow() -> datetime:
-    """Naive UTC now — matches this project's DateTime (no timezone) columns.
-
-    asyncpg rejects comparing/binding a timezone-aware datetime against a
-    "timestamp without time zone" column, so every DateTime column in this
-    codebase (Alert.timestamp, SuppressionRule.expires_at, etc.) is naive.
-    """
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _severity_value(severity) -> int:
@@ -81,7 +72,7 @@ async def _has_active_action(db, src_ip: str) -> bool:
 
 async def _circuit_breaker_tripped(db) -> bool:
     global _circuit_paused_notified
-    since = _utcnow() - timedelta(seconds=GUARDIAN_CIRCUIT_WINDOW_SECS)
+    since = utcnow() - timedelta(seconds=GUARDIAN_CIRCUIT_WINDOW_SECS)
     result = await db.execute(
         select(func.count(MitigationAction.id)).where(MitigationAction.created_at > since)
     )
@@ -155,7 +146,7 @@ async def guardian_loop() -> None:
                         status=MitigationStatus.PENDING,
                         reason=reason,
                         alert_id=alert.id,
-                        expires_at=_utcnow() + timedelta(minutes=GUARDIAN_BLOCK_MINUTES),
+                        expires_at=utcnow() + timedelta(minutes=GUARDIAN_BLOCK_MINUTES),
                     )
                     db.add(action)
                     await db.commit()
@@ -184,7 +175,7 @@ async def guardian_expiry_loop() -> None:
         await asyncio.sleep(GUARDIAN_POLL_INTERVAL_SECS)
         try:
             async with AsyncSessionLocal() as db:
-                now = _utcnow()
+                now = utcnow()
                 result = await db.execute(
                     select(MitigationAction).where(
                         MitigationAction.status == MitigationStatus.PENDING,

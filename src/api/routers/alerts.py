@@ -12,6 +12,7 @@ from ..schemas import (
     SuppressionRuleCreate, SuppressionRuleOut,
 )
 from ..auth import require_role
+from ...timeutils import utcnow
 
 router = APIRouter(prefix="/api", tags=["alerts"])
 
@@ -47,7 +48,7 @@ async def export_alerts(
     db: AsyncSession = Depends(get_db),
 ):
     """Export alerts as JSON or CSV for analyst reporting."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import timedelta
     from fastapi.responses import StreamingResponse
     import csv
     import io
@@ -59,7 +60,7 @@ async def export_alerts(
     if src_ip:
         q = q.where(Alert.src_ip == src_ip)
     if hours:
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+        cutoff = utcnow() - timedelta(hours=hours)
         q = q.where(Alert.timestamp >= cutoff)
 
     result = await db.execute(q)
@@ -122,8 +123,8 @@ async def alert_trends(
     db: AsyncSession = Depends(get_db),
 ):
     """Return alert counts bucketed by hour or day."""
-    from datetime import datetime, timedelta, timezone
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+    from datetime import timedelta
+    cutoff = utcnow() - timedelta(hours=hours)
     result = await db.execute(
         select(Alert.timestamp, Alert.severity).where(Alert.timestamp >= cutoff)
     )
@@ -225,8 +226,7 @@ async def stats(db: AsyncSession = Depends(get_db)):
 
 @router.get("/suppression-rules", response_model=List[SuppressionRuleOut])
 async def list_suppression_rules(db: AsyncSession = Depends(get_db)):
-    from datetime import datetime, timezone
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     result = await db.execute(
         select(SuppressionRule).where(SuppressionRule.expires_at > now)
     )
@@ -239,7 +239,7 @@ async def create_suppression_rule(
     body: SuppressionRuleCreate,
     db: AsyncSession = Depends(get_db),
 ):
-    from datetime import datetime, timedelta, timezone
+    from datetime import timedelta
     from ...enrichment.suppression import invalidate_cache
     rule = SuppressionRule(
         src_ip=body.src_ip,
@@ -247,7 +247,7 @@ async def create_suppression_rule(
         attack_type=body.attack_type,
         min_severity=body.min_severity,
         reason=body.reason,
-        expires_at=datetime.now(timezone.utc) + timedelta(minutes=body.duration_minutes),
+        expires_at=utcnow() + timedelta(minutes=body.duration_minutes),
     )
     db.add(rule)
     await db.commit()

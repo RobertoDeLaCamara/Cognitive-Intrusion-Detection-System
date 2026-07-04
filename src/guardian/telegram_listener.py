@@ -9,7 +9,6 @@ viable transport here.
 
 import asyncio
 import logging
-from datetime import datetime, timezone
 
 import httpx
 from sqlalchemy import select
@@ -17,17 +16,13 @@ from sqlalchemy import select
 from ..api.database import AsyncSessionLocal
 from ..api.models import MitigationAction, MitigationStatus
 from ..config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+from ..timeutils import utcnow
 from .backends import AdGuardBackend
 
 logger = logging.getLogger(__name__)
 
 _API = "https://api.telegram.org/bot{token}/{method}"
 _backend = AdGuardBackend()
-
-
-def _utcnow() -> datetime:
-    """Naive UTC now — matches this project's DateTime (no timezone) columns."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 async def send_action_notice(action: MitigationAction) -> None:
@@ -38,7 +33,7 @@ async def send_action_notice(action: MitigationAction) -> None:
         f"🛡 *Guardian auto\\-block*\n"
         f"IP: `{action.src_ip}`\n"
         f"Reason: {action.reason}\n"
-        f"Auto\\-rollback in {int((action.expires_at - _utcnow()).total_seconds() // 60)} min "
+        f"Auto\\-rollback in {int((action.expires_at - utcnow()).total_seconds() // 60)} min "
         f"unless confirmed"
     )
     payload = {
@@ -92,7 +87,7 @@ async def _handle_callback(client: httpx.AsyncClient, callback: dict) -> None:
         if op == "confirm":
             action.status = MitigationStatus.CONFIRMED
             action.expires_at = None
-            action.resolved_at = _utcnow()
+            action.resolved_at = utcnow()
             await db.commit()
             await _answer_callback(client, callback_id, f"Confirmed — {action.src_ip} stays blocked.")
         elif op == "undo":
@@ -103,7 +98,7 @@ async def _handle_callback(client: httpx.AsyncClient, callback: dict) -> None:
                 await _answer_callback(client, callback_id, "Undo failed, see logs.")
                 return
             action.status = MitigationStatus.UNDONE
-            action.resolved_at = _utcnow()
+            action.resolved_at = utcnow()
             await db.commit()
             await _answer_callback(client, callback_id, f"Undone — {action.src_ip} unblocked.")
 

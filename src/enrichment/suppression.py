@@ -10,13 +10,13 @@ querying the database on every alert.
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
 from typing import List
 
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..api.models import Alert, SuppressionRule
+from ..timeutils import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ async def _refresh_cache(db: AsyncSession) -> None:
             return
         result = await db.execute(
             select(SuppressionRule).where(
-                SuppressionRule.expires_at > datetime.now(timezone.utc)
+                SuppressionRule.expires_at > utcnow()
             )
         )
         _cache = list(result.scalars().all())
@@ -73,7 +73,7 @@ async def is_suppressed(alert: Alert, db: AsyncSession) -> bool:
 
 async def cleanup_expired(db: AsyncSession) -> int:
     """Remove expired suppression rules. Returns count deleted."""
-    now = datetime.now(timezone.utc)
+    now = utcnow()
     result = await db.execute(
         delete(SuppressionRule).where(SuppressionRule.expires_at <= now)
     )

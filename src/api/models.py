@@ -1,12 +1,13 @@
 """SQLAlchemy ORM models."""
 
 import enum
-from datetime import datetime, timezone
 from sqlalchemy import (
     Column, Integer, String, Float, Boolean,
     DateTime, JSON, Enum as SAEnum, ForeignKey, Text,
 )
 from sqlalchemy.orm import declarative_base, relationship
+
+from ..timeutils import utcnow
 
 Base = declarative_base()
 
@@ -29,7 +30,7 @@ class Alert(Base):
     __tablename__ = "alerts"
 
     id               = Column(Integer, primary_key=True, index=True)
-    timestamp        = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+    timestamp        = Column(DateTime, default=utcnow, index=True)
     src_ip           = Column(String(45), index=True)
     dst_ip           = Column(String(45), nullable=True)
     src_port         = Column(Integer, nullable=True)
@@ -77,8 +78,8 @@ class Incident(Base):
     status      = Column(SAEnum(IncidentStatus), default=IncidentStatus.OPEN)
     severity    = Column(SAEnum(SeverityLevel), default=SeverityLevel.MEDIUM)
     assigned_to = Column(String(100), nullable=True)
-    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
-    updated_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    created_at  = Column(DateTime, default=utcnow)
+    updated_at  = Column(DateTime, default=utcnow, onupdate=utcnow)
     resolved_at = Column(DateTime, nullable=True)
     notes       = Column(Text, nullable=True)
 
@@ -95,7 +96,7 @@ class SuppressionRule(Base):
     attack_type = Column(String(100), nullable=True)
     min_severity = Column(String(20), nullable=True)
     reason      = Column(Text, nullable=True)
-    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at  = Column(DateTime, default=utcnow)
     expires_at  = Column(DateTime, nullable=False, index=True)
 
 
@@ -119,7 +120,7 @@ class MitigationAction(Base):
     alert_id    = Column(Integer, ForeignKey("alerts.id"), nullable=True)
     # naive UTC: asyncpg (used by the guardian's async session) rejects
     # tz-aware datetimes bound against a "timestamp without time zone" column.
-    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc).replace(tzinfo=None))
+    created_at  = Column(DateTime, default=utcnow)
     expires_at  = Column(DateTime, nullable=True, index=True)   # null once confirmed permanent
     resolved_at = Column(DateTime, nullable=True)
 
@@ -135,4 +136,4 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     role          = Column(String(20), default="viewer")  # admin, analyst, viewer
     is_active     = Column(Boolean, default=True)
-    created_at    = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    created_at    = Column(DateTime, default=utcnow)

@@ -23,6 +23,7 @@ from ...enrichment.notifications import notify_alert
 from ...enrichment.confidence_decay import apply_decay
 from ...enrichment.ip_lists import is_allowlisted, is_blocklisted
 from ...config import ENSEMBLE_THRESHOLD, DEDUP_WINDOW_SECS
+from ...timeutils import utcnow
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["predict"])
@@ -142,9 +143,7 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
                 )
             _api_dedup[dedup_key] = now
         alert = Alert(
-            # naive UTC: asyncpg rejects a tz-aware datetime bound against
-            # Alert.timestamp's "timestamp without time zone" column.
-            timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
+            timestamp=utcnow(),
             src_ip=body.src_ip,
             dst_ip=body.dst_ip,
             src_port=body.src_port,

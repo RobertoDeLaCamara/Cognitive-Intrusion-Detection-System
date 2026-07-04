@@ -2,7 +2,7 @@
 
 import logging
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Optional
 
 from sqlalchemy import select, desc
@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..api.models import Alert, Incident, SeverityLevel, IncidentStatus
 from ..config import CORRELATION_WINDOW_SECS, CORRELATION_THRESHOLD
+from ..timeutils import utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ async def correlate_alert(alert: Alert, db: AsyncSession) -> Optional[int]:
 
     Returns incident_id if correlated, None otherwise.
     """
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=CORRELATION_WINDOW_SECS)
+    cutoff = utcnow() - timedelta(seconds=CORRELATION_WINDOW_SECS)
 
     # Count recent alerts from same src_ip
     result = await db.execute(

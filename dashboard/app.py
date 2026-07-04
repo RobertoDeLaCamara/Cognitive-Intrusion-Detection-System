@@ -34,10 +34,12 @@ def fetch_trends(hours=24):
 stats = fetch_stats()
 if stats:
     s_cols = st.columns(4)
-    s_cols[0].metric("Total Alerts", stats.get("total_alerts", 0))
+    total_alerts = stats.get("total_alerts", 0)
+    ack_rate = (total_alerts - stats.get("unacknowledged", 0)) / total_alerts * 100 if total_alerts else 0.0
+    s_cols[0].metric("Total Alerts", total_alerts)
     s_cols[1].metric("🔴 Críticas", stats.get("by_severity", {}).get("critical", 0))
     s_cols[2].metric("🟢 Benigno", stats.get("by_severity", {}).get("low", 0), delta_color="inverse")
-    s_cols[3].metric("Acknowledge Rate", f"{((stats.get('total_alerts',0) - stats.get('unacknowledged',0)) / stats.get('total_alerts',1) * 100):.1f}%")
+    s_cols[3].metric("Acknowledge Rate", f"{ack_rate:.1f}%")
 
 st.divider()
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([

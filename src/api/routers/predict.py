@@ -142,7 +142,9 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
                 )
             _api_dedup[dedup_key] = now
         alert = Alert(
-            timestamp=datetime.now(timezone.utc),
+            # naive UTC: asyncpg rejects a tz-aware datetime bound against
+            # Alert.timestamp's "timestamp without time zone" column.
+            timestamp=datetime.now(timezone.utc).replace(tzinfo=None),
             src_ip=body.src_ip,
             dst_ip=body.dst_ip,
             src_port=body.src_port,

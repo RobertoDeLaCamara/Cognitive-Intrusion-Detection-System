@@ -1,5 +1,28 @@
 services:
 
+  postgres:
+    image: postgres:16-alpine
+    container_name: cnds-postgres
+    # Published to the host so cnds-detector (network_mode: host) can reach
+    # it via localhost:5432 — it cannot resolve the "postgres" service name.
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      - POSTGRES_USER=cnds
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-cnds}
+      - POSTGRES_DB=cnds
+    volumes:
+      - cnds_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cnds -d cnds"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    mem_limit: 256m
+    cpus: 0.5
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -10,20 +33,25 @@ services:
       - "8000:8000"
     volumes:
       - ./models:/app/models
-      - cnds_db:/app/data
     env_file:
       - path: .env
         required: false
       - path: .env.example
         required: false
     environment:
-      - DATABASE_URL=sqlite+aiosqlite:///./data/cnds.db
+      # api runs on the default bridge network: reachable via service name
+      - DATABASE_URL=postgresql+asyncpg://cnds:${POSTGRES_PASSWORD:-cnds}@postgres:5432/cnds
+    depends_on:
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 5s
       timeout: 3s
       retries: 15
       start_period: 10s
+    mem_limit: 512m
+    cpus: 1.0
     restart: unless-stopped
 
   detector:
@@ -42,11 +70,19 @@ services:
         required: false
       - path: .env.example
         required: false
+    environment:
+      # host network mode: "postgres" is not resolvable, "localhost" is the
+      # host itself, and postgres's port is published there.
+      - DATABASE_URL=postgresql+asyncpg://cnds:${POSTGRES_PASSWORD:-cnds}@localhost:5432/cnds
     # NOTE: network_mode: host means container DNS won't resolve service
     # names. The detector writes directly to the DB, not via the API.
     depends_on:
       api:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+    mem_limit: 1.5g
+    cpus: 2.0
     restart: unless-stopped
 
   dashboard:
@@ -61,7 +97,11 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    mem_limit: 384m
+    cpus: 0.5
     restart: unless-stopped
+    profiles:
+      - dashboard
 
   # One-shot service: generates demo models (if missing) + runs synthetic
   # attack traffic so the dashboard has data immediately.
@@ -86,4 +126,4 @@ services:
       - demo
 
 volumes:
-  cnds_db:
+  cnds_pgdata:

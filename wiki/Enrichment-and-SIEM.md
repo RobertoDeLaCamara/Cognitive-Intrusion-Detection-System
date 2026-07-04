@@ -130,6 +130,8 @@ Async delivery (non-blocking). Failure does not prevent alert persistence.
 
 Minimum severity filter: `NOTIFY_MIN_SEVERITY` (default: `high`). Alerts below this level are not dispatched.
 
+The optional Guardian module (`src/guardian/`) extends the Telegram channel with an inline **Confirm**/**Undo** keyboard on every auto-block it creates, and receives button presses via `getUpdates` long-polling (not a webhook). See [Architecture and Data Flow](Architecture-and-Data-Flow#guardian-auto-response-optional) and [Deployment](Deployment#guardian-auto-response-optional).
+
 ---
 
 ## Adaptive Weights

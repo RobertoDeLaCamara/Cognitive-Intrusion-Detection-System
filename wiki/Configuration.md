@@ -132,3 +132,18 @@ Configuration is validated on startup. Invalid settings (e.g., weights not summi
 |---|---|---|
 | `IP_ALLOWLIST` | _(empty)_ | Comma-separated IPs or CIDR ranges to skip detection entirely |
 | `IP_BLOCKLIST` | _(empty)_ | Comma-separated IPs or CIDR ranges to auto-flag as critical |
+
+## Guardian Auto-Response
+
+| Variable | Default | Description |
+|---|---|---|
+| `GUARDIAN_ENABLED` | `false` | Master switch for the auto-response module |
+| `GUARDIAN_MIN_SEVERITY` | `critical` | Minimum alert severity that triggers an auto-block |
+| `GUARDIAN_POLL_INTERVAL_SECS` | `15` | How often the guardian polls the alerts table |
+| `GUARDIAN_BLOCK_MINUTES` | `30` | How long an auto-block lasts before automatic rollback |
+| `GUARDIAN_WHITELIST` | `192.168.1.1,192.168.1.62` | Comma-separated IPs/CIDRs the guardian never blocks — **never a broad LAN CIDR**, see [Deployment](Deployment) |
+| `GUARDIAN_CIRCUIT_MAX_ACTIONS` | `5` | Max auto-blocks within the circuit-breaker window before pausing |
+| `GUARDIAN_CIRCUIT_WINDOW_SECS` | `600` | Circuit-breaker window (seconds) |
+| `ADGUARD_URL` | `http://192.168.1.62:8001` | AdGuard Home base URL (the current enforcement backend) |
+| `ADGUARD_USERNAME` | _(empty)_ | AdGuard Home basic-auth username |
+| `ADGUARD_PASSWORD` | _(empty)_ | AdGuard Home basic-auth password |

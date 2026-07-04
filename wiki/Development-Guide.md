@@ -158,27 +158,36 @@ Defined in `CI/CDfile`:
 
 ```yaml
 services:
+  postgres:
+    image: postgres:16-alpine
+    # Required: api + detector are separate containers, and SQLite has no
+    # concurrent-writer support.
+
   api:
     build: .
     ports: ["8000:8000"]
     volumes:
       - ./models:/app/models:ro
-      - cnds_db:/app/data
     environment:
-      - DATABASE_URL=sqlite+aiosqlite:////app/data/cnds.db
+      - DATABASE_URL=postgresql+asyncpg://cnds:pass@postgres:5432/cnds
 
   detector:
     build: .
-    network_mode: host       # required for raw sockets
+    network_mode: host       # required for raw sockets — can't resolve "postgres"
     command: python main.py
     volumes:
       - ./models:/app/models:ro
+    environment:
+      # host network mode: use localhost + a published port, not the service name
+      - DATABASE_URL=postgresql+asyncpg://cnds:pass@localhost:5432/cnds
 
   dashboard:
     build: .
     ports: ["8501:8501"]
     command: streamlit run dashboard/app.py
 ```
+
+**arm64 / Raspberry Pi:** build with `docker compose build --build-arg TARGETARCH=arm64` — plain `docker build`/`docker compose build` does not auto-populate `ARG TARGETARCH` from a `buildx --platform` flag, so it silently defaults to `amd64` even on an arm64 host.
 
 ## Directory Layout
 
@@ -215,9 +224,13 @@ src/
 │   ├── confidence_decay.py      Exponential decay for repeat alerts
 │   ├── ip_lists.py              Allow/blocklist filtering
 │   └── dns_logger.py            DNS query capture
+├── guardian/                    Auto-response module (opt-in, GUARDIAN_ENABLED=false by default)
+│   ├── backends.py              MitigationBackend protocol + AdGuardBackend
+│   ├── engine.py                guardian_loop / guardian_expiry_loop
+│   └── telegram_listener.py     Inline Confirm/Undo via getUpdates long-poll
 └── api/
     ├── main.py                  FastAPI app + middleware
-    ├── models.py                ORM: Alert, Incident, User, SuppressionRule
+    ├── models.py                ORM: Alert, Incident, User, SuppressionRule, MitigationAction
     ├── schemas.py               Pydantic request/response
     ├── database.py              Async session + auto-migration
     ├── auth.py                  JWT/RBAC

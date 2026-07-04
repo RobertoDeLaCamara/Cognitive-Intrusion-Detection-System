@@ -52,6 +52,7 @@ src/features/                    flow (76), host (18), payload (10), JA3
 src/engines/                     RF, IF, LSTM, rules
 src/ensemble/scorer.py           weighted fusion + temperature scaling
 src/enrichment/                  MITRE, GeoIP, correlation, notifications
+src/guardian/                    optional auto-response: whitelist, circuit breaker, AdGuard block, rollback
 src/api/                         FastAPI + JWT/RBAC + Monitoring Service + WebSocket
 siem/                            Splunk, Elastic, Syslog-CEF templates
 models/                          gitignored — must train separately
@@ -64,3 +65,4 @@ models/                          gitignored — must train separately
 - Live capture requires `root` or `CAP_NET_RAW`.
 - Engine weights must sum to 1.0 ± 0.01; validation fails at import if misconfigured.
 - Trusted-outbound filtering skips detection for configured device→domain pairs entirely (DNS reverse lookup, 1h TTL cache).
+- The optional Guardian module (`src/guardian/`, `GUARDIAN_ENABLED=false` by default) can auto-block critical alerts — but never put a broad LAN CIDR in `GUARDIAN_WHITELIST`, since that's exactly the range the detector monitors and would silently disable every auto-block.

@@ -2,25 +2,24 @@
 
 ## Docker Compose (Recommended)
 
-The included `docker-compose.yml` runs three services:
+The included `docker-compose.yml` runs four services:
 
 | Service | Container | Port | Description |
 |---|---|---|---|
 | `api` | `cnds-api` | 8000 | FastAPI REST API + alert persistence |
 | `detector` | `cnds-detector` | host network | Scapy packet capture + detection pipeline |
 | `dashboard` | `cnds-dashboard` | 8501 | Streamlit real-time analytics dashboard |
+| `postgres` | `cnds-postgres` | 5432 (internal) | Required — see Database Concurrency below |
 
 ```bash
 docker-compose up -d
 ```
 
+**arm64 / Raspberry Pi:** without `docker buildx build --platform ...`, the Dockerfile's `ARG TARGETARCH` silently defaults to `amd64` even on an arm64 host. Build with `docker compose build --build-arg TARGETARCH=arm64` explicitly.
+
 ### Important: Database Concurrency
 
-The default SQLite backend does not support concurrent writers. In the Docker Compose setup:
-- Only the `api` service mounts the DB volume and writes to the database.
-- The `detector` service persists alerts via the API (`CNDS_API_URL=http://api:8000`), not directly to the DB.
-
-For production multi-container deployments, use PostgreSQL:
+The default SQLite backend does not support concurrent writers, and `api`/`detector` run as **separate containers** in this compose file — this isn't just a "recommendation," SQLite will corrupt or lose writes under this topology. PostgreSQL is part of the default compose stack:
 
 ```bash
 DATABASE_URL=postgresql+asyncpg://user:pass@db:5432/cnds
@@ -63,6 +62,23 @@ Migration files live in `alembic/versions/` and are tracked in git.
 - [ ] Set `IP_ALLOWLIST` for trusted infrastructure IPs (monitoring, load balancers)
 - [ ] Review and tune `ENSEMBLE_THRESHOLD` and engine weights for your environment
 - [ ] Set up SIEM integration (see [SIEM Integration](SIEM-Integration))
+- [ ] If enabling the Guardian, review `GUARDIAN_WHITELIST` first — never a broad LAN CIDR — and keep `GUARDIAN_ENABLED=false` until it's populated
+
+## Guardian Auto-Response (Optional)
+
+Off by default (`GUARDIAN_ENABLED=false`). A background task in the `api` process polls the alerts table and, for alerts at or above `GUARDIAN_MIN_SEVERITY` (default `critical`), blocks the offending `src_ip` via AdGuard Home's DNS access-control API — unless it's in `GUARDIAN_WHITELIST`, already has an active action, or the circuit breaker (`GUARDIAN_CIRCUIT_MAX_ACTIONS`/`_WINDOW_SECS`) has tripped. Every block auto-expires after `GUARDIAN_BLOCK_MINUTES` (rollback) unless confirmed permanent via Telegram inline buttons (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`, long-polling `getUpdates` — no webhook needed). All actions are logged in the `mitigation_actions` table.
+
+```bash
+GUARDIAN_ENABLED=true
+GUARDIAN_MIN_SEVERITY=critical
+GUARDIAN_BLOCK_MINUTES=30
+GUARDIAN_WHITELIST=[GATEWAY_IP],[YOUR_DEVICE_IPS]   # never a broad /24
+ADGUARD_URL=http://[ADGUARD_HOST]:8001
+ADGUARD_USERNAME=
+ADGUARD_PASSWORD=
+```
+
+See [Configuration](Configuration) for the full variable list and [Deployment guide](../doc/deployment.md#guardian-auto-response-setup) in the main repo for the step-by-step setup/verification checklist.
 
 ## Streamlit Dashboard
 

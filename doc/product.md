@@ -21,6 +21,7 @@ Traditional network IDS tools suffer from one or more of these limitations:
 | SOC alert fatigue | Raw counts with no context | Incident grouping, suppression, severity |
 | No SIEM integration | Manual export | Splunk HEC, Elastic, CEF out of the box |
 | Hard to customize | Vendor lock-in | Config-driven, open source, extendable |
+| Detection without response | Analyst must act manually, even for obvious threats | Optional Guardian module auto-mitigates critical alerts with a whitelist and automatic rollback |
 
 ---
 
@@ -30,6 +31,7 @@ Traditional network IDS tools suffer from one or more of these limitations:
 - **Fewer false positives**: Four independent detection signals are fused; a packet must register abnormally across multiple engines to generate a high-severity alert.
 - **Faster triage**: Every alert includes attack type, MITRE technique IDs, geographic origin, TLS fingerprint, and engine-level confidence scores — analysts have context before they open the first ticket.
 - **Incident correlation**: Alerts from the same source IP within a configurable window are automatically grouped into incidents, preventing alert storms from the same attacker.
+- **Optional automated response**: The Guardian module (opt-in) can mitigate a critical alert the moment it fires — no analyst has to be awake at 3am for the obvious cases — with a device whitelist, a circuit breaker against alert storms, and a timed automatic rollback so a false positive is never a permanent lockout.
 
 ### For Security Architects
 - **Defense-in-depth at the network layer**: Supervised classification, unsupervised anomaly detection, and temporal behavioral analysis cover different parts of the threat landscape without overlap.
@@ -79,6 +81,7 @@ Traditional network IDS tools suffer from one or more of these limitations:
 | Adaptive learning from feedback | No | No | Yes | Yes |
 | Digital twin / offline demo | No | No | No | Yes |
 | Per-engine score transparency | No | No | No | Yes |
+| Automated response (optional) | No | No | Yes (enterprise tier) | Yes |
 
 CNDS occupies the space between free signature-based tools (Snort/Suricata) and expensive commercial NDR platforms (Darktrace, ExtraHop, Vectra). It delivers ML-grade detection with the transparency and extensibility of open-source tooling.
 
@@ -105,7 +108,7 @@ The PCAP replay script (`scripts/pcap_replay.py`) and digital twin demo (`demo/`
 | Framework | Coverage |
 |---|---|
 | MITRE ATT&CK | Native — every alert includes technique IDs and tactics |
-| NIST CSF | Detect (DE.CM): Continuous network monitoring |
+| NIST CSF | Detect (DE.CM): Continuous network monitoring. Respond (RS.MI): optional automated mitigation via the Guardian module |
 | SOC 2 Type II | Audit trail via alert history, user actions, incident tracking |
 | ISO 27001 | A.12.4 (logging), A.13.1 (network security management) |
 | PCI DSS | Requirement 10 (log monitoring), 11.4 (intrusion detection) |

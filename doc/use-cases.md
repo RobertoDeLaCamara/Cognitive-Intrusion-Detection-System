@@ -21,6 +21,7 @@ This document describes operational scenarios for CNDS across different deployme
 13. [SIEM Integration for Splunk SOC](#13-siem-integration-for-splunk-soc)
 14. [Trusted Outbound Device Profiling](#14-trusted-outbound-device-profiling)
 15. [Offline / Air-Gapped Evaluation](#15-offline--air-gapped-evaluation)
+16. [Guardian Auto-Response for Small Networks](#16-guardian-auto-response-for-small-networks)
 
 ---
 
@@ -389,3 +390,30 @@ This is distinct from the IP allowlist (which skips all detection from an IP) �
    ```
 
 See [digital-twin-sandbox.md](digital-twin-sandbox.md) for the full demo documentation.
+
+---
+
+## 16. Guardian Auto-Response for Small Networks
+
+**Actor:** Small business or home-lab operator without a 24/7 SOC
+**Goal:** Automatically contain an obvious threat (a compromised IoT device beaconing out, a scanning host) without needing a human to be watching in real time.
+
+**Workflow:**
+
+1. Deploy AdGuard Home as the network's DNS resolver (if not already running).
+2. Configure the guardian, starting conservative:
+   ```bash
+   GUARDIAN_ENABLED=false            # keep off until the whitelist is reviewed
+   GUARDIAN_MIN_SEVERITY=critical
+   GUARDIAN_BLOCK_MINUTES=30
+   GUARDIAN_WHITELIST=[GATEWAY_IP],[YOUR_LAPTOP_IP],[YOUR_PHONE_IP]
+   ADGUARD_URL=http://[ADGUARD_HOST]:8001
+   ADGUARD_USERNAME=...
+   ADGUARD_PASSWORD=...
+   ```
+3. Verify the whitelist covers every device you don't want auto-blocked, then set `GUARDIAN_ENABLED=true` and restart the `api` container.
+4. A compromised smart-home device starts a port scan or beacons to a known-bad host → CNDS fires a `critical` alert → the guardian blocks its DNS resolution via AdGuard within one poll cycle and logs a `mitigation_actions` row.
+5. If `TELEGRAM_BOT_TOKEN` is configured, the operator gets a push notification with **Confirm** (make the block permanent) / **Undo now** buttons. If they do nothing, the block automatically expires after `GUARDIAN_BLOCK_MINUTES` — a false positive never becomes a permanent lockout.
+6. Query `GET /api/alerts?src_ip=<device_ip>` and the `mitigation_actions` table afterward to review exactly what happened and why.
+
+**Important:** `GUARDIAN_WHITELIST` must never include a broad range covering the whole monitored subnet (e.g. `192.168.1.0/24`) — that's exactly the range the detector captures traffic on, so it would silently disable every auto-block. List individual devices/infrastructure instead.

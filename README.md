@@ -1,6 +1,6 @@
 # Cognitive Network Defense System
 
-**CNDS** is a real-time network intrusion detection system that fuses **five** detection engines — supervised ML, unsupervised anomaly detection, temporal sequence modeling, rule-based heuristics, and **external threat intelligence feeds** — into a single weighted ensemble. A Scapy capture loop feeds packets into parallel feature pipelines; alerts are exposed over a FastAPI REST interface backed by SQLite (or PostgreSQL).
+**CNDS** is a real-time network intrusion detection system that fuses **five** detection engines — supervised ML, unsupervised anomaly detection, temporal sequence modeling, rule-based heuristics, and **external threat intelligence feeds** — into a single weighted ensemble. A Scapy capture loop feeds packets into parallel feature pipelines; alerts are exposed over a FastAPI REST interface backed by SQLite (or PostgreSQL). An optional **Guardian auto-response module** can turn detection into action — automatically blocking a high-severity offender at the DNS level, with a device whitelist and a timed automatic rollback (see [Guardian Auto-Response](#guardian-auto-response-optional) below).
 
 ---
 
@@ -35,7 +35,9 @@
         └───────┬────────┘    → logger + SQLite  →  FastAPI
                 │
                 ├─► SIEM (Splunk / Elastic / Syslog-CEF)
-                └─► Webhook / Telegram notifications
+                ├─► Webhook / Telegram notifications
+                └─► [Guardian] (optional)  critical alert → whitelist check →
+                                            block src_ip (AdGuard DNS) → auto-rollback timer
 ```
 
 ### Detection Engines
@@ -132,6 +134,30 @@ ABUSEIPDB_API_KEY=your-key-here
 MALICIOUS_JA3_URL=https://raw.githubusercontent.com/strangerealintel/ja3-fingerprints/main/ja3-hashes.txt
 THREAT_INTEL_REFRESH_MINUTES=60
 ```
+
+### Guardian Auto-Response (optional)
+
+CNDS can go beyond detection: the **Guardian** module (`src/guardian/`) is a background asyncio consumer that polls the alerts table for new **critical**-severity alerts and automatically mitigates the offending `src_ip` — without touching the packet-capture hot path (it only ever reads what `src/pipeline.py` already wrote).
+
+- **Enforcement backend:** DNS-level blocking via [AdGuard Home](https://adguard.com/en/adguard-home/overview.html)'s access-control API (`/control/access/list` + `/control/access/set`). The backend is a small `Protocol` (`src/guardian/backends.py`), so other enforcement points (e.g. an inline nftables bridge) can be added later without touching the decision logic.
+- **Whitelist:** `GUARDIAN_WHITELIST` — IPs/CIDRs the guardian will never touch. **Never put a broad LAN range here** (e.g. your own `/24`) — that's exactly the range the detector captures traffic on, so it would silently disable auto-blocking for anything worth blocking. List your own infrastructure and devices explicitly instead.
+- **Circuit breaker:** if `GUARDIAN_CIRCUIT_MAX_ACTIONS` auto-blocks fire within `GUARDIAN_CIRCUIT_WINDOW_SECS`, the guardian pauses (and sends one notification) rather than reacting to every alert in a storm.
+- **Automatic rollback:** every block expires after `GUARDIAN_BLOCK_MINUTES` and is automatically undone — a false positive locks a device out temporarily, never permanently, unless a human confirms it.
+- **Telegram inline buttons (optional):** when `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` are set, each auto-block is sent with **Confirm** (make permanent) / **Undo now** buttons, handled via long-polling `getUpdates` — not a webhook, since most home/lab deployments have no public HTTPS endpoint for Telegram's servers to call back into. Without a token, the guardian still blocks and auto-rolls-back on schedule; it just can't be confirmed/undone early via chat.
+- **Off by default:** `GUARDIAN_ENABLED=false`. Review and populate `GUARDIAN_WHITELIST` before enabling.
+
+```bash
+# .env
+GUARDIAN_ENABLED=true
+GUARDIAN_MIN_SEVERITY=critical
+GUARDIAN_BLOCK_MINUTES=30
+GUARDIAN_WHITELIST=192.168.1.1,192.168.1.10,192.168.1.11   # gateway + your own devices
+ADGUARD_URL=http://[ADGUARD_HOST]:8001
+ADGUARD_USERNAME=
+ADGUARD_PASSWORD=
+```
+
+Every action is recorded in the `mitigation_actions` table (`src_ip`, `status`: `pending`/`confirmed`/`undone`/`expired`, `reason`, `expires_at`) for audit and rollback. See [doc/architecture.md](doc/architecture.md#guardian-auto-response-layer-srcguardian) and [doc/deployment.md](doc/deployment.md#guardian-auto-response-setup) for the full design and setup guide.
 
 ### SIEM Integration
 
@@ -433,6 +459,16 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `MISP_URL` | _(empty)_ | MISP instance URL; empty disables MISP feed |
 | `MISP_API_KEY` | _(empty)_ | MISP API key |
 | `THREAT_INTEL_REFRESH_MINUTES` | `60` | How often to refresh threat intel feeds (minutes) |
+| `GUARDIAN_ENABLED` | `false` | Master switch for the auto-response module |
+| `GUARDIAN_MIN_SEVERITY` | `critical` | Minimum alert severity that triggers an auto-block |
+| `GUARDIAN_POLL_INTERVAL_SECS` | `15` | How often the guardian polls the alerts table |
+| `GUARDIAN_BLOCK_MINUTES` | `30` | How long an auto-block lasts before automatic rollback |
+| `GUARDIAN_WHITELIST` | `192.168.1.1,192.168.1.62` | Comma-separated IPs/CIDRs the guardian will never block — do not use a broad LAN range |
+| `GUARDIAN_CIRCUIT_MAX_ACTIONS` | `5` | Max auto-blocks within the circuit-breaker window before pausing |
+| `GUARDIAN_CIRCUIT_WINDOW_SECS` | `600` | Circuit-breaker window (seconds) |
+| `ADGUARD_URL` | `http://192.168.1.62:8001` | AdGuard Home base URL used as the enforcement backend |
+| `ADGUARD_USERNAME` | _(empty)_ | AdGuard Home basic-auth username |
+| `ADGUARD_PASSWORD` | _(empty)_ | AdGuard Home basic-auth password |
 
 ---
 
@@ -521,9 +557,13 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   │   ├── ip_lists.py          # IP allowlist / blocklist
 │   │   ├── threat_intel.py      # Threat intelligence feed integration (AbuseIPDB, JA3, MISP)
 │   │   └── dns_logger.py        # DNS query logging from captured traffic
+│   ├── guardian/                # Auto-response module (opt-in, off by default)
+│   │   ├── backends.py          # MitigationBackend protocol + AdGuardBackend (DNS block)
+│   │   ├── engine.py            # guardian_loop / guardian_expiry_loop background tasks
+│   │   └── telegram_listener.py # Inline Confirm/Undo buttons via getUpdates long-polling
 │   └── api/
 │       ├── main.py              # FastAPI application
-│       ├── models.py            # SQLAlchemy ORM (Alert, Incident)
+│       ├── models.py            # SQLAlchemy ORM (Alert, Incident, MitigationAction)
 │       ├── schemas.py           # Pydantic request/response schemas
 │       ├── database.py          # Async SQLAlchemy session setup
 │       ├── auth.py              # JWT authentication and RBAC
@@ -549,6 +589,7 @@ Copy `.env.example` to `.env` and adjust as needed.
     ├── test_payload_features.py
     ├── test_ip_lists.py          # IP allowlist/blocklist tests
     ├── test_threat_intel.py      # Threat intelligence feed tests (31 tests, 98% cov)
+    ├── test_guardian.py          # Guardian: AdGuard backend, whitelist, circuit breaker
     ├── test_rules_engine.py
     ├── test_siem.py             # CEF syslog forwarder tests
     ├── test_ft_transformer_engine.py  # FT-Transformer integration tests (load + predict + dataset checks)

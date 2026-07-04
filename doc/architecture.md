@@ -2,7 +2,7 @@
 
 ## Overview
 
-CNDS is structured as a linear pipeline: capture → feature extraction → detection → enrichment → storage/delivery. Each stage is independently modular, communicates through well-defined interfaces, and can be replaced or extended without touching adjacent stages.
+CNDS is structured as a linear pipeline: capture → feature extraction → detection → enrichment → storage/delivery, with an optional auto-response stage (Guardian) layered on top. Each stage is independently modular, communicates through well-defined interfaces, and can be replaced or extended without touching adjacent stages.
 
 ---
 
@@ -106,6 +106,14 @@ CNDS is structured as a linear pipeline: capture → feature extraction → dete
     │  FastAPI REST    │  │  Streamlit Dashboard │
     │  :8000           │  │  :8501               │
     └──────────────────┘  └─────────────────────┘
+               │
+               ▼ (polls alerts table, opt-in)
+    ┌────────────────────────────────────────────┐
+    │  Guardian (src/guardian/) — optional        │
+    │  whitelist → circuit breaker → block via    │
+    │  MitigationBackend (AdGuard DNS) → timer    │
+    │  auto-rollback → mitigation_actions table   │
+    └────────────────────────────────────────────┘
 ```
 
 ---
@@ -351,6 +359,39 @@ See [api-reference.md](api-reference.md) for full endpoint documentation.
 
 ---
 
+### Guardian Auto-Response Layer (`src/guardian/`)
+
+Opt-in (`GUARDIAN_ENABLED=false` by default), off-hot-path consumer of the alerts table — it never touches `src/pipeline.py` or the capture worker threads, only reads what they already wrote.
+
+#### `guardian_loop()` (`engine.py`)
+- Runs as a background asyncio task started from `src/api/main.py`'s `lifespan()`, polling every `GUARDIAN_POLL_INTERVAL_SECS` (default 15 s) for alerts with `id > last_seen_id`.
+- Skips alerts below `GUARDIAN_MIN_SEVERITY` (default `critical`), alerts whose `src_ip` is absent, and alerts whose `src_ip` matches `GUARDIAN_WHITELIST` (reuses the CIDR/exact-IP matcher from `src/enrichment/ip_lists.py`).
+- Skips a `src_ip` that already has an active (`PENDING`) `MitigationAction` — no duplicate blocks.
+- **Circuit breaker:** if `GUARDIAN_CIRCUIT_MAX_ACTIONS` actions were created in the last `GUARDIAN_CIRCUIT_WINDOW_SECS`, the whole batch is skipped (and never replayed later) and a single "guardian paused" notification fires via the existing `notify_alert()` path.
+- On a qualifying alert: calls `MitigationBackend.block(src_ip, reason)`, then records a `MitigationAction` row (`status=PENDING`, `expires_at=now+GUARDIAN_BLOCK_MINUTES`). If the block call itself raises, no row is written — a failed block must never be recorded as if it succeeded.
+- Sends a Telegram message with inline Confirm/Undo buttons if `TELEGRAM_BOT_TOKEN` is set; otherwise falls back to the standard `notify_alert()` webhook/Telegram-plain path.
+
+#### `guardian_expiry_loop()` (`engine.py`)
+- Same poll interval; finds every `PENDING` action past `expires_at`, calls `MitigationBackend.unblock()`, and marks it `EXPIRED`. This is the automatic rollback — a false positive locks a device out for at most `GUARDIAN_BLOCK_MINUTES`, never permanently, unless a human confirms it first.
+
+#### `MitigationBackend` (`backends.py`)
+A two-method `Protocol` (`block(ip, reason)` / `unblock(ip)`) so enforcement points are swappable without touching the decision logic in `engine.py`.
+
+- **`AdGuardBackend`** (only implementation currently): DNS-level blocking via AdGuard Home. AdGuard's `/control/access/set` endpoint has no incremental add/remove — it always replaces the full `{allowed_clients, disallowed_clients, blocked_hosts}` payload, so `block()`/`unblock()` do a read (`/control/access/list`) → modify → write.
+- A router/firewall backend is a natural future addition, but most consumer/ISP routers have no API for this — see [deployment.md](deployment.md#guardian-auto-response-setup) for the caveat.
+
+#### Telegram inline buttons (`telegram_listener.py`)
+- `send_action_notice()` posts a message with an `inline_keyboard` (`confirm:<id>` / `undo:<id>` callback data) whenever a new action is created.
+- `telegram_listener_loop()` long-polls Telegram's `getUpdates` endpoint — deliberately **not** a webhook, since most deployments of this module (homelab, small office) have no public HTTPS endpoint reachable from Telegram's servers, while outbound HTTPS to `api.telegram.org` is essentially always available.
+- `confirm:<id>` → `status=CONFIRMED`, `expires_at=NULL` (block becomes permanent, no longer subject to auto-rollback).
+- `undo:<id>` → calls `unblock()` immediately, `status=UNDONE`.
+- The whole listener task is only started if `TELEGRAM_BOT_TOKEN` is set; without it, the guardian still blocks and auto-rolls-back on schedule, just without interactive confirm/undo.
+
+#### Timezone handling
+Every `DateTime` column touched by the guardian (`created_at`, `expires_at`, `resolved_at`) is naive, matching the rest of `models.py` (`Alert.timestamp`, etc.) — but unlike the sync `psycopg2` path used by `pipeline.py`, asyncpg (used by the guardian's async session) rejects binding a timezone-aware `datetime` against a naive column outright. `src/guardian/engine.py` and `telegram_listener.py` each define a small `_utcnow()` helper (`datetime.now(timezone.utc).replace(tzinfo=None)`) rather than calling `datetime.now(timezone.utc)` directly.
+
+---
+
 ### Storage Schema
 
 ```
@@ -399,6 +440,18 @@ users
 ├── role {admin, analyst, viewer}
 ├── is_active
 └── created_at
+
+mitigation_actions
+├── id (PK)
+├── src_ip
+├── action_type (e.g. "dns_block")
+├── backend (e.g. "adguard")
+├── status {pending, confirmed, undone, expired}
+├── reason
+├── alert_id (FK → alerts, nullable)
+├── created_at
+├── expires_at (nullable — null once confirmed permanent)
+└── resolved_at (nullable)
 ```
 
 ---
@@ -433,7 +486,11 @@ Main Thread
 ├── Worker Thread 2  ──┤
 ├── Worker Thread 3  ──┘
 ├── DB Writer Thread (async queue → SQLAlchemy)
-└── FastAPI server (uvicorn, separate process or same process)
+├── FastAPI server (uvicorn, separate process or same process)
+└── Guardian background asyncio tasks (opt-in, run inside the API process)
+    ├── guardian_loop           — poll + block
+    ├── guardian_expiry_loop    — poll + auto-rollback
+    └── telegram_listener_loop  — only if TELEGRAM_BOT_TOKEN is set
 ```
 
 The bounded queue between PacketCapture and the workers prevents unbounded memory growth. If workers fall behind, packets are dropped and the drop counter increments (visible at `/health`).
@@ -469,6 +526,7 @@ Key configuration categories:
 | Notifications | `WEBHOOK_URLS`, `NOTIFY_MIN_SEVERITY`, `TELEGRAM_*` |
 | Observability | `Monitoring Service_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `LOG_FORMAT` |
 | IP filtering | `IP_ALLOWLIST`, `IP_BLOCKLIST`, `TRUSTED_OUTBOUND` |
+| Guardian auto-response | `GUARDIAN_ENABLED`, `GUARDIAN_MIN_SEVERITY`, `GUARDIAN_WHITELIST`, `GUARDIAN_BLOCK_MINUTES`, `GUARDIAN_CIRCUIT_*`, `ADGUARD_*` |
 
 ---
 
@@ -485,3 +543,5 @@ Key configuration categories:
 | JA3 hash file missing | JA3 matching disabled; fingerprint still computed and stored |
 | Packet queue full | Packets dropped; `dropped_count` incremented at `/health` |
 | Worker thread crash | Remaining workers continue; crash logged with stack trace |
+| Guardian's `MitigationBackend.block()`/`unblock()` fails | Exception is caught and logged; no `mitigation_actions` row is written/updated for a failed `block()`, so the audit trail never claims a block that didn't happen |
+| Guardian circuit breaker trips | Auto-blocking pauses for the batch (not replayed later); one notification fires; detection and manual response are unaffected |

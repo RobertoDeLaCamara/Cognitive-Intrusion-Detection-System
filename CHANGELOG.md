@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-07-04
+
+### Added
+- **Guardian auto-response module (`src/guardian/`)** — opt-in (`GUARDIAN_ENABLED=false` by default) background asyncio consumer of the alerts table that automatically mitigates `GUARDIAN_MIN_SEVERITY`-and-above alerts. Ships with an `AdGuardBackend` (DNS-level blocking via AdGuard Home's `/control/access/list` + `/control/access/set`) behind a small `MitigationBackend` protocol so other enforcement points can be added later. Includes a device whitelist (`GUARDIAN_WHITELIST`), a circuit breaker against alert storms (`GUARDIAN_CIRCUIT_MAX_ACTIONS`/`_WINDOW_SECS`), and automatic timer-based rollback (`GUARDIAN_BLOCK_MINUTES`). Deliberately reads from the alerts table rather than hooking into `src/pipeline.py`'s capture path.
+- **`mitigation_actions` table** (`src/api/models.py` `MitigationAction`/`MitigationStatus`, migration `f7c9a2b4e1d3`) — audit trail of every guardian action: `src_ip`, `status` (`pending`/`confirmed`/`undone`/`expired`), `reason`, `alert_id`, `expires_at`.
+- **Telegram inline Confirm/Undo buttons** (`src/guardian/telegram_listener.py`) — long-polls `getUpdates` (no webhook required) to let an operator confirm a block as permanent or undo it early. Inactive until `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` are set; the guardian still blocks and auto-rolls-back on schedule without it.
+- **PostgreSQL service in `docker-compose.yml`** — `api` and `detector` run as separate containers, and SQLite has no concurrent-writer support, so a `postgres` service is now part of the default compose stack instead of a documented-but-manual option.
+- **Per-service resource limits in `docker-compose.yml`** (`mem_limit`/`cpus` on `api`, `detector`, `postgres`, `dashboard`) so a single-board/homelab host isn't starved by other services on the same box.
+
+### Changed
+- **`docker-compose.yml` `env_file` order** — `.env.example` now loads before `.env` in every service. Compose applies the *last* listed file as the override; with the previous order, `.env.example`'s blank defaults were silently clobbering real values set in `.env` (`JWT_SECRET`, `CAPTURE_INTERFACE`, `LOG_FORMAT`, etc.).
+- **`dashboard/app.py`** — the Streamlit dashboard is now gated behind the `dashboard` compose profile rather than started unconditionally, since Grafana or the guardian's own notifications may already cover monitoring in some deployments.
+
+### Fixed
+- **Missing `requests` dependency** — `src/enrichment/threat_intel.py` imports `requests` unconditionally, but it was never declared in `requirements.txt`. Unit tests never caught it because they don't exercise the full FastAPI lifespan (the import is lazy, inside `lifespan()`); first real boot against a production database failed with `ModuleNotFoundError` and Uvicorn exit code 3.
+- **Missing `psycopg2-binary` dependency** — `alembic/env.py` converts the async `DATABASE_URL` (`+asyncpg`) to `+psycopg2` for Alembic's synchronous migration engine, but nothing installed that driver. The resulting exception was silently swallowed by `database.py`'s broad `except Exception: fall back to create_all()`, masking the real failure and leaving Alembic's own `alembic_version` tracking table unpopulated even though the schema was created.
+- **Timezone-aware datetimes bound against naive `DateTime` columns** — the new guardian code and `MitigationAction.created_at`'s default both used `datetime.now(timezone.utc)` (aware) against plain `DateTime` (naive, matching `Alert`/`Incident`/`SuppressionRule` elsewhere in `models.py`). asyncpg rejects this (`can't subtract offset-naive and offset-aware datetimes`) even though SQLite (used in the test suite) does not — the bug only surfaced against a real PostgreSQL deployment. Fixed with a `_utcnow()` helper returning naive UTC, used throughout `src/guardian/`.
+- **Dashboard `ZeroDivisionError`** (`dashboard/app.py`) — the Acknowledge Rate metric used `stats.get('total_alerts', 1)` to guard a division, but `dict.get(key, default)` only falls back to `default` when the key is *absent*, not when it's present and falsy. With zero alerts, `total_alerts` is `0` (present), so the guard never applied.
+
 ## [1.1.1] - 2026-05-05
 
 ### Added

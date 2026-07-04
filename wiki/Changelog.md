@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.0] - 2026-07-04
+
+### Added
+- Guardian auto-response module (`src/guardian/`) — opt-in, off by default. Auto-blocks critical-severity alerts' `src_ip` via an AdGuard Home DNS backend, with a device whitelist, a circuit breaker against alert storms, and automatic timer-based rollback
+- `mitigation_actions` table tracking every guardian action (pending/confirmed/undone/expired)
+- Telegram inline Confirm/Undo buttons for guardian actions, via `getUpdates` long-polling (no webhook required)
+- `postgres` service added to the default `docker-compose.yml` — required now that `api`/`detector` run as separate containers
+
+### Fixed
+- Missing `requests` and `psycopg2-binary` dependencies that only surfaced against a real production boot, not the test suite
+- `docker-compose.yml` `env_file` order bug where `.env.example`'s blank defaults silently overrode real `.env` values
+- Timezone-aware vs naive `DateTime` bug in the new guardian code (asyncpg rejects it; SQLite in tests does not)
+- Dashboard `ZeroDivisionError` when there are zero alerts (`dict.get(key, default)` only applies `default` when the key is absent, not when it's `0`)
+
+> This wiki page is a manually maintained excerpt — see the repository root [`CHANGELOG.md`](https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System/blob/master/CHANGELOG.md) for the complete, continuously updated history (1.1.2–1.1.1 and earlier are not mirrored here).
+
 ## [1.0.5] - 2026-04-19
 
 ### Security

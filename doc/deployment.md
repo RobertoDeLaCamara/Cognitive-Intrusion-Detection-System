@@ -63,6 +63,14 @@ docker buildx build --platform linux/arm64 -t cnds:arm64 .
 
 On `arm64`, PyTorch is installed from the standard PyPI index (`manylinux2014_aarch64` wheel). On `arm/v7`, no official PyTorch wheel is available — the Dockerfile skips the torch install and `FTTransformerEngine` degrades to the RF fallback automatically.
 
+**Gotcha when building natively on an arm64 host without buildx:** the Dockerfile reads `ARG TARGETARCH`, but plain `docker build`/`docker compose build` (i.e. *not* `docker buildx build --platform ...`) does **not** auto-populate it — it silently falls back to the Dockerfile's hardcoded `amd64` default, even when you're actually building on a Raspberry Pi. This makes the build try to install the `amd64`-only `torch==<version>+cpu` wheel and fail (or, worse, succeed with the wrong architecture). Always pass it explicitly on arm64 hosts:
+
+```bash
+docker compose build --build-arg TARGETARCH=arm64
+```
+
+Don't bake `TARGETARCH: arm64` into `docker-compose.yml`'s `build.args` — that would silently break `amd64` CI/build hosts using the same file. Pass it on the command line only where you're actually building for arm64.
+
 **Services started:**
 
 | Service | Container | Port | Description |
@@ -70,6 +78,9 @@ On `arm64`, PyTorch is installed from the standard PyPI index (`manylinux2014_aa
 | `detector` | cnds-detector | — | Packet capture + detection pipeline |
 | `api` | cnds-api | 8000 | FastAPI REST + WebSocket |
 | `dashboard` | cnds-dashboard | 8501 | Streamlit real-time dashboard |
+| `postgres` | cnds-postgres | 5432 (internal) | Required when `api` and `detector` run as separate containers — see note below |
+
+**`detector` and `api` as separate containers requires PostgreSQL, not just "recommends" it.** SQLite has no concurrent-writer support (see [Database Setup](#database-setup)); `docker-compose.yml` runs `api` and `detector` as two independent processes, so `DATABASE_URL` **must** point at PostgreSQL in this topology, not the SQLite default in `.env.example`. This is not a tuning choice for high-traffic deployments — running the split-container compose stack against SQLite will corrupt or lose alert writes under concurrent access.
 
 **Volume mounts:**
 - `./models:/app/models` — shared model files (read-only for api/dashboard)
@@ -210,6 +221,18 @@ RATE_LIMIT_WINDOW=60
 
 # ── DNS Logging ──────────────────────────────────────────────────────────
 DNS_LOGGING_ENABLED=false
+
+# ── Guardian Auto-Response ───────────────────────────────────────────────
+GUARDIAN_ENABLED=false          # Master switch — review GUARDIAN_WHITELIST first
+GUARDIAN_MIN_SEVERITY=critical  # low/medium/high/critical
+GUARDIAN_POLL_INTERVAL_SECS=15
+GUARDIAN_BLOCK_MINUTES=30       # Auto-rollback delay
+GUARDIAN_WHITELIST=[GATEWAY_IP],[THIS_HOST_IP]  # NEVER a broad LAN CIDR — see below
+GUARDIAN_CIRCUIT_MAX_ACTIONS=5
+GUARDIAN_CIRCUIT_WINDOW_SECS=600
+ADGUARD_URL=http://[ADGUARD_HOST]:8001
+ADGUARD_USERNAME=
+ADGUARD_PASSWORD=
 ```
 
 ---
@@ -261,9 +284,10 @@ alembic revision --autogenerate -m "add_new_column"
 alembic downgrade -1
 ```
 
-Migration files are in `alembic/versions/`. The two existing migrations are:
+Migration files are in `alembic/versions/`. The three existing migrations are:
 - `72da55e575e8_initial_schema.py` — Core tables (alerts, incidents, suppression_rules, users).
 - `a1b2c3d4e5f6_add_mitre_techniques.py` — Adds `mitre_techniques` JSON column to alerts.
+- `f7c9a2b4e1d3_add_mitigation_actions.py` — Adds the `mitigation_actions` table for the guardian auto-response module.
 
 ---
 
@@ -310,6 +334,65 @@ GEOIP_DB_PATH=/path/to/GeoLite2-City.mmdb
 ```
 
 GeoIP is optional. When the file is absent, `src_geo` is omitted from alerts.
+
+---
+
+## Guardian Auto-Response Setup
+
+The guardian (`src/guardian/`) turns critical-severity detections into automated mitigation. It is **disabled by default** (`GUARDIAN_ENABLED=false`) and should stay that way until the steps below are done.
+
+### 1. Choose an enforcement backend
+
+The only backend shipped today is `AdGuardBackend` — DNS-level blocking via [AdGuard Home](https://adguard.com/en/adguard-home/overview.html)'s access-control API. This requires an AdGuard Home instance already running as your network's DNS resolver:
+
+```bash
+ADGUARD_URL=http://[ADGUARD_HOST]:8001
+ADGUARD_USERNAME=your-adguard-user
+ADGUARD_PASSWORD=your-adguard-password
+```
+
+If your network's router/firewall has no usable API (common on consumer/ISP-supplied routers — locked firmware, no SSH, no documented API), AdGuard's DNS-level block is the practical fallback: it stops a device from resolving hostnames, which is enough to disrupt most C2/exfiltration traffic, though it does **not** stop traffic to a hardcoded destination IP or already-cached DNS entries. A router/firewall or inline nftables backend can be added later behind the same `MitigationBackend` protocol without changing `engine.py`.
+
+### 2. Build the whitelist — do this before enabling
+
+```bash
+GUARDIAN_WHITELIST=[GATEWAY_IP],[YOUR_DEVICE_IP_1],[YOUR_DEVICE_IP_2],...
+```
+
+**Never include a broad LAN range here** (e.g. `192.168.1.0/24`, or any CIDR covering the whole subnet the detector monitors). The detector captures traffic on that exact network — whitelisting the whole range means the guardian will never block anything it detects, silently defeating the entire feature. List your gateway, your own infrastructure hosts, and your personal devices' IPs explicitly instead.
+
+If a device uses DHCP and its IP changes periodically, either set a DHCP reservation for it on your router (so its IP is stable) or accept that the whitelist entry will go stale and needs occasional manual updates — a stale entry means that device could get auto-blocked by a false positive until the automatic rollback (`GUARDIAN_BLOCK_MINUTES`) kicks in.
+
+### 3. Tune the safety limits
+
+```bash
+GUARDIAN_MIN_SEVERITY=critical      # start conservative; "high" blocks more, with more false-positive risk
+GUARDIAN_BLOCK_MINUTES=30           # how long a block lasts before automatic rollback
+GUARDIAN_CIRCUIT_MAX_ACTIONS=5      # storm protection: pause after this many blocks...
+GUARDIAN_CIRCUIT_WINDOW_SECS=600    # ...within this many seconds
+```
+
+### 4. (Optional) Enable Telegram inline Confirm/Undo
+
+```bash
+TELEGRAM_BOT_TOKEN=123456:your-bot-token   # from @BotFather
+TELEGRAM_CHAT_ID=your-chat-id
+```
+
+With these set, every auto-block is sent as a Telegram message with **Confirm** (make the block permanent, cancel the rollback timer) and **Undo now** buttons. The listener uses long-polling (`getUpdates`), not a webhook — there is no inbound HTTP endpoint to expose, so this works even when CNDS runs behind NAT with no port forwarding or public DNS. Without a token, the guardian still blocks and auto-rolls-back on schedule; you just can't intervene early via chat (use the `mitigation_actions` table or a direct call to the backend instead).
+
+### 5. Enable and verify
+
+```bash
+GUARDIAN_ENABLED=true
+```
+
+Restart the `api` container (the guardian's background tasks run inside the API process, started from `lifespan()` in `src/api/main.py`). Then verify end-to-end before trusting it unattended:
+
+1. Trigger (or manually insert) a `critical`-severity alert from a **non-whitelisted, disposable** test IP.
+2. Within one `GUARDIAN_POLL_INTERVAL_SECS` cycle, confirm a new row in `mitigation_actions` (`status=pending`) and that the IP appears in AdGuard's `disallowed_clients`.
+3. Confirm the same alert from a **whitelisted** IP produces no action at all.
+4. Either wait for `expires_at` or set it to a past timestamp directly in the database, then confirm the next poll cycle unblocks the IP and flips `status` to `expired`.
 
 ---
 

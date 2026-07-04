@@ -51,11 +51,12 @@
 │  + SQLite / PostgreSQL persistence                                   │
 └─────────────────────────────┬───────────────────────────────────────┘
                               │
-                ┌─────────────┴──────────────┐
-                ▼                            ▼
-    FastAPI REST API :8000         SIEM Integrations
-    + WebSocket /ws/alerts         (Splunk HEC, Elastic,
-    + Streamlit Dashboard :8501     Syslog-CEF :514)
+                ┌─────────────┬──────────────┐
+                ▼              ▼              ▼
+    FastAPI REST API :8000  SIEM Integrations  Guardian (optional)
+    + WebSocket /ws/alerts  (Splunk HEC,       polls alerts table →
+    + Streamlit Dashboard    Elastic,          block src_ip (AdGuard) →
+      :8501                  Syslog-CEF :514)   auto-rollback timer
 ```
 
 ## Detection Cycle — Step by Step
@@ -108,8 +109,9 @@ Every time a flow expires (idle > `FLOW_TIMEOUT` seconds, default 120s):
 | api | bridge | 8000 | FastAPI + async DB writes |
 | detector | host | — | Raw sockets (root required) |
 | dashboard | bridge | 8501 | Streamlit; polls API |
+| postgres | bridge | 5432 (internal) | Required — `api` and `detector` write concurrently, and SQLite has no concurrent-writer support |
 
-`detector` uses host networking for direct packet access; communicates with `api` via `http://api:8000`.
+`detector` uses `network_mode: host` for raw packet access. It writes alerts to the database **directly** via its own `DATABASE_URL` — not through the API's HTTP interface — because host networking means it can't resolve other containers' service names. Both `api` and `detector` must therefore point at the same PostgreSQL instance.
 
 ## Service Startup Order
 
@@ -147,3 +149,25 @@ Background writer thread
 ```
 
 This ensures packet processing is never blocked by slow DB writes.
+
+## Guardian Auto-Response (Optional)
+
+```
+Alerts table
+    │
+    ▼ poll every GUARDIAN_POLL_INTERVAL_SECS (default 15s)
+guardian_loop()  (src/guardian/engine.py, runs inside the api container)
+    ├─ severity < GUARDIAN_MIN_SEVERITY?           → skip
+    ├─ src_ip matches GUARDIAN_WHITELIST?          → skip
+    ├─ src_ip already has a PENDING action?        → skip
+    ├─ circuit breaker tripped?                    → skip whole batch + notify once
+    └─ else: MitigationBackend.block(src_ip)
+             └─ AdGuardBackend: GET/POST AdGuard /control/access/{list,set}
+             insert mitigation_actions row (status=PENDING, expires_at=+GUARDIAN_BLOCK_MINUTES)
+             notify (Telegram inline buttons if TELEGRAM_BOT_TOKEN set, else plain notify_alert)
+
+guardian_expiry_loop()  (same interval)
+    └─ PENDING rows past expires_at → MitigationBackend.unblock() → status=EXPIRED
+```
+
+Off by default (`GUARDIAN_ENABLED=false`). Never hooks into the capture pipeline above — it only reads the `alerts` table. See [Configuration](Configuration) for env vars and [Deployment](Deployment) for the setup/safety checklist (especially: never put a broad LAN CIDR in `GUARDIAN_WHITELIST`).

@@ -68,7 +68,9 @@ Raw Packets (Scapy)
        ├── REST API (FastAPI :8000)              │
        ├── WebSocket stream (/ws/alerts)         │
        ├── Streamlit dashboard (:8501)           │
-       └── SIEM push (Splunk / Elastic / CEF)   │
+       ├── SIEM push (Splunk / Elastic / CEF)   │
+       └── Guardian auto-response (optional)     │
+           block src_ip → AdGuard DNS → rollback │
 ```
 
 ---
@@ -98,6 +100,7 @@ docker-compose up
 
 | Version | Notes |
 |---|---|
+| 1.2.0 | Guardian auto-response module (opt-in auto-block + whitelist + circuit breaker + timed rollback), PostgreSQL in default `docker-compose.yml`, per-service resource limits |
 | 1.1.1 | `FT_TEMPERATURE` env var (default 2.0), ARM64 Docker support, scikit-learn<2.0 pin |
 | 1.1.0 | Unified FT-Transformer supervised engine (F1 macro 0.6197), MLflow registry load, smoke test |
 | 1.0.9 | Bundled RF lite model (1.6 MB), 3-tier model load chain |

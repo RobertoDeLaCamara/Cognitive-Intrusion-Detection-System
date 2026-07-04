@@ -58,6 +58,8 @@ Sends alert summaries to external services when severity meets `NOTIFY_MIN_SEVER
 
 Webhook payloads contain only safe summary fields (IP, severity, score, attack type, timestamp) — no internal data is leaked.
 
+The optional Guardian module (`GUARDIAN_ENABLED`, off by default) can act on critical alerts instead of only notifying — see [Deployment](Deployment#guardian-auto-response-optional).
+
 ## DNS Logging
 
 **File:** `src/enrichment/dns_logger.py`

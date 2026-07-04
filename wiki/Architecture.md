@@ -30,7 +30,8 @@
         └───────┬────────┘    → logger + SQLite  →  FastAPI
                 │
                 ├─► SIEM (Splunk / Elastic / Syslog-CEF)
-                └─► Webhook / Telegram notifications
+                ├─► Webhook / Telegram notifications
+                └─► [Guardian] (optional) — whitelist → block via AdGuard → auto-rollback
 ```
 
 ## Key Design Decisions
@@ -40,6 +41,7 @@
 - **Flow-based detection** — the dispatcher tracks bidirectional flows. When a flow expires (`FLOW_TIMEOUT` seconds of inactivity), all accumulated features are sent to the engines.
 - **Graceful degradation** — any engine can be missing (no model file). Its weight is redistributed proportionally across the remaining active engines.
 - **Dedicated DB writer** — alert persistence uses a separate writer thread with a bounded queue so packet workers are never blocked on I/O.
+- **Guardian is off-hot-path by design** — the optional auto-response module (`src/guardian/`) only polls the alerts table it already wrote to; it never hooks into `pipeline.py` or the capture worker threads.
 
 ## Component Map
 
@@ -79,6 +81,10 @@ src/
 │   ├── confidence_decay.py   # Exponential score decay for repeat alerts
 │   ├── ip_lists.py           # IP allowlist / blocklist
 │   └── dns_logger.py         # DNS query logging
+├── guardian/                  # Auto-response module (opt-in, off by default)
+│   ├── backends.py           # MitigationBackend protocol + AdGuardBackend
+│   ├── engine.py             # guardian_loop / guardian_expiry_loop background tasks
+│   └── telegram_listener.py  # Inline Confirm/Undo buttons (getUpdates long-poll)
 ├── api/                      # FastAPI application
 │   ├── main.py               # App factory, startup hooks, middleware
 │   ├── models.py             # SQLAlchemy ORM (Alert, Incident, etc.)

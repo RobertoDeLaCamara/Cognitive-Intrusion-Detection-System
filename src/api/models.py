@@ -99,6 +99,31 @@ class SuppressionRule(Base):
     expires_at  = Column(DateTime, nullable=False, index=True)
 
 
+class MitigationStatus(str, enum.Enum):
+    PENDING   = "pending"
+    CONFIRMED = "confirmed"
+    UNDONE    = "undone"
+    EXPIRED   = "expired"
+
+
+class MitigationAction(Base):
+    """Guardian auto-response action taken against a src_ip (Phase 10)."""
+    __tablename__ = "mitigation_actions"
+
+    id          = Column(Integer, primary_key=True, index=True)
+    src_ip      = Column(String(45), index=True)
+    action_type = Column(String(50))    # e.g. "dns_block"
+    backend     = Column(String(50))    # e.g. "adguard"
+    status      = Column(SAEnum(MitigationStatus), default=MitigationStatus.PENDING)
+    reason      = Column(Text, nullable=True)
+    alert_id    = Column(Integer, ForeignKey("alerts.id"), nullable=True)
+    created_at  = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    expires_at  = Column(DateTime, nullable=True, index=True)   # null once confirmed permanent
+    resolved_at = Column(DateTime, nullable=True)
+
+    alert       = relationship("Alert")
+
+
 class User(Base):
     """User accounts for JWT authentication."""
     __tablename__ = "users"

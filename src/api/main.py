@@ -15,7 +15,7 @@ from .routers.auth import router as auth_router
 from .routers.baseline import router as baseline_router
 from .metrics import setup_prometheus, setup_otel
 from .rate_limit import RateLimitMiddleware
-from ..config import API_KEY, CORS_ORIGINS, RATE_LIMIT_REQUESTS
+from ..config import API_KEY, CORS_ORIGINS, RATE_LIMIT_REQUESTS, GUARDIAN_ENABLED, TELEGRAM_BOT_TOKEN
 from ..engines.registry import supervised, iforest, lstm
 
 from ..config import setup_logging
@@ -46,9 +46,21 @@ async def lifespan(app: FastAPI):
     import asyncio
     cleanup_task = asyncio.create_task(_periodic_cleanup())
 
+    # Guardian auto-response (Phase 10) — opt-in, off by default
+    background_tasks = [cleanup_task]
+    if GUARDIAN_ENABLED:
+        from ..guardian.engine import guardian_loop, guardian_expiry_loop
+        background_tasks.append(asyncio.create_task(guardian_loop()))
+        background_tasks.append(asyncio.create_task(guardian_expiry_loop()))
+        logger.info("Guardian auto-response enabled")
+        if TELEGRAM_BOT_TOKEN:
+            from ..guardian.telegram_listener import telegram_listener_loop
+            background_tasks.append(asyncio.create_task(telegram_listener_loop()))
+
     yield
 
-    cleanup_task.cancel()
+    for task in background_tasks:
+        task.cancel()
     logger.info("Shutdown")
 
 

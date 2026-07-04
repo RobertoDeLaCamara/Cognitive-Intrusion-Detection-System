@@ -42,6 +42,17 @@ def _validate_config():
     if PACKET_WORKERS < 1:
         errors.append(f"PACKET_WORKERS must be >= 1, got {PACKET_WORKERS}")
 
+    if GUARDIAN_POLL_INTERVAL_SECS <= 0:
+        errors.append(f"GUARDIAN_POLL_INTERVAL_SECS must be positive, got {GUARDIAN_POLL_INTERVAL_SECS}")
+
+    if GUARDIAN_BLOCK_MINUTES <= 0:
+        errors.append(f"GUARDIAN_BLOCK_MINUTES must be positive, got {GUARDIAN_BLOCK_MINUTES}")
+
+    if GUARDIAN_MIN_SEVERITY not in ("low", "medium", "high", "critical"):
+        errors.append(
+            f"GUARDIAN_MIN_SEVERITY must be one of low/medium/high/critical, got {GUARDIAN_MIN_SEVERITY!r}"
+        )
+
     if errors:
         msg = "Configuration validation failed:\n  - " + "\n  - ".join(errors)
         raise ConfigurationError(msg)
@@ -209,6 +220,25 @@ THREAT_INTEL_REFRESH_MINUTES = int(os.getenv("THREAT_INTEL_REFRESH_MINUTES", "60
 BASELINE_COLLECTION_ENABLED = os.getenv("BASELINE_COLLECTION_ENABLED", "true").lower() == "true"
 BASELINE_DRIFT_WARN = float(os.getenv("BASELINE_DRIFT_WARN", "0.30"))  # warning threshold
 BASELINE_DRIFT_CRIT = float(os.getenv("BASELINE_DRIFT_CRIT", "0.60"))  # critical threshold  # path to known-bad hashes
+
+# ── Guardian auto-response (Phase 10) ─────────────────────────────────────────
+GUARDIAN_ENABLED    = os.getenv("GUARDIAN_ENABLED", "false").lower() == "true"
+GUARDIAN_MIN_SEVERITY = os.getenv("GUARDIAN_MIN_SEVERITY", "critical")
+GUARDIAN_POLL_INTERVAL_SECS = int(os.getenv("GUARDIAN_POLL_INTERVAL_SECS", "15"))
+GUARDIAN_BLOCK_MINUTES      = int(os.getenv("GUARDIAN_BLOCK_MINUTES", "30"))
+# IPs/CIDRs that the guardian will never block, no matter the alert. Defaults
+# only cover the gateway and this host itself — add your own devices before
+# setting GUARDIAN_ENABLED=true.
+GUARDIAN_WHITELIST = set(filter(None, os.getenv(
+    "GUARDIAN_WHITELIST", "192.168.1.1,192.168.1.62"
+).split(",")))
+# Storm protection: pause auto-blocking if too many actions fire in a window.
+GUARDIAN_CIRCUIT_MAX_ACTIONS = int(os.getenv("GUARDIAN_CIRCUIT_MAX_ACTIONS", "5"))
+GUARDIAN_CIRCUIT_WINDOW_SECS = int(os.getenv("GUARDIAN_CIRCUIT_WINDOW_SECS", "600"))
+# AdGuard Home enforcement backend
+ADGUARD_URL      = os.getenv("ADGUARD_URL", "http://192.168.1.62:8001")
+ADGUARD_USERNAME = os.getenv("ADGUARD_USERNAME", "")
+ADGUARD_PASSWORD = os.getenv("ADGUARD_PASSWORD", "")
 
 
 def setup_logging():

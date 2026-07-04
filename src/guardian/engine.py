@@ -46,6 +46,16 @@ _last_seen_alert_id: Optional[int] = None
 _circuit_paused_notified = False
 
 
+def _utcnow() -> datetime:
+    """Naive UTC now — matches this project's DateTime (no timezone) columns.
+
+    asyncpg rejects comparing/binding a timezone-aware datetime against a
+    "timestamp without time zone" column, so every DateTime column in this
+    codebase (Alert.timestamp, SuppressionRule.expires_at, etc.) is naive.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 def _severity_value(severity) -> int:
     raw = severity.value if hasattr(severity, "value") else severity
     return _SEVERITY_ORDER.get(raw, 0)
@@ -71,7 +81,7 @@ async def _has_active_action(db, src_ip: str) -> bool:
 
 async def _circuit_breaker_tripped(db) -> bool:
     global _circuit_paused_notified
-    since = datetime.now(timezone.utc) - timedelta(seconds=GUARDIAN_CIRCUIT_WINDOW_SECS)
+    since = _utcnow() - timedelta(seconds=GUARDIAN_CIRCUIT_WINDOW_SECS)
     result = await db.execute(
         select(func.count(MitigationAction.id)).where(MitigationAction.created_at > since)
     )
@@ -145,7 +155,7 @@ async def guardian_loop() -> None:
                         status=MitigationStatus.PENDING,
                         reason=reason,
                         alert_id=alert.id,
-                        expires_at=datetime.now(timezone.utc) + timedelta(minutes=GUARDIAN_BLOCK_MINUTES),
+                        expires_at=_utcnow() + timedelta(minutes=GUARDIAN_BLOCK_MINUTES),
                     )
                     db.add(action)
                     await db.commit()
@@ -174,7 +184,7 @@ async def guardian_expiry_loop() -> None:
         await asyncio.sleep(GUARDIAN_POLL_INTERVAL_SECS)
         try:
             async with AsyncSessionLocal() as db:
-                now = datetime.now(timezone.utc)
+                now = _utcnow()
                 result = await db.execute(
                     select(MitigationAction).where(
                         MitigationAction.status == MitigationStatus.PENDING,

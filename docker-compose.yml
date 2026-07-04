@@ -34,9 +34,11 @@ services:
     volumes:
       - ./models:/app/models
     env_file:
-      - path: .env
-        required: false
+      # Compose applies later files as overrides, so defaults must load
+      # first — otherwise .env.example's blank values clobber .env.
       - path: .env.example
+        required: false
+      - path: .env
         required: false
     environment:
       # api runs on the default bridge network: reachable via service name
@@ -66,9 +68,11 @@ services:
     volumes:
       - ./models:/app/models:ro
     env_file:
-      - path: .env
-        required: false
+      # Compose applies later files as overrides, so defaults must load
+      # first — otherwise .env.example's blank values clobber .env.
       - path: .env.example
+        required: false
+      - path: .env
         required: false
     environment:
       # host network mode: "postgres" is not resolvable, "localhost" is the
@@ -114,9 +118,11 @@ services:
     volumes:
       - ./models:/app/models
     env_file:
-      - path: .env
-        required: false
+      # Compose applies later files as overrides, so defaults must load
+      # first — otherwise .env.example's blank values clobber .env.
       - path: .env.example
+        required: false
+      - path: .env
         required: false
     depends_on:
       api:

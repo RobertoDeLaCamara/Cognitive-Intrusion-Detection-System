@@ -388,7 +388,9 @@ A two-method `Protocol` (`block(ip, reason)` / `unblock(ip)`) so enforcement poi
 - The whole listener task is only started if `TELEGRAM_BOT_TOKEN` is set; without it, the guardian still blocks and auto-rolls-back on schedule, just without interactive confirm/undo.
 
 #### Timezone handling
-Every `DateTime` column touched by the guardian (`created_at`, `expires_at`, `resolved_at`) is naive, matching the rest of `models.py` (`Alert.timestamp`, etc.) — but unlike the sync `psycopg2` path used by `pipeline.py`, asyncpg (used by the guardian's async session) rejects binding a timezone-aware `datetime` against a naive column outright. `src/guardian/engine.py` and `telegram_listener.py` each define a small `_utcnow()` helper (`datetime.now(timezone.utc).replace(tzinfo=None)`) rather than calling `datetime.now(timezone.utc)` directly.
+Every `DateTime` column in `models.py` is naive (`Alert.timestamp`, `MitigationAction.created_at`/`expires_at`/`resolved_at`, etc.) — but unlike the sync `psycopg2` path used by `pipeline.py`, asyncpg (used by every async session, not just the guardian's) rejects binding a timezone-aware `datetime` against a naive column outright (`can't subtract offset-naive and offset-aware datetimes`). This turned out to be systemic rather than guardian-specific: it also broke `/api/predict` alert persistence (alerts silently failed to save against Postgres) and the alert correlation/suppression expiry logic in `src/enrichment/`.
+
+The fix is a single shared helper, `src/timeutils.utcnow()` (`datetime.now(timezone.utc).replace(tzinfo=None)`), used everywhere a `DateTime` column is read or written — `src/guardian/engine.py`, `telegram_listener.py`, `src/api/routers/alerts.py`, `src/api/routers/predict.py`, `src/enrichment/correlation.py`, and `src/enrichment/suppression.py`. `tests/test_timeutils.py` introspects every model's `DateTime` column defaults and asserts they're naive, as a regression guard against a new call site reintroducing `datetime.now(timezone.utc)` directly.
 
 ---
 

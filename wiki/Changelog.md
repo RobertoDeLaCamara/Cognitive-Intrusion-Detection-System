@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- `/api/predict` alert persistence broken against Postgres — same tz-aware-vs-naive `DateTime` root cause as the guardian bug below
+- Timezone bug turned out to be systemic, not guardian-only — every async path touching a `DateTime` column was affected (alerts, predict, correlation, suppression). Fixed with a single shared `src/timeutils.utcnow()` helper plus a regression test that asserts every model's `DateTime` defaults stay naive
+
 ## [1.2.0] - 2026-07-04
 
 ### Added

@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Fixed
+- **`/api/predict` alert persistence broken against Postgres** — same root cause as the guardian timezone bug below: `Alert(timestamp=datetime.now(timezone.utc), ...)` bound a tz-aware datetime into a naive `DateTime` column via the async session, so asyncpg silently rejected every insert (`alert_id` came back `None`, no visible error in `docker logs`). Confirmed live against raspi-62 while testing the guardian with a simulated attack through this exact endpoint.
+- **Timezone bug was systemic, not guardian-only** — every async code path that touches a `DateTime` column (`src/api/routers/alerts.py`, `src/api/routers/predict.py`, `src/enrichment/correlation.py`, `src/enrichment/suppression.py`, in addition to the guardian) used `datetime.now(timezone.utc)` (aware) against naive columns. This broke `is_suppressed()`/`cleanup_expired()`, `correlate_alert()`, and the periodic cleanup task, in addition to `/api/predict` and the guardian actions above. Fixed by introducing `src/timeutils.utcnow()` as the single naive-UTC helper used everywhere, replacing the guardian module's duplicate `_utcnow()` helpers. Added `tests/test_timeutils.py` as a regression guard that introspects every model's `DateTime` column defaults and asserts they're naive.
+
 ## [1.2.0] - 2026-07-04
 
 ### Added

@@ -18,6 +18,8 @@ Thank you for your interest in contributing! This guide will help you get starte
    ```
 4. Start the infrastructure:
    ```bash
+   # POSTGRES_PASSWORD is required in .env — docker-compose.yml has no
+   # built-in default and refuses to start any service without it.
    docker-compose up -d
    ```
 
@@ -42,7 +44,8 @@ All new code should include tests. Aim to maintain or improve coverage.
 
 ## Running the Application
 
-- **Main entry point:** `python main.py`
+- **Full capture + API:** `sudo venv/bin/python main.py --iface eth0 --api` (root required for raw packet sockets)
+- **API only, no capture:** `uvicorn src.api.main:app --host 0.0.0.0 --port 8000`
 - **Dashboard:** See the `dashboard/` directory
 - **Health check:** `GET /health`
 

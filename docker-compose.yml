@@ -9,7 +9,7 @@ services:
       - "127.0.0.1:5432:5432"
     environment:
       - POSTGRES_USER=cnds
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-cnds}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env — no insecure default}
       - POSTGRES_DB=cnds
     volumes:
       - cnds_pgdata:/var/lib/postgresql/data
@@ -42,7 +42,7 @@ services:
         required: false
     environment:
       # api runs on the default bridge network: reachable via service name
-      - DATABASE_URL=postgresql+asyncpg://cnds:${POSTGRES_PASSWORD:-cnds}@postgres:5432/cnds
+      - DATABASE_URL=postgresql+asyncpg://cnds:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env — no insecure default}@postgres:5432/cnds
     depends_on:
       postgres:
         condition: service_healthy
@@ -77,7 +77,7 @@ services:
     environment:
       # host network mode: "postgres" is not resolvable, "localhost" is the
       # host itself, and postgres's port is published there.
-      - DATABASE_URL=postgresql+asyncpg://cnds:${POSTGRES_PASSWORD:-cnds}@localhost:5432/cnds
+      - DATABASE_URL=postgresql+asyncpg://cnds:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env — no insecure default}@localhost:5432/cnds
     # NOTE: network_mode: host means container DNS won't resolve service
     # names. The detector writes directly to the DB, not via the API.
     depends_on:

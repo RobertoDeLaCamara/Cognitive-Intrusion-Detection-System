@@ -82,6 +82,8 @@ Don't bake `TARGETARCH: arm64` into `docker-compose.yml`'s `build.args` — that
 
 **`detector` and `api` as separate containers requires PostgreSQL, not just "recommends" it.** SQLite has no concurrent-writer support (see [Database Setup](#database-setup)); `docker-compose.yml` runs `api` and `detector` as two independent processes, so `DATABASE_URL` **must** point at PostgreSQL in this topology, not the SQLite default in `.env.example`. This is not a tuning choice for high-traffic deployments — running the split-container compose stack against SQLite will corrupt or lose alert writes under concurrent access.
 
+**`POSTGRES_PASSWORD` is required, with no built-in default.** Set it in `.env` before running `docker compose up` — `postgres`, `api`, and `detector` all interpolate it via `${POSTGRES_PASSWORD:?...}`, so compose refuses to start any of them if it's unset rather than silently falling back to a guessable password.
+
 **Volume mounts:**
 - `./models:/app/models` — shared model files (read-only for api/dashboard)
 - `./data:/app/data` — SQLite database file (or mount a PostgreSQL socket)

@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 
 from ..config import (
     WEIGHT_SUPERVISED, WEIGHT_IFOREST, WEIGHT_LSTM, WEIGHT_RULES, WEIGHT_BASELINE,
-    ENSEMBLE_THRESHOLD, ATTACK_TYPE_WEIGHTS, CALIBRATION_TEMPERATURE,
+    ENSEMBLE_THRESHOLD, ATTACK_TYPE_WEIGHTS, CALIBRATION_TEMPERATURE, CRITICAL_RULES,
 )
 
 logger = logging.getLogger(__name__)
@@ -124,11 +124,22 @@ class EnsembleScorer:
             if scores.ti_malicious_ja3:
                 scores.triggered_rules.append("threat_intel_malicious_ja3")
 
+        # ── Critical signature override ────────────────────────────────────────
+        # A handful of rules are unambiguous matches for a known attack pattern
+        # rather than a statistical hint (SQLi, Log4Shell, ...). Those must
+        # always alert at critical severity — waiting for the weighted blend
+        # to agree would mean a 100%-confidence signature hit can still be
+        # diluted below threshold by engines that were never designed to
+        # recognise it in the first place.
+        critical_hit = any(r in CRITICAL_RULES for r in scores.triggered_rules)
+        if critical_hit:
+            combined = 1.0
+
         calibrated = _calibrate(combined, CALIBRATION_TEMPERATURE)
 
         return EnsembleResult(
             score=combined,
-            is_anomaly=calibrated >= ENSEMBLE_THRESHOLD,
+            is_anomaly=critical_hit or calibrated >= ENSEMBLE_THRESHOLD,
             engine_scores=scores,
             active_engines=list(available.keys()),
             calibrated_score=calibrated,

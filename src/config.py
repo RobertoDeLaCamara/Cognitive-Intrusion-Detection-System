@@ -81,13 +81,30 @@ COMMON_PORTS = {
 }
 
 # ── Engine weights ────────────────────────────────────────────────────────────
-WEIGHT_SUPERVISED   = float(os.getenv("WEIGHT_SUPERVISED", "0.35"))
-WEIGHT_IFOREST      = float(os.getenv("WEIGHT_IFOREST",   "0.25"))
-WEIGHT_LSTM         = float(os.getenv("WEIGHT_LSTM",      "0.15"))
-WEIGHT_RULES        = float(os.getenv("WEIGHT_RULES",     "0.05"))
-WEIGHT_BASELINE     = float(os.getenv("WEIGHT_BASELINE",  "0.20"))
+# rules was 0.05 (redistributed to ~0.06 whenever baseline is unavailable) —
+# too low for a deterministic signature match to ever be felt: even a
+# certain (score=1.0) sql_injection/log4j hit couldn't clear ENSEMBLE_THRESHOLD
+# on its own. Raised to 0.25 so signature evidence carries real weight in the
+# blend; CRITICAL_RULES below additionally guarantees an alert regardless of
+# the blend for the small set of unambiguous attack patterns.
+WEIGHT_SUPERVISED   = float(os.getenv("WEIGHT_SUPERVISED", "0.30"))
+WEIGHT_IFOREST      = float(os.getenv("WEIGHT_IFOREST",   "0.20"))
+WEIGHT_LSTM         = float(os.getenv("WEIGHT_LSTM",      "0.10"))
+WEIGHT_RULES        = float(os.getenv("WEIGHT_RULES",     "0.25"))
+WEIGHT_BASELINE     = float(os.getenv("WEIGHT_BASELINE",  "0.15"))
 ENSEMBLE_THRESHOLD  = float(os.getenv("ENSEMBLE_THRESHOLD", "0.55"))
 RF_SCORE_THRESHOLD  = float(os.getenv("RF_SCORE_THRESHOLD", "0.90"))  # min confidence for RF to contribute a non-zero score
+
+# Rule names that are unambiguous signature matches for a known attack pattern
+# (not statistical hints) — any one of these forces is_anomaly=True and a
+# critical severity score, independent of how the weighted engines vote.
+CRITICAL_RULES = set(
+    x.strip() for x in os.getenv(
+        "CRITICAL_RULES",
+        "payload:sql_injection,payload:command_injection,payload:log4j,"
+        "payload:shellshock,payload:xss,payload:path_traversal,malicious_ja3",
+    ).split(",") if x.strip()
+)
 
 # ── Per-attack-type weight overrides (Phase 4) ───────────────────────────────
 # JSON string mapping attack type → {engine: weight}

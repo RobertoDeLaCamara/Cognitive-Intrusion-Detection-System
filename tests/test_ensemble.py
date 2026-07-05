@@ -60,6 +60,31 @@ def test_below_threshold_not_anomaly(scorer):
     assert not result.is_anomaly
 
 
+def test_critical_rule_forces_anomaly_even_if_ml_engines_disagree(scorer):
+    """Regression: a confirmed sql_injection signature match must always
+    alert at critical severity, even when the statistical engines see
+    nothing unusual (score=0.0) and would otherwise dilute rules' weight
+    below ENSEMBLE_THRESHOLD."""
+    scores = EngineScores(
+        supervised=0.0, isolation_forest=0.0, lstm=0.0, rules=1.0,
+        triggered_rules=["payload:sql_injection"],
+    )
+    result = scorer.score(scores)
+    assert result.is_anomaly
+    assert result.score == pytest.approx(1.0)
+
+
+def test_non_critical_rule_does_not_force_anomaly(scorer):
+    """A rule that isn't in CRITICAL_RULES (e.g. a generic large_payload
+    heuristic) still goes through the normal weighted blend."""
+    scores = EngineScores(
+        supervised=0.0, isolation_forest=0.0, lstm=0.0, rules=1.0,
+        triggered_rules=["large_payload"],
+    )
+    result = scorer.score(scores)
+    assert not result.is_anomaly
+
+
 def test_calibrated_score_present(scorer):
     scores = EngineScores(supervised=0.8, rules=0.5)
     result = scorer.score(scores)

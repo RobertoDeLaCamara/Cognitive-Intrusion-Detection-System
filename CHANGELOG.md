@@ -2,7 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.2.1] - 2026-07-05
+
+### Security
+- **Removed insecure default `POSTGRES_PASSWORD` fallback** — `docker-compose.yml` fell back to the guessable literal `cnds` whenever `POSTGRES_PASSWORD` was unset. Compose now refuses to start (`${POSTGRES_PASSWORD:?...}`) instead of silently using a weak password. Documented the now-mandatory var in `.env.example` and `doc/deployment.md`.
 
 ### Fixed
 - **`/api/predict` alert persistence broken against Postgres** — same root cause as the guardian timezone bug below: `Alert(timestamp=datetime.now(timezone.utc), ...)` bound a tz-aware datetime into a naive `DateTime` column via the async session, so asyncpg silently rejected every insert (`alert_id` came back `None`, no visible error in `docker logs`). Confirmed live against raspi-62 while testing the guardian with a simulated attack through this exact endpoint.

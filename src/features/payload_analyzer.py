@@ -13,7 +13,15 @@ from .utils import byte_entropy
 
 # Compiled patterns: (name, regex)
 _PATTERNS: List[tuple] = [
-    ("sql_injection",    re.compile(rb"(?:union\s+select|select\s+\*|drop\s+table|insert\s+into|delete\s+from|'.*?'|;--|xp_)", re.IGNORECASE)),
+    # The bare `'.*?'` alternative used to match *any* two single quotes with
+    # anything between them — including a plain apostrophe in free text (e.g.
+    # "Roberto's iPhone" in an mDNS device name), which produced false
+    # positives once sql_injection became a CRITICAL_RULES override (see
+    # config.py). Replaced with quote patterns anchored to actual SQLi syntax:
+    # boolean injection (' OR/AND), tautology ('='), and comment/statement
+    # termination (' -- or ';), which also catches classic `admin'--` auth
+    # bypass that the old `;--` (semicolon required) alternative missed.
+    ("sql_injection",    re.compile(rb"(?:union\s+select|select\s+\*|drop\s+table|insert\s+into|delete\s+from|'\s*(?:or|and)\s+|'\s*=\s*'|'\s*--|';|xp_)", re.IGNORECASE)),
     ("xss",              re.compile(rb"(?:<script|javascript:|onerror=|onload=|<img\s|<svg\s|alert\()", re.IGNORECASE)),
     ("command_injection",re.compile(rb"(?:;\s*(?:ls|cat|wget|curl|bash|sh|python|perl)\b|&&\s*\w+|\|\s*\w+|`[^`]+`|\$\([^)]+\))", re.IGNORECASE)),
     ("path_traversal",   re.compile(rb"(?:\.\.\/|\.\.\\|%2e%2e%2f|%252e%252e)", re.IGNORECASE)),
@@ -29,8 +37,12 @@ PAYLOAD_FEATURE_NAMES = [
     "pattern_match_count", "max_payload_entropy", "mean_payload_length", "suspicious_char_ratio",
 ]
 
-# Quick pre-screen bytes to avoid regex overhead for clearly benign payloads
-_PRESCREEN = re.compile(rb"(?:select|union|script|javascript|onerror|\.\.\/|jndi|\(\s*\)\s*\{|;\s*(?:ls|cat|wget))", re.IGNORECASE)
+# Quick pre-screen bytes to avoid regex overhead for clearly benign payloads.
+# Derived directly from _PATTERNS (rather than hand-duplicated) so it can
+# never drift out of sync and silently swallow a pattern — e.g. a prescreen
+# missing the bare `'.*?'` alternative let `' OR '1'='1'--` bypass sql_injection
+# detection entirely, since the full patterns were never even reached.
+_PRESCREEN = re.compile(b"|".join(p.pattern for _, p in _PATTERNS), re.IGNORECASE)
 
 
 def analyze_payload(packet) -> List[str]:

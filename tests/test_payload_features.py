@@ -117,3 +117,42 @@ def test_analyze_payload_no_raw():
     pkt = MagicMock()
     pkt.__contains__ = lambda self, layer: False
     assert analyze_payload(pkt) == []
+
+
+def test_analyze_payload_classic_sqli_without_keywords():
+    """Regression: `' OR '1'='1'--` has no 'select'/'union' keyword, only the
+    bare-quote and `;--`-style alternatives of the sql_injection pattern. A
+    prescreen that only checked for keyword literals let this — one of the
+    most common SQLi payloads in existence — bypass detection entirely,
+    because analyze_payload() short-circuited before the real patterns ever
+    ran."""
+    from unittest.mock import MagicMock
+    from scapy.all import Raw
+    pkt = MagicMock()
+    pkt.__contains__ = lambda self, layer: layer is Raw
+    pkt.__getitem__ = lambda self, layer: MagicMock(
+        load=b"username=admin' OR '1'='1'--&password=x"
+    )
+    assert "sql_injection" in analyze_payload(pkt)
+
+
+def test_sqli_auth_bypass_comment_out():
+    """`admin'--` (comment out the rest of the query) has no `;` before the
+    `--`, so the old `;--` alternative missed this classic auth-bypass
+    payload even though it isn't the bare-quote pattern being tested above."""
+    vec = extract_payload_features([b"username=admin'--&password=anything"])
+    assert vec[0] == 1.0  # has_sqli
+
+
+def test_benign_apostrophe_not_flagged_as_sqli():
+    """Regression: the old `'.*?'` alternative matched *any* two single
+    quotes with anything between — including a plain apostrophe in normal
+    text (e.g. an mDNS device name like "Roberto's iPhone" or "O'Brien's
+    account"), which surfaced as a real false positive once sql_injection
+    became a CRITICAL_RULES override. The tightened pattern only matches
+    quotes anchored to actual SQLi syntax (boolean OR/AND, tautology '=',
+    or comment/statement termination)."""
+    vec = extract_payload_features([b"device_name=Roberto's iPhone"])
+    assert vec[0] == 0.0  # has_sqli
+    vec2 = extract_payload_features([b"user=O'Brien's account settings"])
+    assert vec2[0] == 0.0  # has_sqli

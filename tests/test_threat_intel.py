@@ -321,3 +321,33 @@ ghi789
                     assert store.last_refresh > 0
                     # Verify the logging includes counts
                     assert len(store.malicious_ips) == 0
+
+    def test_concurrent_stale_calls_only_refresh_once(self):
+        """Regression test: a burst of concurrent get_store() calls while stale
+        must trigger at most one in-flight background refresh, not one per
+        caller. Before the fix, last_refresh wasn't updated until the fetch
+        completed, so every caller in the burst raced past the stale() check
+        and spawned its own thread, pegging CPU in a refresh storm."""
+        store = ThreatIntelStore()
+        store.last_refresh = 0  # definitely stale
+
+        call_count = {"n": 0}
+        started = threading.Event()
+
+        def slow_do_refresh(self=store):
+            call_count["n"] += 1
+            started.set()
+            time.sleep(0.3)  # simulate a slow feed fetch
+            self.last_refresh = time.time()
+
+        with patch("src.enrichment.threat_intel.REFRESH_MINUTES", 60):
+            with patch.object(store, "_do_refresh", side_effect=slow_do_refresh):
+                with patch("src.enrichment.threat_intel._intel_store", store):
+                    threads = [threading.Thread(target=get_store) for _ in range(20)]
+                    for t in threads:
+                        t.start()
+                    started.wait(timeout=2)
+                    for t in threads:
+                        t.join(timeout=2)
+
+        assert call_count["n"] == 1

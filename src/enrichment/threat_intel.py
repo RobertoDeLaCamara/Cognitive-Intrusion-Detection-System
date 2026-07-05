@@ -67,20 +67,32 @@ class ThreatIntelStore:
         return elapsed > REFRESH_MINUTES * 60
 
     def refresh(self) -> None:
-        """Refresh all configured feeds."""
+        """Refresh all configured feeds (blocking)."""
         with self._lock:
-            logger.info("Refreshing threat intelligence feeds...")
-            if ABUSEIPDB_URL:
-                self._fetch_abuseipdb()
-            if MALICIOUS_JA3_URL:
-                self._fetch_ja3_feeds()
-            if MISP_URL and MISP_API_KEY:
-                self._fetch_misp()
-            self.last_refresh = time.time()
-            logger.info(
-                "Threat intel refreshed: %d IPs, %d JA3 hashes, %d domains",
-                len(self.malicious_ips), len(self.malicious_ja3), len(self.malicious_domains),
-            )
+            self._do_refresh()
+
+    def _do_refresh(self) -> None:
+        """Fetch logic shared by refresh() and the background path. Caller must hold self._lock."""
+        logger.info("Refreshing threat intelligence feeds...")
+        if ABUSEIPDB_URL:
+            self._fetch_abuseipdb()
+        if MALICIOUS_JA3_URL:
+            self._fetch_ja3_feeds()
+        if MISP_URL and MISP_API_KEY:
+            self._fetch_misp()
+        self.last_refresh = time.time()
+        logger.info(
+            "Threat intel refreshed: %d IPs, %d JA3 hashes, %d domains",
+            len(self.malicious_ips), len(self.malicious_ja3), len(self.malicious_domains),
+        )
+
+    def _refresh_locked(self) -> None:
+        """Background-thread target. self._lock must already be held by the caller
+        (via a non-blocking acquire) — released here once the refresh completes."""
+        try:
+            self._do_refresh()
+        finally:
+            self._lock.release()
 
     def _fetch_abuseipdb(self) -> None:
         """Fetch IP blocklist from AbuseIPDB blacklist CSV."""
@@ -178,9 +190,11 @@ def get_store() -> ThreatIntelStore:
         if _intel_store is None:
             _intel_store = ThreatIntelStore()
             _intel_store.refresh()
-        elif _intel_store.stale():
-            # Background refresh — don't block the caller
-            t = threading.Thread(target=_intel_store.refresh, daemon=True, name="threat-intel-refresh")
+        elif _intel_store.stale() and _intel_store._lock.acquire(blocking=False):
+            # Non-blocking acquire doubles as the "one refresh in flight" guard:
+            # concurrent callers that lose the race skip spawning entirely instead
+            # of piling up background threads while last_refresh is still stale.
+            t = threading.Thread(target=_intel_store._refresh_locked, daemon=True, name="threat-intel-refresh")
             t.start()
     return _intel_store
 

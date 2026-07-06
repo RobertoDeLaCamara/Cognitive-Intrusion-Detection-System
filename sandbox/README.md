@@ -56,3 +56,15 @@ docker compose -f docker-compose.sandbox.yml up
 
 The `demo/` folder is a quick offline detection test (~5 seconds, no API).
 The sandbox **imports and extends** its scenarios for full end-to-end coverage.
+
+## Network Sandbox (`sandbox/net/`)
+
+For a **full network-level** E2E test with real packet capture, AdGuard Home
+(Guardian auto-response), and Docker-simulated home devices, see:
+
+```bash
+docker compose -f docker-compose.sandbox.yml up --build -d
+docker compose -f docker-compose.sandbox.yml --profile attack up -d attacker
+```
+
+See [`sandbox/net/README.md`](net/README.md) for the full guide.

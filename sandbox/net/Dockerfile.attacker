@@ -1,0 +1,15 @@
+# Dockerfile.attacker — Container with network attack tools.
+# Generates malicious traffic that the CNDS detector should flag.
+FROM python:3.11-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nmap hping3 iputils-ping dnsutils netcat-openbsd \
+    iproute2 curl wget tcpdump \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir scapy==2.5.0
+
+WORKDIR /app
+COPY attacker_traffic.py .
+
+CMD ["python", "-u", "attacker_traffic.py"]

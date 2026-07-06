@@ -574,6 +574,19 @@ Copy `.env.example` to `.env` and adjust as needed.
 │           ├── alerts.py        # Alert + incident CRUD
 │           ├── auth.py          # POST /api/auth/token
 │           └── websocket.py     # WebSocket /ws/alerts
+├── sandbox/                     # End-to-end test environments
+│   ├── orchestrator.py          # API-level sandbox (CI + demo modes)
+│   ├── README.md                # API sandbox documentation
+│   ├── traffic/                 # Synthetic traffic generators (API-based)
+│   ├── api_exerciser/           # REST endpoint validator
+│   ├── siem_mock/               # CEF syslog receiver for integration tests
+│   └── net/                     # Network-level sandbox (Docker, real packets)
+│       ├── README.md            # Network sandbox full guide
+│       ├── Dockerfile.client    # Home device traffic generators
+│       ├── client_traffic.py    # 3 profiles: laptop, phone, smart-tv
+│       ├── Dockerfile.attacker  # Attack tools (nmap, hping3, scapy)
+│       ├── attacker_traffic.py  # 10 attack scenarios
+│       └── adguard/conf/        # Pre-configured AdGuard Home for Guardian
 └── tests/
     ├── conftest.py              # Shared fixtures (in-memory DB, mock features)
     ├── test_api.py              # API integration tests
@@ -596,6 +609,32 @@ Copy `.env.example` to `.env` and adjust as needed.
     └── unsupervised/
         └── test_collector.py    # BaselineCollector, CompositeTrigger, ProvenanceMetadata unit tests
 ```
+
+---
+
+## Network Sandbox (Full E2E)
+
+A Docker-based network sandbox that simulates a home LAN with real packet capture, perfect for testing the complete CNDS pipeline including Guardian auto-response.
+
+```bash
+# Start infrastructure + legitimate clients + dashboard
+docker compose -f docker-compose.sandbox.yml up --build -d
+
+# Launch the attacker (separate profile)
+docker compose -f docker-compose.sandbox.yml --profile attack up -d attacker
+
+# Access points:
+#   Dashboard:   http://localhost:8501
+#   API Swagger: http://localhost:8000/docs
+#   AdGuard:     http://localhost:3000 (admin/sandbox123)
+
+# Stop everything
+docker compose -f docker-compose.sandbox.yml --profile attack down -v
+```
+
+The sandbox creates a `172.20.0.0/24` Docker network with 3 simulated devices (laptop, phone, smart-tv) generating realistic traffic, while an attacker container cycles through 10 attack types. The detector captures real packets with Scapy, and Guardian auto-blocks the attacker in AdGuard Home.
+
+See [`sandbox/net/README.md`](sandbox/net/README.md) for the full topology, configuration, and troubleshooting guide.
 
 ---
 

@@ -36,6 +36,7 @@
                 │
                 ├─► SIEM (Splunk / Elastic / Syslog-CEF)
                 ├─► Webhook / Telegram notifications
+                ├─► [MCP Server] (optional, read-only)  →  Claude Code / Desktop
                 └─► [Guardian] (optional)  critical alert → whitelist check →
                                             block src_ip (AdGuard DNS) → auto-rollback timer
 ```
@@ -51,8 +52,9 @@
 | **Rules** | Flow metadata + payload bytes + JA3 hashes | Threshold rules | ICMP floods, SYN scans, SQLi, XSS, LFI, large payloads, asymmetric upload, malicious TLS fingerprints |
 | **Threat Intelligence** | IPs, JA3 hashes, domains | External feeds (AbuseIPDB, JA3 blacklists, MISP) | Known-bad IPs, malicious JA3 fingerprints, threat intel domains |
 
-Default ensemble weights: Supervised 35 %, Isolation Forest 25 %, LSTM 15 %, Rules 5 %, Baseline 20 %.
+Default ensemble weights: Supervised 30 %, Isolation Forest 20 %, Rules 25 %, Baseline 15 %, LSTM 10 %.
 Any missing engine has its weight redistributed proportionally across the active engines.
+Rules carries a deliberately high weight so a deterministic signature match is actually felt in the blend; in addition, any rule listed in `CRITICAL_RULES` forces an alert regardless of how the weighted engines vote.
 
 ### Unsupervised Baseline Training
 
@@ -179,6 +181,54 @@ python siem/syslog/forwarder.py --syslog-host 10.0.0.50 --syslog-port 514
 ```
 
 See `siem/README.md` for full setup instructions.
+
+### MCP Server — Conversational Triage (optional)
+
+CNDS exposes its alert store to [Model Context Protocol](https://modelcontextprotocol.io) clients — Claude Code, Claude Desktop, or any MCP-compatible agent — through a **read-only** server (`src/mcp_server/`). Instead of paging through alert JSON, an analyst asks *"why did alert 431 fire, and has this host done it before?"*
+
+The target is **triage, not detection**: CNDS is already five AI engines, and no LLM can sit on a hot path where flows expire against a 20,000-packet queue. What is actually starved is human judgement — `adaptive_weights` does nothing until 100 alerts are acknowledged, and every Guardian block silently rolls back because nobody confirms it.
+
+| Tool | Returns |
+|---|---|
+| `list_alerts` | Alerts newest first; filters for severity, IP, ack state, attack type, min score, time window |
+| `get_alert` | One alert in full: per-engine scores, rules, payload matches, MITRE, GeoIP, JA3, linked Guardian action |
+| `get_ip_profile` | Aggregate history for a source IP: totals, breakdowns, top rules/ports/JA3, score stats, prior acknowledgements, mitigation history, and the policy in force for it |
+| `alert_trends` | Counts bucketed by hour/day, split by severity |
+| `get_stats` | Totals, unacknowledged count, per-severity breakdown |
+| `list_incidents` | Correlated incidents with linked alert counts |
+| `list_mitigation_actions` | Guardian audit trail: what was blocked, why, and whether it is pending/confirmed/undone/expired |
+| `list_suppression_rules` | Active suppressions — why an expected alert may be missing |
+| `get_detection_config` | Thresholds, engine weights, critical rules, Guardian policy, IP lists (no credentials) |
+
+Three structural guarantees, each covered by tests:
+
+- **Read-only at the engine level**, not by convention — `PRAGMA query_only=ON` on SQLite, `SET TRANSACTION READ ONLY` on PostgreSQL. A future coding mistake cannot corrupt the alert store.
+- **No enforcement tools.** There is deliberately no `block_ip`/`unblock_ip`/`acknowledge`. The Guardian remains the sole, deterministic, auditable actuator; the agent explains and recommends. Swapping it for a non-deterministic LLM would be a security regression.
+- **Attacker-influenced fields are bounded and tagged.** Once alert data reaches an LLM, the network becomes an input channel to the agent. `src_ip`, `ja3_string`, `attack_type` and free text are length-bounded, stripped of control characters, syntax-checked and marked in `_untrusted_fields`. Raw payload bytes are never persisted, so the surface is narrow by construction.
+
+```bash
+pip install -r requirements-mcp.txt     # protocol SDK only
+python -m src.mcp_server                # stdio transport; logs to stderr
+```
+
+Register it with a client (use an **absolute** DB path so the working directory cannot change which database is read):
+
+```json
+{
+  "mcpServers": {
+    "cnds": {
+      "command": "/path/to/cnds/venv/bin/python",
+      "args": ["-m", "src.mcp_server"],
+      "cwd": "/path/to/cnds",
+      "env": { "DATABASE_URL": "sqlite+aiosqlite:////path/to/cnds/cnds.db" }
+    }
+  }
+}
+```
+
+**No authentication:** the client spawns the server as a subprocess and it inherits the OS user's privileges. It is an operator-local tool — do not expose it over a network transport; the DB file permissions are the access-control boundary.
+
+See [`doc/mcp-server.md`](doc/mcp-server.md) for the full tool reference, security model, known limitations (the DNS log and threat-intel sets live in the detector's memory, so they are not reachable from a separate process) and the phase 2/3 roadmap.
 
 ---
 
@@ -389,11 +439,11 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `MAX_TRACKED_IPS` | `5000` | Max IPs tracked by host extractor / LSTM buffers |
 | `MIN_PACKETS_FOR_ML` | `10` | Min packets before ML engines activate |
 | `ENSEMBLE_THRESHOLD` | `0.55` | Score above which an alert fires |
-| `WEIGHT_SUPERVISED` | `0.35` | Supervised engine weight |
-| `WEIGHT_IFOREST` | `0.25` | Isolation Forest weight |
-| `WEIGHT_LSTM` | `0.15` | LSTM weight |
-| `WEIGHT_RULES` | `0.05` | Rules weight |
-| `WEIGHT_BASELINE` | `0.20` | Unsupervised baseline engine weight |
+| `WEIGHT_SUPERVISED` | `0.30` | Supervised engine weight |
+| `WEIGHT_IFOREST` | `0.20` | Isolation Forest weight |
+| `WEIGHT_LSTM` | `0.10` | LSTM weight |
+| `WEIGHT_RULES` | `0.25` | Rules weight (high on purpose — see Detection Engines) |
+| `WEIGHT_BASELINE` | `0.15` | Unsupervised baseline engine weight |
 | `LARGE_PAYLOAD_BYTES` | `10000` | Forward payload size (bytes) that triggers the large-payload rule |
 | `MAX_PAYLOAD_SAMPLES` | `50` | Max payload samples stored per flow for feature extraction |
 | `PAYLOAD_SAMPLE_BYTES` | `4096` | Max bytes kept per payload sample |
@@ -481,6 +531,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 ├── CI/CDfile                  # CI/CD: build → lint → test → Quality Analysis → push
 ├── sonar-project.properties
 ├── requirements.txt
+├── requirements-mcp.txt         # Optional: MCP server SDK (src/mcp_server/)
 ├── .env.example
 ├── alembic/                     # Database migrations
 │   ├── env.py                   # Alembic config wired to CNDS models
@@ -561,6 +612,12 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   │   ├── backends.py          # MitigationBackend protocol + AdGuardBackend (DNS block)
 │   │   ├── engine.py            # guardian_loop / guardian_expiry_loop background tasks
 │   │   └── telegram_listener.py # Inline Confirm/Undo buttons via getUpdates long-polling
+│   ├── mcp_server/              # Read-only MCP server (opt-in, separate process)
+│   │   ├── db.py                # Read-only engine (PRAGMA query_only / SET TRANSACTION READ ONLY)
+│   │   ├── sanitize.py          # Bound + tag attacker-influenced fields
+│   │   ├── queries.py           # Async read-only query functions
+│   │   ├── tools.py             # Tool schemas + dispatch (SDK-free)
+│   │   └── server.py            # MCP Server + stdio transport
 │   └── api/
 │       ├── main.py              # FastAPI application
 │       ├── models.py            # SQLAlchemy ORM (Alert, Incident, MitigationAction)
@@ -603,6 +660,7 @@ Copy `.env.example` to `.env` and adjust as needed.
     ├── test_ip_lists.py          # IP allowlist/blocklist tests
     ├── test_threat_intel.py      # Threat intelligence feed tests (31 tests, 98% cov)
     ├── test_guardian.py          # Guardian: AdGuard backend, whitelist, circuit breaker
+    ├── test_mcp_server.py        # MCP server: queries, sanitisation, read-only guarantees (102 tests)
     ├── test_rules_engine.py
     ├── test_siem.py             # CEF syslog forwarder tests
     ├── test_ft_transformer_engine.py  # FT-Transformer integration tests (load + predict + dataset checks)

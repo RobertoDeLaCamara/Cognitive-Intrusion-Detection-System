@@ -1,0 +1,10 @@
+# Optional: read-only MCP server (src/mcp_server/) — see doc/mcp-server.md
+#
+# Not required by the detector, the API or the dashboard. Install only on the
+# host that serves alerts to an MCP client (Claude Code / Claude Desktop):
+#
+#     pip install -r requirements-mcp.txt
+#
+# The server reuses the SQLAlchemy / aiosqlite stack already pinned in
+# requirements.txt, so this file adds the protocol SDK only.
+mcp>=1.2.0,<2.0

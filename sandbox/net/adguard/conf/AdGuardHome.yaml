@@ -1,0 +1,36 @@
+bind_host: 0.0.0.0
+bind_port: 3000
+users:
+  - name: admin
+    password: $2y$10$eBk3XYOYrS6V6IHqo5p8x.IhLkRfRHJuJTGLpGynJ7tCOkOqZUCi6
+http:
+  address: 0.0.0.0:3000
+dns:
+  bind_hosts:
+    - 0.0.0.0
+  port: 53
+  bootstrap_dns:
+    - 8.8.8.8
+    - 1.1.1.1
+  upstream_dns:
+    - 8.8.8.8
+    - 1.1.1.1
+  protection_enabled: true
+  filtering_enabled: true
+  ratelimit: 0
+  cache_size: 4194304
+  cache_ttl_min: 0
+  cache_ttl_max: 0
+  allowed_clients: []
+  disallowed_clients: []
+  blocked_hosts:
+    - version.bind
+    - id.server
+    - hostname.bind
+filtering:
+  enabled: true
+  update_interval: 24
+  rewrites: []
+  safebrowsing_enabled: false
+  parental_enabled: false
+schema_version: 28

@@ -18,6 +18,7 @@
 | [engines.md](engines.md) | ML engineers, security engineers | Detection engine overview, model specs, tuning |
 | [ml-models.md](ml-models.md) | ML engineers, data scientists | Deep dive: feature engineering, training, retraining, calibration, ML Tracking |
 | [api-reference.md](api-reference.md) | Integrators, developers | Complete REST + WebSocket API reference |
+| [mcp-server.md](mcp-server.md) | SOC analysts, integrators | Read-only MCP server: conversational alert triage from Claude Code / Desktop, tool catalogue, security model |
 | [use-cases.md](use-cases.md) | SOC analysts, security architects | Operational use cases, attack scenarios, analyst workflows |
 | [digital-twin-sandbox.md](digital-twin-sandbox.md) | Engineers, demo operators | Local network digital twin, offline demo, sandbox testing |
 | [deployment.md](deployment.md) | DevOps, platform engineers | Installation, configuration, production operations |
@@ -44,12 +45,15 @@ Raw Packets (Scapy)
                                                  │
        ▼                                         │
   Detection Engines                              │
-  ├── Supervised (40%) ← 76 flow features       │
+  ├── Supervised (30%) ← 76 flow features       │
   │   ├── FT-Transformer (preferred, ~2.4M params)
   │   └── Random Forest (fallback when no FT ckpt)
-  ├── Isolation Forest (30%) ← 18 host features │
-  ├── LSTM Autoencoder (20%) ← temporal seq.    │
-  └── Rules Engine (10%) ← all signals          │
+  ├── Isolation Forest (20%) ← 18 host features │
+  ├── LSTM Autoencoder (10%) ← temporal seq.    │
+  ├── Rules Engine (25%) ← all signals          │
+  │   └── CRITICAL_RULES force an alert regardless of the blend
+  └── Unsupervised Baseline (15%) ← live-fitted │
+      (weights of unavailable engines are redistributed)
                                                  │
        ▼                                         │
   Ensemble Scorer (weighted fusion)             │
@@ -69,6 +73,8 @@ Raw Packets (Scapy)
        ├── WebSocket stream (/ws/alerts)         │
        ├── Streamlit dashboard (:8501)           │
        ├── SIEM push (Splunk / Elastic / CEF)   │
+       ├── MCP server (read-only, stdio)         │
+       │   └── Claude Code / Desktop — triage    │
        └── Guardian auto-response (optional)     │
            block src_ip → AdGuard DNS → rollback │
 ```
@@ -100,6 +106,8 @@ docker-compose up
 
 | Version | Notes |
 |---|---|
+| 1.3.0 | Read-only MCP server (`src/mcp_server/`) — conversational alert triage from Claude Code / Desktop; nine read-only tools, engine-level read-only enforcement, untrusted-field tagging |
+| 1.2.1 | Removed insecure default `POSTGRES_PASSWORD` fallback; systemic naive-UTC datetime fix (`src/timeutils.py`) |
 | 1.2.0 | Guardian auto-response module (opt-in auto-block + whitelist + circuit breaker + timed rollback), PostgreSQL in default `docker-compose.yml`, per-service resource limits |
 | 1.1.1 | `FT_TEMPERATURE` env var (default 2.0), ARM64 Docker support, scikit-learn<2.0 pin |
 | 1.1.0 | Unified FT-Transformer supervised engine (F1 macro 0.6197), MLflow registry load, smoke test |

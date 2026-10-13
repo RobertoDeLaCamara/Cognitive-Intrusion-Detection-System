@@ -87,7 +87,7 @@ Extracted by `src/features/payload_analyzer.py`. Per-flow numeric features from 
 - Test F1 macro: 0.6197 (XGBoost baseline 0.6095, default FT-T 0.5446)
 - Model file: `models/unified/unified_ft_transformer.pt` + `unified_scaler.pkl` (gitignored)
 - MLflow registry: `models:/ml-ids-unified-ft-transformer/<latest>`
-- Architecture diagrams: see [`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](../../ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md)
+- Architecture diagrams: see [`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](https://github.com/RobertoDeLaCamara/ML-IDS/blob/main/docs/UNIFIED_MODEL_ARCHITECTURE.md)
 
 ### Random Forest (Supervised — fallback)
 
@@ -222,26 +222,28 @@ python scripts/retrain_with_payload.py
 
 Output: `models/rf_model.joblib`
 
-### 2. Isolation Forest
+### 2–3. Isolation Forest + LSTM Autoencoder
+
+There is no standalone training script. Both models are trained **automatically**
+by the unsupervised baseline subsystem (`src/unsupervised/`): while the detector
+runs, `BaselineCollector` buffers host feature vectors and, once the composite
+trigger fires, `WindowTrainer` fits a new IsolationForest + LSTM Autoencoder and
+logs them to MLflow. Enabled by default (`BASELINE_COLLECTION_ENABLED=true`).
+See [Unsupervised Baseline Training](https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System/blob/master/doc/unsupervised.md).
 
 ```bash
-# Collect baseline normal traffic (no attacks)
-sudo python main.py --duration 600    # 10 min baseline capture
-
-# Train IF on captured host features
-python scripts/train_isolation_forest.py --input data/baseline_host.csv
+# Let the detector observe normal traffic; training kicks in on its own
+sudo python main.py
 ```
 
-Output: `models/isolation_forest.joblib`, `models/if_scaler.joblib`
-
-### 3. LSTM Autoencoder
+For a quick local start without a baseline, generate small synthetic demo models
+(not for production):
 
 ```bash
-# Use same baseline data
-python scripts/train_lstm.py --input data/baseline_host.csv
+python scripts/generate_demo_models.py --output-dir models
 ```
 
-Output: `models/lstm_autoencoder.pt`, `models/lstm_config.json`
+Output: `models/isolation_forest.joblib`, `models/if_scaler.joblib`, `models/lstm_autoencoder.pt`
 
 ### Offline Replay (for model evaluation)
 

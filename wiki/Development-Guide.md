@@ -36,12 +36,11 @@ cp /path/to/ML-IDS/models/unified/unified_metadata.json      models/unified/
 #    Place dataset CSVs in data/CIC-UNSW-NB15/
 python scripts/train_rf.py --data-dir /path/to/CIC-UNSW-NB15
 
-# 2. Isolation Forest — requires normal-traffic baseline
-sudo python main.py --duration 600        # 10 min capture → data/baseline_host.csv
-python scripts/train_isolation_forest.py --input data/baseline_host.csv
-
-# 3. LSTM Autoencoder
-python scripts/train_lstm.py --input data/baseline_host.csv
+# 2–3. Isolation Forest + LSTM Autoencoder — no script: trained automatically
+#      by the unsupervised baseline subsystem while the detector runs
+#      (BASELINE_COLLECTION_ENABLED=true, see doc/unsupervised.md).
+#      For a quick local start, generate synthetic demo models instead:
+python scripts/generate_demo_models.py --output-dir models
 
 # Verify models exist:
 ls models/ models/unified/

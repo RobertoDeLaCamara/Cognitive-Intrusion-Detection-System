@@ -40,7 +40,7 @@ to Random Forest.
 
 - **Files:** `src/engines/ft_transformer_engine.py`, `src/models/ft_transformer.py`
 - **Model:** `models/unified/unified_ft_transformer.pt` (or MLflow registry `ml-ids-unified-ft-transformer/<latest>`).
-- **Architecture:** per-feature affine tokenizer → 3 Pre-LN Transformer encoder blocks → linear head. ~2.4M params, Optuna-tuned. See [`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](../../ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md) for diagrams.
+- **Architecture:** per-feature affine tokenizer → 3 Pre-LN Transformer encoder blocks → linear head. ~2.4M params, Optuna-tuned. See [`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](https://github.com/RobertoDeLaCamara/ML-IDS/blob/main/docs/UNIFIED_MODEL_ARCHITECTURE.md) for diagrams.
 - **Input:** 76 CICFlowMeter-compatible flow features.
 - **Output:** attack type label + confidence score.
 - **Detects:** 10 UNSW-NB15 classes — Benign, Analysis, Backdoor, DoS, Exploits, Fuzzers, Generic, Reconnaissance, Shellcode, Worms.

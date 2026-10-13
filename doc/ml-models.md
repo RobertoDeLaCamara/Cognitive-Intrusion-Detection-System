@@ -318,7 +318,7 @@ TPESampler + MedianPruner):
 ```
 
 **Diagramas de la arquitectura:** ver
-[`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](../../ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md)
+[`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](https://github.com/RobertoDeLaCamara/ML-IDS/blob/main/docs/UNIFIED_MODEL_ARCHITECTURE.md)
 (6 diagramas Mermaid: data flow, tokenizer, encoder block, parameter
 budget, runtime integration, atención por ejemplo).
 

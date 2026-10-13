@@ -658,9 +658,9 @@ Copy `.env.example` to `.env` and adjust as needed.
     ├── test_mitre.py            # MITRE ATT&CK mapping tests
     ├── test_payload_features.py
     ├── test_ip_lists.py          # IP allowlist/blocklist tests
-    ├── test_threat_intel.py      # Threat intelligence feed tests (31 tests, 98% cov)
+    ├── test_threat_intel.py      # Threat intelligence feed tests (32 tests)
     ├── test_guardian.py          # Guardian: AdGuard backend, whitelist, circuit breaker
-    ├── test_mcp_server.py        # MCP server: queries, sanitisation, read-only guarantees (102 tests)
+    ├── test_mcp_server.py        # MCP server: queries, sanitisation, read-only guarantees (103 tests)
     ├── test_rules_engine.py
     ├── test_siem.py             # CEF syslog forwarder tests
     ├── test_ft_transformer_engine.py  # FT-Transformer integration tests (load + predict + dataset checks)

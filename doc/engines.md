@@ -40,7 +40,7 @@ F1 on minority attacks than the legacy RF and produces the named
 - **Class-weighting strategy:** `sqrt_inverse` — full inverse over-corrects on minorities, focal loss adds nothing over sqrt-weighted CE.
 - **Anomaly score:** `1 - P(Benign)` — calibrated against the actual benign probability.
 - **FP threshold:** scores below `FT_SCORE_THRESHOLD` (default `0.50`) are zeroed.
-- **Architecture diagrams:** see [`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](../../ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md).
+- **Architecture diagrams:** see [`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](https://github.com/RobertoDeLaCamara/ML-IDS/blob/main/docs/UNIFIED_MODEL_ARCHITECTURE.md).
 
 #### Model load chain (priority order)
 

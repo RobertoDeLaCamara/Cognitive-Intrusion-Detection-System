@@ -290,7 +290,7 @@ baseline 0.6095, default FT-T 0.5446).
 
 For the full architecture diagrams (data flow, tokenizer, encoder block,
 parameter budget, attention example) see
-[`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](../../ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md).
+[`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](https://github.com/RobertoDeLaCamara/ML-IDS/blob/main/docs/UNIFIED_MODEL_ARCHITECTURE.md).
 
 ### Random Forest (fallback)
 

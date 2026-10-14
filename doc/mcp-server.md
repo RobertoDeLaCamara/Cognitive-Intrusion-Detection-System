@@ -306,12 +306,15 @@ pytest tests/test_mcp_server.py -v
 
 ## Roadmap
 
-This is phase 1 of three. Phases 2 and 3 are **not implemented**:
+This is phase 1 of three. Phase 2 is implemented; phase 3 is **not**:
 
-- **Phase 2 — triage agent.** An async consumer of `critical` alerts that writes an
-  `analyst_summary` and a suggested verdict to a new column. It annotates; it does not
-  act. This is what would finally feed `adaptive_weights` the acknowledged samples it
-  waits for.
+- **Phase 2 — triage agent (implemented, see [`triage-agent.md`](triage-agent.md)).**
+  An out-of-process consumer (`python -m src.triage`) of high-severity alerts that
+  writes an advisory verdict, evidence and recommendation to a separate, append-only
+  `triage_annotations` table. It annotates; it does not act. `get_alert` now returns
+  the latest annotation as `agent_triage`, marked advisory. Acknowledgement stays
+  human, so `adaptive_weights` still learns from analyst decisions only — the agent
+  makes those decisions faster, it does not make them.
 - **Phase 3 — propose-and-confirm.** Agent-suggested mitigations routed through the
   existing Telegram Confirm/Undo handshake, so a human remains the actuator.
 

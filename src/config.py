@@ -195,6 +195,26 @@ NOTIFY_MIN_SEVERITY = os.getenv("NOTIFY_MIN_SEVERITY", "high")  # minimum severi
 TELEGRAM_BOT_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN", "")       # empty = disabled
 TELEGRAM_CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID", "")
 
+# ── Triage agent (MCP roadmap phase 2) ────────────────────────────────────────
+# An out-of-process consumer (python -m src.triage) that annotates alerts with
+# an advisory verdict. It never acknowledges, blocks or unblocks anything.
+TRIAGE_MODE              = os.getenv("TRIAGE_MODE", "workflow")    # workflow | agent
+TRIAGE_MIN_SEVERITY      = os.getenv("TRIAGE_MIN_SEVERITY", "high")
+TRIAGE_LOOKBACK_HOURS    = int(os.getenv("TRIAGE_LOOKBACK_HOURS", "24"))
+TRIAGE_BATCH_SIZE        = int(os.getenv("TRIAGE_BATCH_SIZE", "10"))
+TRIAGE_MIN_CONFIDENCE    = float(os.getenv("TRIAGE_MIN_CONFIDENCE", "0.6"))
+TRIAGE_DAILY_BUDGET_USD  = float(os.getenv("TRIAGE_DAILY_BUDGET_USD", "2.0"))
+TRIAGE_MAX_USD_PER_ALERT = float(os.getenv("TRIAGE_MAX_USD_PER_ALERT", "0.25"))
+TRIAGE_MAX_TURNS         = int(os.getenv("TRIAGE_MAX_TURNS", "8"))
+TRIAGE_TIMEOUT_SECS      = int(os.getenv("TRIAGE_TIMEOUT_SECS", "180"))
+TRIAGE_POLL_INTERVAL_SECS = int(os.getenv("TRIAGE_POLL_INTERVAL_SECS", "300"))
+TRIAGE_CLAUDE_BIN        = os.getenv("TRIAGE_CLAUDE_BIN", "claude")
+TRIAGE_CLAUDE_MODEL      = os.getenv("TRIAGE_CLAUDE_MODEL", "")   # empty = CLI default
+# --bare skips the host's hooks/CLAUDE.md/MCP and requires ANTHROPIC_API_KEY.
+TRIAGE_CLAUDE_BARE       = os.getenv("TRIAGE_CLAUDE_BARE", "true").lower() == "true"
+# Agent mode only: MCP config JSON that registers the read-only cnds server.
+TRIAGE_MCP_CONFIG        = os.getenv("TRIAGE_MCP_CONFIG", "")
+
 # ── Rate limiting (Phase 8) ───────────────────────────────────────────────────
 RATE_LIMIT_REQUESTS = int(os.getenv("RATE_LIMIT_REQUESTS", "60"))   # per window
 RATE_LIMIT_WINDOW   = int(os.getenv("RATE_LIMIT_WINDOW", "60"))     # seconds

@@ -127,6 +127,36 @@ class MitigationAction(Base):
     alert       = relationship("Alert")
 
 
+class TriageAnnotation(Base):
+    """Advisory verdict written by the triage agent (MCP roadmap phase 2).
+
+    The agent annotates; it never acts. Nothing in CNDS reads this table to
+    make a decision: acknowledgement stays a human action, and the Guardian
+    remains the only actuator. Rows are append-only so every model output is
+    kept for audit and for measuring agreement with analysts.
+    """
+    __tablename__ = "triage_annotations"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    alert_id       = Column(Integer, ForeignKey("alerts.id"), nullable=False, index=True)
+    created_at     = Column(DateTime, default=utcnow, index=True)
+    status         = Column(String(20), default="ok")    # ok | invalid_output | backend_error
+    mode           = Column(String(20), nullable=True)   # workflow | agent
+    verdict        = Column(String(30), nullable=True)   # likely_malicious | likely_benign | needs_human
+    model_verdict  = Column(String(30), nullable=True)   # verdict before policy guards
+    confidence     = Column(Float, nullable=True)
+    recommendation = Column(String(30), nullable=True)
+    summary        = Column(Text, nullable=True)
+    evidence       = Column(JSON, nullable=True)
+    policy_notes   = Column(JSON, nullable=True)         # guards that changed the output
+    model          = Column(String(100), nullable=True)
+    cost_usd       = Column(Float, nullable=True)
+    duration_ms    = Column(Integer, nullable=True)
+    error          = Column(Text, nullable=True)
+
+    alert          = relationship("Alert")
+
+
 class User(Base):
     """User accounts for JWT authentication."""
     __tablename__ = "users"

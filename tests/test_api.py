@@ -315,3 +315,111 @@ async def test_export_json_includes_mitre(client, test_session):
     data = _json.loads(resp.text)
     assert len(data) == 1
     assert data[0]["mitre_techniques"][0]["id"] == "T1046"
+
+
+# ---------------------------------------------------------------------------
+# Date-range filter on GET /api/alerts
+# ---------------------------------------------------------------------------
+
+def _now():
+    from src.timeutils import utcnow
+    return utcnow().replace(microsecond=0)
+
+
+async def _add_alerts(session, specs):
+    """specs: list of (timestamp, src_ip, severity, acknowledged)."""
+    for ts, ip, sev, ack in specs:
+        session.add(Alert(
+            timestamp=ts, src_ip=ip, dst_ip="10.0.0.1",
+            severity=sev, ensemble_score=0.5, acknowledged=ack,
+        ))
+    await session.commit()
+
+
+async def _seed_three(session):
+    from datetime import timedelta
+    now = _now()
+    times = {"old": now - timedelta(hours=48),
+             "mid": now - timedelta(hours=12),
+             "new": now - timedelta(hours=1)}
+    await _add_alerts(session, [
+        (times["old"], "1.1.1.1", SeverityLevel.HIGH, False),
+        (times["mid"], "2.2.2.2", SeverityLevel.HIGH, False),
+        (times["new"], "3.3.3.3", SeverityLevel.HIGH, False),
+    ])
+    return now, times
+
+
+@pytest.mark.asyncio
+async def test_list_alerts_date_range(client, test_session):
+    from datetime import timedelta, timezone
+    now, times = await _seed_three(test_session)
+    start = now - timedelta(hours=24)
+    end = now - timedelta(minutes=30)
+
+    resp = await client.get("/api/alerts", params={
+        "start": start.isoformat(), "end": end.isoformat()})
+    assert resp.status_code == 200
+    assert {a["src_ip"] for a in resp.json()} == {"2.2.2.2", "3.3.3.3"}
+
+    # Inclusive bound: start exactly at an alert's timestamp
+    resp = await client.get("/api/alerts", params={"start": times["mid"].isoformat()})
+    assert {a["src_ip"] for a in resp.json()} == {"2.2.2.2", "3.3.3.3"}
+
+    # tz-aware start (+02:00) for the same instant
+    aware = (start.replace(tzinfo=timezone.utc)
+             .astimezone(timezone(timedelta(hours=2))))
+    resp = await client.get("/api/alerts", params={
+        "start": aware.isoformat(), "end": end.isoformat()})
+    assert resp.status_code == 200
+    assert {a["src_ip"] for a in resp.json()} == {"2.2.2.2", "3.3.3.3"}
+
+
+@pytest.mark.asyncio
+async def test_list_alerts_hours(client, test_session):
+    await _seed_three(test_session)
+    resp = await client.get("/api/alerts", params={"hours": 24})
+    assert resp.status_code == 200
+    assert {a["src_ip"] for a in resp.json()} == {"2.2.2.2", "3.3.3.3"}
+
+    resp = await client.get("/api/alerts", params={"hours": 0})
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_list_alerts_invalid_datetime(client):
+    resp = await client.get("/api/alerts", params={"start": "not-a-date"})
+    assert resp.status_code == 422
+    resp = await client.get("/api/alerts", params={"end": "2026-13-45T00:00:00"})
+    assert resp.status_code == 422
+    resp = await client.get("/api/alerts", params={
+        "start": "2026-01-02T00:00:00", "end": "2026-01-01T00:00:00"})
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_list_alerts_date_range_composes(client, test_session):
+    from datetime import timedelta
+    now = _now()
+    inside = now - timedelta(hours=2)
+    outside = now - timedelta(hours=72)
+    await _add_alerts(test_session, [
+        (inside, "9.9.9.9", SeverityLevel.HIGH, False),      # match
+        (inside, "9.9.9.9", SeverityLevel.LOW, False),       # wrong severity
+        (inside, "9.9.9.9", SeverityLevel.HIGH, True),       # acknowledged
+        (inside, "8.8.8.8", SeverityLevel.HIGH, False),      # wrong ip
+        (outside, "9.9.9.9", SeverityLevel.HIGH, False),     # out of range
+    ])
+    resp = await client.get("/api/alerts", params={
+        "start": (now - timedelta(hours=6)).isoformat(),
+        "end": now.isoformat(),
+        "severity": "high", "acknowledged": "false", "src_ip": "9.9.9.9"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data) == 1
+    assert data[0]["src_ip"] == "9.9.9.9"
+    assert data[0]["severity"] == "high"
+    assert data[0]["acknowledged"] is False
+
+    resp = await client.get("/api/alerts", params={"hours": 6, "severity": "low"})
+    assert len(resp.json()) == 1

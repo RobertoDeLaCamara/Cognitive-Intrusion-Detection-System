@@ -21,7 +21,15 @@ _PATTERNS: List[tuple] = [
     # boolean injection (' OR/AND), tautology ('='), and comment/statement
     # termination (' -- or ';), which also catches classic `admin'--` auth
     # bypass that the old `;--` (semicolon required) alternative missed.
-    ("sql_injection",    re.compile(rb"(?:union\s+select|select\s+\*|drop\s+table|insert\s+into|delete\s+from|'\s*(?:or|and)\s+|'\s*=\s*'|'\s*--|';|xp_)", re.IGNORECASE)),
+    # A bare `';` matched any quote byte followed by a semicolon byte (6.8% of
+    # random 4 KB binary payloads); statement termination now has to start a
+    # new SQL statement, and `xp_` has to name an extended stored procedure.
+    ("sql_injection",    re.compile(
+        rb"(?:union\s+select|select\s+\*|drop\s+table|insert\s+into|delete\s+from|"
+        rb"'\s*(?:or|and)\s+|'\s*=\s*'|'\s*--|"
+        rb"';\s*(?:drop|select|insert|update|delete|exec|execute|shutdown|declare|truncate|alter|create)\b|"
+        rb"xp_(?:cmdshell|regread|regwrite|dirtree|fileexist|servicecontrol))",
+        re.IGNORECASE)),
     ("xss",              re.compile(rb"(?:<script|javascript:|onerror=|onload=|<img\s|<svg\s|alert\()", re.IGNORECASE)),
     # The old `&&\s*\w+`, `\|\s*\w+` and `` `[^`]+` `` alternatives matched any
     # `|`/`&&`/backtick byte followed by an alphanumeric byte, so they fired on

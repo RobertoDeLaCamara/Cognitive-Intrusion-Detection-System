@@ -58,6 +58,8 @@ Traffic flows through the system in this order:
 
 8. **Enrichment** (`src/enrichment/`): Every alert is enriched with MITRE ATT&CK mappings (`mitre.py`), optional GeoIP (`geoip.py`), and may trigger webhooks/Telegram notifications (`notifications.py`). Alert correlation (`correlation.py`) auto-creates incidents when the same IP fires ≥ `CORRELATION_THRESHOLD` alerts within `CORRELATION_WINDOW_SECS`.
 
+9. **MCP server + triage agent** (`src/mcp_server/`, `src/triage/`): the MCP server is read-only at the DB engine and has no enforcement tools. The triage agent (`python -m src.triage`, out of process) writes only the append-only `triage_annotations` table — never `alerts` workflow fields, never `mitigation_actions`. The Guardian and the human are the only actuators; keep it that way (`tests/test_triage.py::test_triage_package_has_no_actuation_paths`). See `doc/triage-agent.md`.
+
 ## Key design constraints
 
 - **SQLite does not support concurrent writers.** When running `main.py --api`, only one process writes; for multi-container Docker deployments use `DATABASE_URL=postgresql+asyncpg://...`.

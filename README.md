@@ -230,6 +230,18 @@ Register it with a client (use an **absolute** DB path so the working directory 
 
 See [`doc/mcp-server.md`](doc/mcp-server.md) for the full tool reference, security model, known limitations (the DNS log and threat-intel sets live in the detector's memory, so they are not reachable from a separate process) and the phase 2/3 roadmap.
 
+### Triage Agent — Phase 2 (optional)
+
+`python -m src.triage` is an out-of-process agent that annotates unacknowledged high-severity alerts with an **advisory** verdict (`likely_malicious` / `likely_benign` / `needs_human`), evidence, confidence and a recommendation for the analyst. It runs Claude through `claude -p` with structured output, **no built-in tools** and, in agent mode, only the read-only `cnds` MCP server. It writes one append-only table, `triage_annotations`; it never acknowledges, blocks, unblocks or suppresses. Deterministic guards override the model (confidence floor, no block recommendation without a Guardian action, Guardian whitelist), and a per-call and per-day spend cap bounds cost. `get_alert` shows the latest annotation as `agent_triage`, marked advisory.
+
+```bash
+ANTHROPIC_API_KEY=... python -m src.triage --once     # one pass (cron/Jenkins)
+python -m src.triage --dry-run                        # pipeline check, no model call
+python scripts/eval_triage.py                         # agreement with your [tp]/[fp] labels
+```
+
+See [`doc/triage-agent.md`](doc/triage-agent.md) for the design, threat model, guards and evaluation.
+
 ---
 
 ## Quick Start

@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- **Triage agent — MCP roadmap phase 2 (`src/triage/`, `python -m src.triage`)** — an out-of-process consumer that annotates unacknowledged alerts at or above `TRIAGE_MIN_SEVERITY` with an advisory verdict (`likely_malicious`/`likely_benign`/`needs_human`), confidence, evidence tagged by source, an analyst recommendation and optional ATT&CK ids. Two modes: `workflow` (CNDS assembles context through the sanitising MCP query layer; the model makes one call with no tools — the default) and `agent` (the model gets only the read-only `cnds` MCP tools). Backend is `claude -p` with `--json-schema`, `--tools ""`, `--permission-mode dontAsk`, `--max-turns`, `--max-budget-usd`, `--no-session-persistence`, and `--strict-mcp-config --allowedTools mcp__cnds` in agent mode; it runs in an empty temp directory.
+- **`triage_annotations` table** (Alembic `c3d8e1f4a7b2`) — append-only; the runner writes nothing else. Failed or schema-invalid answers are stored as `backend_error`/`invalid_output` with verdict `needs_human`, so failures are visible and not retried in a loop.
+- **Deterministic guards over the model** (`src/triage/policy.py`) — confidence floor → `needs_human`; no `confirm_block`/`undo_block` without a Guardian action on the alert; no `confirm_block` on a Guardian-whitelisted source; benign+block contradiction → escalate. `model_verdict` and `policy_notes` keep the raw opinion and what changed. Model text is scrubbed like attacker-influenced fields before it is stored.
+- **Spend control** — per-call `TRIAGE_MAX_USD_PER_ALERT`, rolling 24 h `TRIAGE_DAILY_BUDGET_USD`, `TRIAGE_BATCH_SIZE` per run.
+- **`get_alert` returns `agent_triage`** — the latest annotation, labelled advisory. The runner reads alerts with `include_triage=False` so a re-triage is not anchored on the previous model opinion.
+- **`scripts/eval_triage.py`** — agreement with analyst labels (`[tp]`/`[fp]` at the start of acknowledgement notes): coverage, deferral rate, precision/recall of `likely_malicious`, guard hit rate, mean cost and latency.
+- **`tests/test_triage.py`** — schema, guards, prompt wrapping, least-privilege CLI argv, CLI output parsing, runner selection/idempotence, failure recording, daily budget, MCP exposure, and an AST check that no triage module imports the Guardian, creates mitigation rows or assigns alert workflow fields.
+
 ## [1.3.0] - 2026-09-14
 
 ### Added

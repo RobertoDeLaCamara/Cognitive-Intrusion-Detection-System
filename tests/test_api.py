@@ -4,7 +4,7 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch
 from contextlib import asynccontextmanager
 
 from src.api.models import Base, Alert, SeverityLevel
@@ -423,3 +423,90 @@ async def test_list_alerts_date_range_composes(client, test_session):
 
     resp = await client.get("/api/alerts", params={"hours": 6, "severity": "low"})
     assert len(resp.json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_alerts_end_only_inclusive(client, test_session):
+    now, times = await _seed_three(test_session)
+    resp = await client.get("/api/alerts", params={"end": times["mid"].isoformat()})
+    assert resp.status_code == 200
+    assert {a["src_ip"] for a in resp.json()} == {"1.1.1.1", "2.2.2.2"}
+
+
+@pytest.mark.asyncio
+async def test_list_alerts_start_equals_end(client, test_session):
+    now, times = await _seed_three(test_session)
+    ts = times["mid"].isoformat()
+    resp = await client.get("/api/alerts", params={"start": ts, "end": ts})
+    assert resp.status_code == 200
+    assert {a["src_ip"] for a in resp.json()} == {"2.2.2.2"}
+
+
+@pytest.mark.asyncio
+async def test_list_alerts_range_empty_result(client, test_session):
+    from datetime import timedelta
+    now, _ = await _seed_three(test_session)
+    resp = await client.get("/api/alerts", params={
+        "start": (now - timedelta(hours=100)).isoformat(),
+        "end": (now - timedelta(hours=60)).isoformat()})
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_list_alerts_tz_aware_end_normalised(client, test_session):
+    from datetime import timedelta, timezone
+    now, times = await _seed_three(test_session)
+    end = (times["mid"].replace(tzinfo=timezone.utc)
+           .astimezone(timezone(timedelta(hours=-5))))
+    resp = await client.get("/api/alerts", params={"end": end.isoformat()})
+    assert resp.status_code == 200
+    assert {a["src_ip"] for a in resp.json()} == {"1.1.1.1", "2.2.2.2"}
+
+
+@pytest.mark.asyncio
+async def test_list_alerts_hours_invalid_values(client):
+    for bad in ("-1", "abc", "1.5"):
+        resp = await client.get("/api/alerts", params={"hours": bad})
+        assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_list_alerts_hours_composes_with_filters(client, test_session):
+    from datetime import timedelta
+    now = _now()
+    recent = now - timedelta(hours=2)
+    old = now - timedelta(hours=50)
+    await _add_alerts(test_session, [
+        (recent, "5.5.5.5", SeverityLevel.HIGH, False),   # match
+        (recent, "5.5.5.5", SeverityLevel.HIGH, True),    # acknowledged
+        (recent, "6.6.6.6", SeverityLevel.HIGH, False),   # wrong ip
+        (old, "5.5.5.5", SeverityLevel.HIGH, False),      # too old
+    ])
+    resp = await client.get("/api/alerts", params={
+        "hours": 24, "severity": "high", "acknowledged": "false",
+        "src_ip": "5.5.5.5"})
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
+
+
+@pytest.mark.asyncio
+async def test_list_alerts_hours_and_start_both_apply(client, test_session):
+    from datetime import timedelta
+    now, times = await _seed_three(test_session)
+    # hours=24 admits mid+new; start at T-6h narrows to new only
+    resp = await client.get("/api/alerts", params={
+        "hours": 24, "start": (now - timedelta(hours=6)).isoformat()})
+    assert resp.status_code == 200
+    assert {a["src_ip"] for a in resp.json()} == {"3.3.3.3"}
+
+
+@pytest.mark.asyncio
+async def test_list_alerts_date_range_with_pagination(client, test_session):
+    from datetime import timedelta
+    now, _ = await _seed_three(test_session)
+    params = {"start": (now - timedelta(hours=24)).isoformat(), "limit": 1}
+    first = await client.get("/api/alerts", params=params)
+    second = await client.get("/api/alerts", params={**params, "offset": 1})
+    assert [a["src_ip"] for a in first.json()] == ["3.3.3.3"]
+    assert [a["src_ip"] for a in second.json()] == ["2.2.2.2"]

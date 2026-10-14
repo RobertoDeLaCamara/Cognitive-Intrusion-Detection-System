@@ -56,8 +56,11 @@ class Dispatcher:
         self._payload_lock = threading.Lock()
         self._max_payload_entries = MAX_ACTIVE_FLOWS
 
-        # Track JA3 fingerprints per src_ip (LRU eviction)
-        self._ja3_hits: OrderedDict[str, dict] = OrderedDict()
+        # JA3 fingerprint per flow, forward direction only (LRU eviction).
+        # Keyed by flow for the same reason as _payload_hits: per src_ip, one
+        # TLS ClientHello was attached to whichever flow from that host expired
+        # next (e.g. a DNS query), and a later handshake overwrote an earlier one.
+        self._ja3_hits: OrderedDict[FlowKey, dict] = OrderedDict()
         self._ja3_lock = threading.Lock()
 
     def dispatch(self, packet) -> None:
@@ -66,7 +69,7 @@ class Dispatcher:
         flow_ref = self._flow_extractor.process_packet(packet)
 
         # 2. Host-level features
-        src_ip = self._host_extractor.process_packet(packet)
+        self._host_extractor.process_packet(packet)
 
         # 3. Payload analysis (cheap — pattern match only)
         matches = analyze_payload(packet)
@@ -76,13 +79,14 @@ class Dispatcher:
 
         # 5. JA3 fingerprinting
         ja3_result = extract_ja3(packet)
-        if ja3_result and src_ip:
+        if ja3_result and flow_ref is not None and flow_ref[1]:
+            flow_key = flow_ref[0]
             ja3_hash, ja3_str = ja3_result
             with self._ja3_lock:
-                if src_ip not in self._ja3_hits and len(self._ja3_hits) >= self._max_payload_entries:
+                if flow_key not in self._ja3_hits and len(self._ja3_hits) >= self._max_payload_entries:
                     self._ja3_hits.popitem(last=False)
-                self._ja3_hits[src_ip] = {"hash": ja3_hash, "string": ja3_str, "malicious": is_malicious_ja3(ja3_hash)}
-                self._ja3_hits.move_to_end(src_ip)
+                self._ja3_hits[flow_key] = {"hash": ja3_hash, "string": ja3_str, "malicious": is_malicious_ja3(ja3_hash)}
+                self._ja3_hits.move_to_end(flow_key)
 
         if matches and flow_ref is not None and flow_ref[1]:
             flow_key = flow_ref[0]
@@ -108,7 +112,7 @@ class Dispatcher:
             with self._payload_lock:
                 payload_matches = self._payload_hits.pop(record.key, [])
             with self._ja3_lock:
-                ja3_info = self._ja3_hits.pop(record.src_ip, None)
+                ja3_info = self._ja3_hits.pop(record.key, None)
             payload_features = extract_payload_features(record.fwd_payloads)
             try:
                 self._flow_callback(record, flow_vec, host_vec, payload_matches, payload_features, ja3_info)
@@ -122,7 +126,7 @@ class Dispatcher:
             with self._payload_lock:
                 payload_matches = self._payload_hits.pop(record.key, [])
             with self._ja3_lock:
-                ja3_info = self._ja3_hits.pop(record.src_ip, None)
+                ja3_info = self._ja3_hits.pop(record.key, None)
             payload_features = extract_payload_features(record.fwd_payloads)
             try:
                 self._flow_callback(record, flow_vec, host_vec, payload_matches, payload_features, ja3_info)

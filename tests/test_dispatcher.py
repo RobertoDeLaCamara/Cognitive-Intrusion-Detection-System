@@ -1,18 +1,19 @@
-"""Tests for Dispatcher payload-match attribution (issue #21)."""
+"""Tests for Dispatcher per-flow attribution of payload matches (#21) and JA3."""
 
-from scapy.all import IP, UDP, Raw
+from scapy.all import IP, TCP, UDP, Raw
 
+import src.capture.dispatcher as dispatcher_mod
 from src.capture.dispatcher import Dispatcher
 
 _ATTACK = b"host=x; cat /etc/passwd"
 
 
-def _flush(packets) -> dict:
-    """Dispatch *packets*, flush every flow, return {flow_key: payload_matches}."""
+def _flush(packets, field="payload") -> dict:
+    """Dispatch *packets*, flush every flow, return {flow_key: payload_matches or ja3_info}."""
     seen = {}
 
     def callback(record, flow_vec, host_vec, payload_matches, payload_features, ja3_info):
-        seen[record.key] = payload_matches
+        seen[record.key] = payload_matches if field == "payload" else ja3_info
 
     d = Dispatcher(flow_callback=callback)
     for pkt in packets:
@@ -44,3 +45,31 @@ def test_reverse_direction_match_not_attributed_to_initiator():
         ("10.0.0.5", "10.0.0.9", 40000, 8080, 17): [],
         ("10.0.0.9", "10.0.0.20", 50000, 53, 17): [],
     }
+
+
+def _fake_extract_ja3(packet):
+    """Treat any TCP packet with a Raw payload starting with b"HELLO" as a ClientHello."""
+    if TCP in packet and Raw in packet and packet[Raw].load.startswith(b"HELLO"):
+        return f"ja3-{packet[TCP].sport}", "771,4865"
+    return None
+
+
+def test_ja3_stays_on_its_own_flow(monkeypatch):
+    """A ClientHello in one flow must not be attached to another flow from the same src_ip."""
+    monkeypatch.setattr(dispatcher_mod, "extract_ja3", _fake_extract_ja3)
+    tls = IP(src="10.0.0.5", dst="10.0.0.9") / TCP(sport=41000, dport=443) / Raw(b"HELLO")
+    dns = IP(src="10.0.0.5", dst="10.0.0.53") / UDP(sport=41001, dport=53) / Raw(b"\x12\x34")
+    # DNS flow first: the old per-src_ip lookup gave it the TLS flow's fingerprint.
+    seen = _flush([dns, dns, tls, tls], field="ja3")
+    assert seen[("10.0.0.5", "10.0.0.53", 41001, 53, 17)] is None
+    assert seen[("10.0.0.5", "10.0.0.9", 41000, 443, 6)]["hash"] == "ja3-41000"
+
+
+def test_ja3_not_overwritten_by_later_handshake(monkeypatch):
+    """Two concurrent TLS flows from one host each keep their own fingerprint."""
+    monkeypatch.setattr(dispatcher_mod, "extract_ja3", _fake_extract_ja3)
+    a = IP(src="10.0.0.5", dst="10.0.0.9") / TCP(sport=42000, dport=443) / Raw(b"HELLO")
+    b = IP(src="10.0.0.5", dst="10.0.0.10") / TCP(sport=42001, dport=443) / Raw(b"HELLO")
+    seen = _flush([a, a, b, b], field="ja3")
+    assert seen[("10.0.0.5", "10.0.0.9", 42000, 443, 6)]["hash"] == "ja3-42000"
+    assert seen[("10.0.0.5", "10.0.0.10", 42001, 443, 6)]["hash"] == "ja3-42001"

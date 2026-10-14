@@ -290,10 +290,11 @@ class TestOnFlowComplete:
                         with patch.object(pipeline, "rules", rl):
                             with patch.object(pipeline, "ensemble", ens):
                                 with patch.object(pipeline, "_persist_alert") as mock_persist:
-                                    pipeline.on_flow_complete(flow, np.zeros(76), None, [], ja3_info=ja3)
+                                    pipeline.on_flow_complete(flow, np.zeros(76), None, ["xss"], ja3_info=ja3)
 
-        _, _, _, _, _, ja3_arg = mock_persist.call_args[0]
+        _, _, _, _, _, ja3_arg, payload_arg = mock_persist.call_args[0]
         assert ja3_arg == ja3
+        assert payload_arg == ["xss"]
 
     def test_benign_supervised_label_zeroes_score(self):
         """BENIGN supervised label must not raise the ensemble supervised score."""
@@ -361,3 +362,33 @@ class TestPersistAlert:
         assert item[0] is flow
         assert item[3] == "high"
         assert item[4] == ["rule1"]
+
+    def _write_and_read(self, flow, payload_matches):
+        """Run _write_alert against an in-memory SQLite DB and return the stored row."""
+        import src.pipeline as pipeline
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+        from src.api.models import Alert, Base
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        item = (flow, EngineScores(), _ens_result(), "high", ["payload:command_injection"], None, payload_matches)
+        with patch.object(pipeline, "_SessionLocal", Session):
+            pipeline._write_alert(item)
+        with Session() as s:
+            return s.query(Alert).one()
+
+    def test_write_alert_persists_payload_evidence(self):
+        """Issue #21: payload_matches, ports and protocol were never stored, so a
+        triggered payload:* rule could not be audited."""
+        row = self._write_and_read(_flow(), ["command_injection"])
+        assert row.payload_matches == ["command_injection"]
+        assert (row.src_port, row.dst_port, row.protocol) == (12345, 80, 6)
+
+    def test_write_alert_portless_flow(self):
+        flow = FlowRecord(key=("10.0.0.1", "224.0.0.1", 0, 0, 2))  # IGMP: no ports
+        row = self._write_and_read(flow, [])
+        assert (row.src_port, row.dst_port, row.protocol) == (None, None, 2)
+        assert row.payload_matches is None

@@ -97,6 +97,29 @@ def test_cmdi_random_binary_not_flagged():
     assert hits == 0
 
 
+@pytest.mark.parametrize("payload", [
+    b"id=1'; DROP TABLE users",
+    b"id=1';select * from users",
+    b"id=1'; exec xp_cmdshell 'dir'",
+    b"name=x'; SHUTDOWN WITH NOWAIT",
+])
+def test_sqli_statement_termination_detected(payload):
+    assert "sql_injection" in _matches(payload)
+
+
+def test_sqli_random_binary_not_flagged():
+    """Regression: the bare `';` alternative matched any quote+semicolon byte
+    pair (6.8% of random 4 KB binary payloads). With a fixed seed, at most
+    one of 500 random 4 KB payloads may still trip sql_injection via the
+    remaining short quote patterns (`'--`, `'='`)."""
+    rng = random.Random(21)
+    hits = sum(
+        "sql_injection" in _matches(bytes(rng.getrandbits(8) for _ in range(4096)))
+        for _ in range(500)
+    )
+    assert hits <= 1
+
+
 def test_multiple_payloads_aggregated():
     payloads = [
         b"GET /index.html HTTP/1.1",

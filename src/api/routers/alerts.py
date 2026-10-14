@@ -1,5 +1,6 @@
 """Alert and incident CRUD endpoints."""
 
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, desc, func, case
@@ -17,6 +18,13 @@ from ...timeutils import utcnow
 router = APIRouter(prefix="/api", tags=["alerts"])
 
 
+def _to_naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Normalise to naive UTC (naive input is assumed UTC)."""
+    if dt is not None and dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 @router.get("/alerts", response_model=List[AlertOut])
 async def list_alerts(
     limit: int = Query(50, le=500),
@@ -24,8 +32,19 @@ async def list_alerts(
     severity: Optional[str] = None,
     acknowledged: Optional[bool] = None,
     src_ip: Optional[str] = None,
+    start: Optional[datetime] = Query(
+        None, description="Inclusive lower bound (ISO 8601). Naive values are UTC."),
+    end: Optional[datetime] = Query(
+        None, description="Inclusive upper bound (ISO 8601). Naive values are UTC."),
+    hours: Optional[int] = Query(
+        None, ge=1, description="Only alerts from the last N hours."),
     db: AsyncSession = Depends(get_db),
 ):
+    start = _to_naive_utc(start)
+    end = _to_naive_utc(end)
+    if start is not None and end is not None and start > end:
+        raise HTTPException(status_code=422, detail="start must not be after end")
+
     q = select(Alert).order_by(desc(Alert.timestamp))
     if severity:
         q = q.where(Alert.severity == severity)
@@ -33,6 +52,12 @@ async def list_alerts(
         q = q.where(Alert.acknowledged == acknowledged)
     if src_ip:
         q = q.where(Alert.src_ip == src_ip)
+    if start is not None:
+        q = q.where(Alert.timestamp >= start)
+    if end is not None:
+        q = q.where(Alert.timestamp <= end)
+    if hours:
+        q = q.where(Alert.timestamp >= utcnow() - timedelta(hours=hours))
     q = q.offset(offset).limit(limit)
     result = await db.execute(q)
     return result.scalars().all()

@@ -84,6 +84,46 @@ def _init_db():
     _SessionLocal = sessionmaker(bind=_db_engine)
 
 
+def _write_alert(item) -> None:
+    _init_db()
+    from datetime import datetime, timezone
+    from .api.models import Alert
+    record, scores, result, severity, triggered, ja3_info, payload_matches = item
+    session = _SessionLocal()
+    try:
+        from .enrichment.geoip import lookup as geoip_lookup
+        from .enrichment.mitre import enrich as mitre_enrich
+        alert = Alert(
+            timestamp=datetime.now(timezone.utc),
+            src_ip=record.src_ip,
+            dst_ip=record.dst_ip,
+            src_port=record.key[2] or None,
+            dst_port=record.key[3] or None,
+            protocol=record.key[4],
+            attack_type=scores.attack_type,
+            severity=severity,
+            ensemble_score=result.score,
+            engine_scores={
+                "supervised": scores.supervised,
+                "isolation_forest": scores.isolation_forest,
+                "lstm": scores.lstm,
+                "rules": scores.rules,
+                **({"baseline": scores.baseline} if scores.baseline is not None else {}),
+            },
+            triggered_rules=triggered,
+            # Stored so a triggered payload:* rule can be audited (issue #21)
+            payload_matches=payload_matches or None,
+            src_geo=geoip_lookup(record.src_ip),
+            mitre_techniques=mitre_enrich(scores.attack_type, triggered),
+            ja3_hash=ja3_info["hash"] if ja3_info else None,
+            ja3_string=ja3_info["string"] if ja3_info else None,
+        )
+        session.add(alert)
+        session.commit()
+    finally:
+        session.close()
+
+
 def _writer_loop():
     while not _writer_stop.is_set():
         try:
@@ -91,38 +131,7 @@ def _writer_loop():
         except queue.Empty:
             continue
         try:
-            _init_db()
-            from datetime import datetime, timezone
-            from .api.models import Alert
-            record, scores, result, severity, triggered, ja3_info = item
-            session = _SessionLocal()
-            try:
-                from .enrichment.geoip import lookup as geoip_lookup
-                from .enrichment.mitre import enrich as mitre_enrich
-                alert = Alert(
-                    timestamp=datetime.now(timezone.utc),
-                    src_ip=record.src_ip,
-                    dst_ip=record.dst_ip,
-                    attack_type=scores.attack_type,
-                    severity=severity,
-                    ensemble_score=result.score,
-                    engine_scores={
-                        "supervised": scores.supervised,
-                        "isolation_forest": scores.isolation_forest,
-                        "lstm": scores.lstm,
-                        "rules": scores.rules,
-                        **({"baseline": scores.baseline} if scores.baseline is not None else {}),
-                    },
-                    triggered_rules=triggered,
-                    src_geo=geoip_lookup(record.src_ip),
-                    mitre_techniques=mitre_enrich(scores.attack_type, triggered),
-                    ja3_hash=ja3_info["hash"] if ja3_info else None,
-                    ja3_string=ja3_info["string"] if ja3_info else None,
-                )
-                session.add(alert)
-                session.commit()
-            finally:
-                session.close()
+            _write_alert(item)
         except Exception as e:
             logger.error("Failed to persist alert: %s", e)
         finally:
@@ -138,10 +147,10 @@ def _start_writer():
     _writer_thread.start()
 
 
-def _persist_alert(record, scores, result, severity, triggered, ja3_info=None):
+def _persist_alert(record, scores, result, severity, triggered, ja3_info=None, payload_matches=None):
     _start_writer()
     try:
-        _alert_queue.put_nowait((record, scores, result, severity, triggered, ja3_info))
+        _alert_queue.put_nowait((record, scores, result, severity, triggered, ja3_info, payload_matches))
     except queue.Full:
         logger.warning("Alert queue full — dropping alert for %s", record.src_ip)
 
@@ -288,4 +297,4 @@ def on_flow_complete(
             "active_engines": result.active_engines,
             "ja3_hash": ja3_info["hash"] if ja3_info else None,
         })
-        _persist_alert(record, scores, result, severity, triggered, ja3_info)
+        _persist_alert(record, scores, result, severity, triggered, ja3_info, payload_matches)

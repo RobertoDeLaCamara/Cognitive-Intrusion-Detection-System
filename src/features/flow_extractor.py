@@ -341,9 +341,10 @@ class FlowExtractor:
         # Min-heap of (last_time, flow_key) for efficient expiry
         self._expiry_heap: List[Tuple[float, FlowKey]] = []
 
-    def process_packet(self, packet) -> None:
+    def process_packet(self, packet) -> Optional[Tuple[FlowKey, bool]]:
+        """Add *packet* to its flow; return ``(flow_key, is_forward)``, or None if not IP."""
         if IP not in packet:
-            return
+            return None
         ip = packet[IP]
         src, dst = ip.src, ip.dst
         proto = ip.proto
@@ -363,6 +364,7 @@ class FlowExtractor:
                 self._flows[fwd_key].add_packet(packet, ts, True)
             elif rev_key in self._flows:
                 self._flows[rev_key].add_packet(packet, ts, False)
+                return rev_key, False
             else:
                 if len(self._flows) >= MAX_ACTIVE_FLOWS:
                     self._evict_oldest()
@@ -370,6 +372,7 @@ class FlowExtractor:
                 self._flows[fwd_key].add_packet(packet, ts, True)
                 import heapq
                 heapq.heappush(self._expiry_heap, (ts, fwd_key))
+        return fwd_key, True
 
     def collect_expired(self) -> List[Tuple[FlowRecord, np.ndarray]]:
         """Return (record, features) for flows that have timed out."""

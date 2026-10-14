@@ -15,7 +15,7 @@ import threading
 from collections import OrderedDict
 from typing import Callable, Optional
 
-from ..features.flow_extractor import FlowExtractor, FlowRecord
+from ..features.flow_extractor import FlowExtractor, FlowKey, FlowRecord
 from ..features.host_extractor import HostExtractor
 from ..features.payload_analyzer import analyze_payload, extract_payload_features
 from ..features.ja3 import extract_ja3, is_malicious_ja3
@@ -49,8 +49,10 @@ class Dispatcher:
         self._flusher: Optional[threading.Thread] = None
         self._stop = threading.Event()
 
-        # Track latest payload matches per src_ip (LRU eviction)
-        self._payload_hits: OrderedDict[str, list[str]] = OrderedDict()
+        # Payload matches per flow, forward direction only (LRU eviction).
+        # Keyed by flow rather than src_ip so a match in one flow can't be
+        # attributed to another flow from the same host (issue #21).
+        self._payload_hits: OrderedDict[FlowKey, list[str]] = OrderedDict()
         self._payload_lock = threading.Lock()
         self._max_payload_entries = MAX_ACTIVE_FLOWS
 
@@ -61,7 +63,7 @@ class Dispatcher:
     def dispatch(self, packet) -> None:
         """Process one packet through all pipelines."""
         # 1. Flow-level features
-        self._flow_extractor.process_packet(packet)
+        flow_ref = self._flow_extractor.process_packet(packet)
 
         # 2. Host-level features
         src_ip = self._host_extractor.process_packet(packet)
@@ -82,16 +84,17 @@ class Dispatcher:
                 self._ja3_hits[src_ip] = {"hash": ja3_hash, "string": ja3_str, "malicious": is_malicious_ja3(ja3_hash)}
                 self._ja3_hits.move_to_end(src_ip)
 
-        if matches and src_ip:
+        if matches and flow_ref is not None and flow_ref[1]:
+            flow_key = flow_ref[0]
             with self._payload_lock:
                 # LRU eviction: remove oldest entry when at capacity
-                if src_ip not in self._payload_hits and len(self._payload_hits) >= self._max_payload_entries:
+                if flow_key not in self._payload_hits and len(self._payload_hits) >= self._max_payload_entries:
                     self._payload_hits.popitem(last=False)
-                existing = self._payload_hits.get(src_ip, [])
-                # Keep last 20 unique matches per IP
+                existing = self._payload_hits.get(flow_key, [])
+                # Keep last 20 unique matches per flow
                 combined = list(set(existing + matches))[-20:]
-                self._payload_hits[src_ip] = combined
-                self._payload_hits.move_to_end(src_ip)
+                self._payload_hits[flow_key] = combined
+                self._payload_hits.move_to_end(flow_key)
 
     def _flush_loop(self) -> None:
         while not self._stop.is_set():
@@ -103,7 +106,7 @@ class Dispatcher:
         for record, flow_vec in expired:
             host_vec = self._host_extractor.extract_features(record.src_ip)
             with self._payload_lock:
-                payload_matches = self._payload_hits.pop(record.src_ip, [])
+                payload_matches = self._payload_hits.pop(record.key, [])
             with self._ja3_lock:
                 ja3_info = self._ja3_hits.pop(record.src_ip, None)
             payload_features = extract_payload_features(record.fwd_payloads)
@@ -117,7 +120,7 @@ class Dispatcher:
         for record, flow_vec in self._flow_extractor.collect_all():
             host_vec = self._host_extractor.extract_features(record.src_ip)
             with self._payload_lock:
-                payload_matches = self._payload_hits.pop(record.src_ip, [])
+                payload_matches = self._payload_hits.pop(record.key, [])
             with self._ja3_lock:
                 ja3_info = self._ja3_hits.pop(record.src_ip, None)
             payload_features = extract_payload_features(record.fwd_payloads)

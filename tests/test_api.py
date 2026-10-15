@@ -510,3 +510,38 @@ async def test_list_alerts_date_range_with_pagination(client, test_session):
     second = await client.get("/api/alerts", params={**params, "offset": 1})
     assert [a["src_ip"] for a in first.json()] == ["3.3.3.3"]
     assert [a["src_ip"] for a in second.json()] == ["2.2.2.2"]
+
+
+MAX_HOURS = 24 * 365 * 10
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/alerts", "/api/alerts/export"])
+@pytest.mark.parametrize("hours", [1_000_000_000, MAX_HOURS + 1])
+async def test_hours_above_upper_bound_is_422(client, path, hours):
+    resp = await client.get(path, params={"hours": hours})
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/alerts", "/api/alerts/export"])
+async def test_hours_at_upper_bound_is_ok(client, path):
+    resp = await client.get(path, params={"hours": MAX_HOURS})
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["/api/alerts", "/api/alerts/export"])
+async def test_hours_lower_bound_unchanged(client, path):
+    assert (await client.get(path, params={"hours": 0})).status_code == 422
+    assert (await client.get(path, params={"hours": 1})).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_hours_max_still_filters_normally(client, test_session):
+    await _seed_three(test_session)
+    resp = await client.get("/api/alerts", params={"hours": MAX_HOURS})
+    assert resp.status_code == 200
+    assert len(resp.json()) == 3
+    resp = await client.get("/api/alerts/export", params={"hours": MAX_HOURS})
+    assert resp.status_code == 200

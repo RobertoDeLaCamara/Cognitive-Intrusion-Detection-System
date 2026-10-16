@@ -163,11 +163,14 @@ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///./cnds.db")
 # ── API ────────────────────────────────────────────────────────────────────────
 API_HOST = os.getenv("API_HOST", "0.0.0.0")
 API_PORT = int(os.getenv("API_PORT", "8000"))
-API_KEY  = os.getenv("API_KEY", "")   # empty = no auth
+API_KEY  = os.getenv("API_KEY", "")   # empty requires JWT_SECRET or AUTH_DISABLED=true
+# Explicit opt-out: only the literal "true" (any case) lets the API start with
+# no API_KEY/JWT_SECRET. Anything else fails closed. Lab/local use only.
+AUTH_DISABLED = os.getenv("AUTH_DISABLED", "false").strip().lower() == "true"
 CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 
 # ── JWT Auth (Phase 7) ────────────────────────────────────────────────────────
-JWT_SECRET    = os.getenv("JWT_SECRET", "")       # empty = JWT disabled
+JWT_SECRET    = os.getenv("JWT_SECRET", "")       # empty = JWT off (then API_KEY or AUTH_DISABLED=true required)
 JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
 

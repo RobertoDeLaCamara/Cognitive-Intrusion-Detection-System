@@ -75,6 +75,8 @@ services:
       DATABASE_URL: postgresql+asyncpg://cnds:${POSTGRES_PASSWORD:-sandbox_secret}@postgres:5432/cnds
       # API runs Guardian — needs to reach AdGuard via backend network
       ADGUARD_URL: http://adguard:3000
+      # The sandbox runs unauthenticated on purpose
+      AUTH_DISABLED: "true"
     networks:
       - backend
     ports:

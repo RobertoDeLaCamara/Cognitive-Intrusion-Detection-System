@@ -481,7 +481,8 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `DATABASE_URL` | `sqlite+aiosqlite:///./cnds.db` | SQLite or PostgreSQL URL |
 | `API_HOST` | `0.0.0.0` | API bind address |
 | `API_PORT` | `8000` | API listen port |
-| `API_KEY` | _(empty)_ | Bearer token; leave empty to disable auth |
+| `API_KEY` | _(empty)_ | API key (`X-API-Key`); the API refuses to start if neither this nor `JWT_SECRET` is set, unless `AUTH_DISABLED=true` |
+| `AUTH_DISABLED` | `false` | Only `true` runs the API without auth (logs a warning); lab/local use only |
 | `CORS_ORIGINS` | _(empty)_ | Comma-separated allowed origins; defaults to `http://localhost:3000` |
 | `ATTACK_TYPE_WEIGHTS` | `{}` | JSON: per-attack-type engine weight overrides |
 | `CALIBRATION_TEMPERATURE` | `1.0` | Platt scaling temperature (>1 softer, <1 sharper) |
@@ -490,7 +491,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `AWS_ACCESS_KEY_ID` | — | S3-compatible storage access key for ML Tracking artifact store |
 | `AWS_SECRET_ACCESS_KEY` | — | S3-compatible storage secret key for ML Tracking artifact store |
 | `ML Tracking_S3_ENDPOINT_URL` | `http://[BACKUP_SERVER_IP]:9000` | S3-compatible storage S3 endpoint for ML Tracking artifacts |
-| `JWT_SECRET` | _(empty)_ | JWT signing secret; empty disables JWT auth |
+| `JWT_SECRET` | _(empty)_ | JWT signing secret; if empty, `API_KEY` or `AUTH_DISABLED=true` is required |
 | `JWT_ALGORITHM` | `HS256` | JWT signing algorithm |
 | `JWT_EXPIRE_MINUTES` | `60` | JWT token expiry (minutes) |
 | `Monitoring Service_ENABLED` | `false` | Enable Monitoring Service metrics at `/metrics` |

@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+- **BREAKING: the API refuses to start without authentication** — if neither `API_KEY` nor `JWT_SECRET` is set, importing `src.api.main` exits non-zero unless `AUTH_DISABLED=true` (only the literal `true`; logs a warning). The sandbox opts in explicitly; set `JWT_SECRET` or `API_KEY` in `.env` before redeploying (cnds#20).
+
 ### Added
 - **Triage agent — MCP roadmap phase 2 (`src/triage/`, `python -m src.triage`)** — an out-of-process consumer that annotates unacknowledged alerts at or above `TRIAGE_MIN_SEVERITY` with an advisory verdict (`likely_malicious`/`likely_benign`/`needs_human`), confidence, evidence tagged by source, an analyst recommendation and optional ATT&CK ids. Two modes: `workflow` (CNDS assembles context through the sanitising MCP query layer; the model makes one call with no tools — the default) and `agent` (the model gets only the read-only `cnds` MCP tools). Backend is `claude -p` with `--json-schema`, `--tools ""`, `--permission-mode dontAsk`, `--max-turns`, `--max-budget-usd`, `--no-session-persistence`, and `--strict-mcp-config --allowedTools mcp__cnds` in agent mode; it runs in an empty temp directory.
 - **`triage_annotations` table** (Alembic `c3d8e1f4a7b2`) — append-only; the runner writes nothing else. Failed or schema-invalid answers are stored as `backend_error`/`invalid_output` with verdict `needs_human`, so failures are visible and not retried in a loop.

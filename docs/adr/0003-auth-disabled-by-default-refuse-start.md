@@ -1,6 +1,6 @@
 # 0003. Refuse to start the API unless an auth mode is configured
 
-- Status: **Proposed**
+- Status: **Accepted**
 - Date: 2026-10-16
 - Issue: cnds#20 (CWE-306, OWASP A07)
 

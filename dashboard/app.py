@@ -4,31 +4,42 @@ Features Pydeck Interactive Map with Tooltips and Incident Reports.
 """
 
 import os
-import requests
 import streamlit as st
 import pandas as pd
 import pydeck as pdk
 from datetime import datetime
 
+try:
+    from api_client import ApiClient          # `streamlit run dashboard/app.py`
+except ImportError:                           # imported as a package
+    from dashboard.api_client import ApiClient
+
 API_URL = os.getenv("CNDS_API_URL", "http://localhost:8000")
+
+
+@st.cache_resource
+def get_api() -> ApiClient:
+    """One client for the session: keeps the JWT between Streamlit reruns."""
+    return ApiClient.from_env(API_URL)
+
 
 st.set_page_config(page_title="CNDS Intelligence Command Centre", layout="wide", page_icon="🕵️")
 st.title("🛡️ CNDS: Intelligence Command Centre (v5.0)")
 
 @st.cache_data(ttl=5)
 def fetch_stats():
-    try: return requests.get(f"{API_URL}/api/stats", timeout=5).json()
-    except: return None
+    try: return get_api().get("/api/stats").json()
+    except Exception: return None
 
 @st.cache_data(ttl=5)
 def fetch_alerts(limit=500):
-    try: return requests.get(f"{API_URL}/api/alerts", params={"limit": limit}, timeout=5).json()
-    except: return []
+    try: return get_api().get("/api/alerts", params={"limit": limit}).json()
+    except Exception: return []
 
 @st.cache_data(ttl=30)
 def fetch_trends(hours=24):
-    try: return requests.get(f"{API_URL}/api/alerts/trends", params={"hours": hours}, timeout=5).json()
-    except: return None
+    try: return get_api().get("/api/alerts/trends", params={"hours": hours}).json()
+    except Exception: return None
 
 # ── Header Stats ──────────────────────────────────────────────────────────────
 stats = fetch_stats()
@@ -59,7 +70,10 @@ with tab1:
         if not edited.equals(df[["id", "timestamp", "src_ip", "attack_type", "severity", "acknowledged"]]):
             for i in range(len(edited)):
                 if edited.iloc[i]["acknowledged"] != df.iloc[i]["acknowledged"]:
-                    requests.patch(f"{API_URL}/api/alerts/{int(edited.iloc[i]['id'])}", json={"acknowledged": bool(edited.iloc[i]['acknowledged'])})
+                    resp = get_api().patch(f"/api/alerts/{int(edited.iloc[i]['id'])}", json={"acknowledged": bool(edited.iloc[i]['acknowledged'])})
+                    if resp.status_code in (401, 403):
+                        st.error("The dashboard account cannot acknowledge alerts (needs the analyst or admin role).")
+                        break
                     st.rerun()
     else: st.info("No hay alertas.")
 

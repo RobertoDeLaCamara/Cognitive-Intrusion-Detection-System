@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 import numpy as np
 
+from ..auth import require_role
 from ..database import get_db
 from ..models import Alert, SeverityLevel
 from ..schemas import PredictRequest, PredictResponse, EngineScoresOut
@@ -33,7 +34,10 @@ _api_dedup: dict = {}
 _api_dedup_lock = asyncio.Lock()
 
 
-@router.post("/predict", response_model=PredictResponse)
+# /predict creates alerts and can trigger Guardian actions, so it needs a write role
+# when JWT auth is enabled (a no-op otherwise).
+@router.post("/predict", response_model=PredictResponse,
+             dependencies=[Depends(require_role("admin", "analyst"))])
 async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
     # Allowlist: skip detection entirely
     if is_allowlisted(body.src_ip):

@@ -515,6 +515,8 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `JWT_SECRET` | _(empty)_ | JWT signing secret; if empty, `API_KEY` or `AUTH_DISABLED=true` is required |
 | `JWT_ALGORITHM` | `HS256` | JWT signing algorithm |
 | `JWT_EXPIRE_MINUTES` | `60` | JWT token expiry (minutes) |
+| `CNDS_API_KEY` | _(empty)_ | Dashboard only: API key it sends as `X-API-Key` (compose passes `API_KEY`) |
+| `CNDS_API_USER` / `CNDS_API_PASSWORD` | _(empty)_ | Dashboard only: account it logs in with when JWT is enabled; needs the `analyst` or `admin` role to acknowledge alerts, `viewer` is enough to read |
 | `PROMETHEUS_ENABLED` | `false` | Enable Prometheus metrics at `/metrics` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | _(empty)_ | OpenTelemetry OTLP endpoint |
 | `GEOIP_DB_PATH` | _(empty)_ | Path to GeoLite2-City.mmdb; empty disables GeoIP |

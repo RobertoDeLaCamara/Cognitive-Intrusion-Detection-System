@@ -67,6 +67,6 @@ models/                          weights gitignored (bundled: rf_lite_model.jobl
 - SQLite does not support concurrent writers — use `DATABASE_URL=postgresql+asyncpg://...` in production.
 - Live capture requires `root` or `CAP_NET_RAW`.
 - Engine weights (all five, including `WEIGHT_BASELINE`) must sum to 1.0 ± 0.01; validation fails at import if misconfigured.
-- The API refuses to start without `API_KEY`, `JWT_SECRET` or `AUTH_DISABLED=true`. `JWT_SECRET` protects only the routes that declare a role; see [API Reference](API-Reference.md#authentication).
+- The API refuses to start without `API_KEY`, `JWT_SECRET` or `AUTH_DISABLED=true`. `JWT_SECRET` enforces roles on every route except `/health`, `/metrics` and `/api/auth/token`; see [API Reference](API-Reference.md#authentication).
 - Trusted-outbound filtering skips detection for configured device→domain pairs entirely (DNS reverse lookup, 1h TTL cache).
 - The optional Guardian module (`src/guardian/`, `GUARDIAN_ENABLED=false` by default) can auto-block critical alerts — but never put a broad LAN CIDR in `GUARDIAN_WHITELIST`, since that's exactly the range the detector monitors and would silently disable every auto-block.

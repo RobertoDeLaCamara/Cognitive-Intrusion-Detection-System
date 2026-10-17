@@ -35,7 +35,7 @@ Base URL: `http://localhost:8000`
 Authentication is required: the API refuses to start unless `API_KEY` or `JWT_SECRET` is set, or `AUTH_DISABLED=true` (lab use only). Two independent mechanisms exist:
 
 - `API_KEY` — static key sent as `X-API-Key`; checked on every HTTP route except `/health`, `/docs`, `/openapi.json`, `/metrics` and `/api/auth/*` (`/ws/alerts` authenticates inside its own handler).
-- `JWT_SECRET` — enables Bearer tokens, but **only the routes that declare a role** are protected (see the role list below); other read routes such as `GET /api/alerts` and `GET /api/stats` stay open unless `API_KEY` is also set.
+- `JWT_SECRET` — enables Bearer tokens with roles on every route except `/health`, `/metrics` and `/api/auth/token` (see the role list below).
 
 ### Get a token
 
@@ -66,8 +66,8 @@ Connections without a token are closed with code 4001, invalid/expired tokens wi
 ### RBAC Roles
 
 - `admin` — everything below plus user management and suppression-rule deletion
-- `analyst` — export alerts, create incidents, create suppression rules, read baseline status
-- `viewer` — read `/api/baseline/*` (the other read routes need no role)
+- `analyst` — everything `viewer` can do, plus acknowledge alerts (`PATCH /api/alerts/{id}`), `POST /api/predict`, export, create incidents and suppression rules
+- `viewer` — read-only: alerts, incidents, stats, suppression rules, adaptive weights, DNS log and `/api/baseline/*`
 
 ## Usage Examples
 

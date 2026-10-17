@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 import ipaddress
 
 
@@ -126,6 +126,17 @@ class SuppressionRuleCreate(BaseModel):
     min_severity: Optional[str] = Field(None, description="Suppress alerts at or below this severity level")
     reason: Optional[str] = None
     duration_minutes: int = Field(120, ge=1, le=10080, description="Duration in minutes (max 7 days)")
+
+    @model_validator(mode="after")
+    def _require_a_condition(self):
+        """A rule with no condition matches every alert, i.e. silences the whole system."""
+        conditions = (self.src_ip, self.dst_ip, self.attack_type, self.min_severity)
+        if not any(c and c.strip() for c in conditions):
+            raise ValueError(
+                "a suppression rule needs at least one condition: "
+                "src_ip, dst_ip, attack_type or min_severity"
+            )
+        return self
 
 
 class SuppressionRuleOut(BaseModel):

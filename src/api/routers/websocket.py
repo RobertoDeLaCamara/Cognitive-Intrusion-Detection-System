@@ -2,11 +2,12 @@
 
 Authentication follows what the deployment configures:
 
-* JWT (``JWT_SECRET``): connect with ``?token=<JWT>``.
-* API key (``API_KEY``): connect with the ``X-API-Key`` header, or ``?key=<API_KEY>``
-  for clients that cannot set headers (browsers). Query strings end up in proxy
-  logs, so prefer the header where possible.
-* Both configured: either credential is accepted.
+* JWT (``JWT_SECRET``): connect with ``?token=<JWT>``. When JWT is enabled it is
+  the only accepted credential, even if ``API_KEY`` is also set: the REST layer
+  enforces roles from the JWT, and the legacy key must not be a way around them.
+* API key only (``API_KEY``, no JWT): connect with the ``X-API-Key`` header, or
+  ``?key=<API_KEY>`` for clients that cannot set headers (browsers). Query strings
+  end up in proxy logs, so prefer the header where possible.
 * Neither (``AUTH_DISABLED=true``): open.
 
 The HTTP API-key middleware does not run for WebSocket connections, so this
@@ -51,24 +52,24 @@ async def broadcast_alert(alert_data: dict) -> None:
 
 def _authorize(token: Optional[str], key: Optional[str]) -> Optional[Tuple[int, str]]:
     """Return None when the connection is allowed, else (close_code, reason)."""
-    jwt_on = jwt_enabled()
-    key_on = bool(API_KEY)
-    if not jwt_on and not key_on:
-        return None  # authentication is disabled (AUTH_DISABLED=true)
-
-    if key_on and key and hmac.compare_digest(key.encode(), API_KEY.encode()):
-        return None
-
-    if jwt_on and token:
+    if jwt_enabled():
+        # JWT supersedes the legacy API key (see the module docstring).
+        if not token:
+            return 4001, "Missing token"
         try:
             decode_token(token)
             return None
         except Exception:
             return 4003, "Invalid or expired token"
 
-    if key_on and key:
+    if API_KEY:
+        if not key:
+            return 4001, "Missing API key"
+        if hmac.compare_digest(key.encode(), API_KEY.encode()):
+            return None
         return 4003, "Invalid API key"
-    return 4001, ("Missing token" if jwt_on and not key_on else "Missing credentials")
+
+    return None  # authentication is disabled (AUTH_DISABLED=true)
 
 
 @router.websocket("/ws/alerts")
@@ -79,8 +80,8 @@ async def alerts_ws(
 ):
     """WebSocket endpoint — clients receive real-time alert JSON messages.
 
-    Requires a JWT (?token=) and/or the API key (X-API-Key header or ?key=),
-    depending on what the deployment configures. Max concurrent connections: 100.
+    Requires a JWT (?token=) when JWT is enabled, otherwise the API key
+    (X-API-Key header or ?key=) when one is configured. Max concurrent connections: 100.
     """
     denied = _authorize(token, websocket.headers.get("x-api-key") or key)
     if denied:

@@ -83,14 +83,20 @@ def test_jwt_mode_does_not_accept_an_api_key(monkeypatch):
     assert denied_code(c, f"/ws/alerts?key={KEY}") == 4001
 
 
-# --- both configured: either credential works ---------------------------------
+# --- both configured: the JWT decides, the legacy key is no way around it ------
 
-def test_both_modes_accept_either_credential(monkeypatch):
+def test_both_configured_requires_the_jwt(monkeypatch):
     c = make_client(monkeypatch, api_key=KEY, jwt=True, valid_tokens=("good",))
     assert connects(c, "/ws/alerts?token=good")
-    assert connects(c, "/ws/alerts", headers={"X-API-Key": KEY})
     assert denied_code(c, "/ws/alerts") == 4001
     assert denied_code(c, "/ws/alerts?token=bad") == 4003
+
+
+def test_both_configured_does_not_let_the_key_bypass_the_jwt(monkeypatch):
+    """REST enforces JWT roles in this mode; the stream must not be weaker."""
+    c = make_client(monkeypatch, api_key=KEY, jwt=True, valid_tokens=("good",))
+    assert denied_code(c, "/ws/alerts", headers={"X-API-Key": KEY}) == 4001
+    assert denied_code(c, f"/ws/alerts?key={KEY}") == 4001
 
 
 # --- auth disabled -------------------------------------------------------------

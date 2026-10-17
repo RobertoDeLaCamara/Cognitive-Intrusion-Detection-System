@@ -545,3 +545,50 @@ async def test_hours_max_still_filters_normally(client, test_session):
     assert len(resp.json()) == 3
     resp = await client.get("/api/alerts/export", params={"hours": MAX_HOURS})
     assert resp.status_code == 200
+
+
+# ── CSV export: formula-injection hardening (cnds#28) ─────────────────────────
+
+@pytest.mark.parametrize("value, expected", [
+    ("=cmd|' /C calc'!A0", "'=cmd|' /C calc'!A0"),
+    ("+SUM(1+1)", "'+SUM(1+1)"),
+    ("-2+3", "'-2+3"),
+    ("@SUM(A1)", "'@SUM(A1)"),
+    ("\t=1+1", "'\t=1+1"),
+    ("\r=1+1", "'\r=1+1"),
+    ("Port Scan", "Port Scan"),
+    ("10.0.0.2", "10.0.0.2"),
+    ("::1", "::1"),
+    ("", ""),
+    (None, None),
+    (0.75, 0.75),
+    (-3, -3),          # negative numbers are numbers, not text: left alone
+    (True, True),
+])
+def test_csv_safe(value, expected):
+    from src.api.routers.alerts import _csv_safe
+    assert _csv_safe(value) == expected
+
+
+@pytest.mark.asyncio
+async def test_export_csv_neutralises_formulas_in_text_fields(client, test_session):
+    import csv
+    import io
+    from datetime import datetime, timezone
+    test_session.add(Alert(
+        timestamp=datetime.now(timezone.utc),
+        src_ip="10.0.0.9",
+        attack_type="=HYPERLINK(\"http://evil.example\",\"x\")",
+        triggered_rules=["@rule", "ok"],
+        severity=SeverityLevel.HIGH,
+    ))
+    await test_session.commit()
+
+    resp = await client.get("/api/alerts/export?format=csv")
+    assert resp.status_code == 200
+    rows = list(csv.DictReader(io.StringIO(resp.text)))
+    assert len(rows) == 1
+    assert rows[0]["attack_type"].startswith("'=HYPERLINK(")
+    # the join is "@rule;ok": the cell as a whole starts with '@', so it is quoted
+    assert rows[0]["triggered_rules"] == "'@rule;ok"
+    assert rows[0]["src_ip"] == "10.0.0.9"

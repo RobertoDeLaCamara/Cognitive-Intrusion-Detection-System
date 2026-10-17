@@ -20,6 +20,19 @@ router = APIRouter(prefix="/api", tags=["alerts"])
 # Upper bound for `hours` filters (10 years); larger values overflow timedelta/datetime.
 MAX_HOURS = 24 * 365 * 10
 
+# Spreadsheets run cells that start with these characters as formulas (CWE-1236).
+_CSV_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _csv_safe(value):
+    """Neutralise CSV/formula injection: prefix a quote to text a spreadsheet would execute.
+
+    Only strings are touched; numbers and booleans pass through unchanged.
+    """
+    if isinstance(value, str) and value.startswith(_CSV_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
 
 def _to_naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
     """Normalise to naive UTC (naive input is assumed UTC)."""
@@ -102,12 +115,12 @@ async def export_alerts(
                          "protocol", "attack_type", "severity", "ensemble_score",
                          "triggered_rules", "acknowledged"])
         for a in alerts:
-            writer.writerow([
+            writer.writerow([_csv_safe(cell) for cell in [
                 a.id, a.timestamp.isoformat() if a.timestamp else "",
                 a.src_ip, a.dst_ip, a.src_port, a.dst_port, a.protocol,
                 a.attack_type, a.severity.value if a.severity else "",
                 a.ensemble_score, ";".join(a.triggered_rules or []), a.acknowledged,
-            ])
+            ]])
         output.seek(0)
         return StreamingResponse(
             iter([output.getvalue()]),

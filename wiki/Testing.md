@@ -30,6 +30,16 @@ pytest tests/test_flow_extractor.py -v
 | `test_payload_features.py` | Payload pattern matching and numeric features |
 | `test_rules_engine.py` | Rule-based engine triggers |
 | `test_siem.py` | CEF syslog forwarder |
+| `test_pipeline.py`, `test_predict.py`, `test_dispatcher.py` | Capture pipeline callback, `/api/predict`, dispatcher |
+| `test_correlation.py`, `test_suppression.py`, `test_ip_lists.py`, `test_threat_intel.py` | Incident correlation, suppression rules, IP lists, threat-intel feeds |
+| `test_guardian.py` | Guardian: AdGuard backend, whitelist, circuit breaker |
+| `test_mcp_server.py` | Read-only MCP server (queries, sanitisation, read-only guarantees) |
+| `test_triage.py` | Triage agent schema, guards, runner |
+| `test_ft_transformer_engine.py` | FT-Transformer engine (skipped without `torch`) |
+| `test_timeutils.py` | Naive-UTC invariant for `DateTime` columns |
+| `engines/test_baseline_engine.py`, `unsupervised/` | Baseline engine, collector/trigger, window stability (`slow`, needs `torch`) |
+
+`pytest --collect-only -q` reports the current count (about 580 tests without `torch`; it changes with every PR, so it is not pinned here).
 
 ## Shared Fixtures
 
@@ -41,7 +51,7 @@ pytest tests/test_flow_extractor.py -v
 ## Writing New Tests
 
 - All new code should include tests
-- Use `pytest-asyncio` for async test functions
+- `pytest.ini` sets `asyncio_mode = auto`, so async tests need no marker (`pytest-asyncio`)
 - Use `pytest-mock` for mocking external dependencies
 - Aim to maintain or improve coverage
-- For integration tests, ensure Docker Compose services are running
+- The suite uses an in-memory SQLite database and needs no running services

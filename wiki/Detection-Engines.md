@@ -1,6 +1,6 @@
 # Detection Engines
 
-CNDS runs four detection engines in parallel. Each engine receives different feature inputs and specialises in different attack categories.
+CNDS scores every expired flow with up to five engines (supervised, Isolation Forest, LSTM Autoencoder, rules, live baseline), plus external threat-intelligence lookups that boost the score. Each engine receives different feature inputs and specialises in different attack categories.
 
 ## Engine Summary
 
@@ -10,7 +10,9 @@ CNDS runs four detection engines in parallel. Each engine receives different fea
 | Supervised (fallback) | 76 CICFlowMeter flow features (+ 10 payload features if retrained) | Random Forest (sklearn Pipeline) | Same 10 classes, used only when no FT-T checkpoint is present |
 | Isolation Forest | 18 per-IP host features | IsolationForest + StandardScaler | Novel / zero-day volumetric anomalies |
 | LSTM Autoencoder | 18-feature time-series per IP | PyTorch sequence autoencoder | Slow attacks, temporal behaviour drift |
-| Rules | Flow metadata + payload bytes + JA3 hashes | Threshold rules | ICMP floods, SYN scans, SQLi, XSS, LFI, large payloads, asymmetric upload, malicious TLS fingerprints |
+| Rules | Flow metadata + payload bytes + JA3 hashes | Threshold + signature rules | ICMP floods, SYN scans, SQLi, XSS, command injection, path traversal, Log4Shell, Shellshock, large payloads, asymmetric upload, malicious TLS fingerprints |
+| Baseline | 18 per-IP host features | IsolationForest + LSTM Autoencoder trained on this network's own traffic (`src/engines/baseline_engine.py`, loaded from MLflow) | Deviation from the locally learned normal; inactive until a baseline window has been trained |
+| Threat intelligence | Source/destination IP, JA3 hash | AbuseIPDB / JA3 list / MISP sets (`src/enrichment/threat_intel.py`) | Not a scored engine: a hit adds +0.30 to the ensemble score |
 
 ## Engine Protocol
 
@@ -59,32 +61,30 @@ to Random Forest.
 - **File:** `src/engines/isolation_forest.py`
 - **Models:** `models/isolation_forest.joblib` + `models/if_scaler.joblib`
 - **Input:** 18 per-IP host features (packet rate, byte rate, port entropy, protocol distribution, etc.).
-- **Output:** novelty score (higher = more anomalous).
+- **Output:** novelty score in [0, 1] (`1 / (1 + exp(5 * decision_function))`; higher = more anomalous).
 - **Detects:** Zero-day volumetric anomalies, unusual traffic patterns that don't match any known attack signature.
 
 ## LSTM Autoencoder
 
 - **File:** `src/engines/lstm_autoencoder.py`
 - **Models:** `models/lstm_autoencoder.pt` + `models/lstm_config.json`
-- **Input:** Time-series of 18 host features per IP, buffered over a sliding window.
-- **Output:** Reconstruction error as anomaly score.
+- **Input:** Time-series of 18 host features per IP, buffered over a sliding window of `sequence_length` vectors (20 in the bundled `lstm_config.json`).
+- **Output:** Reconstruction MSE divided by the stored threshold, capped at 1.0; `0.0` until the per-IP buffer is full.
 - **Detects:** Slow/low attacks, gradual behaviour drift, C2 beaconing, and other temporal anomalies that single-snapshot engines miss.
 
 ## Rules Engine
 
 - **File:** `src/engines/rules.py`
 - **Input:** Flow metadata, raw payload bytes, JA3 hashes.
-- **Output:** List of triggered rule names + a combined score.
+- **Output:** List of triggered rule names + a score that is `1.0` if any rule fired, else `0.0`.
 - **Rules include:**
-  - `icmp_flood` — ICMP packet count exceeds `ICMP_FLOOD_THRESHOLD`
-  - `syn_scan` — SYN packet count exceeds `PORT_SCAN_THRESHOLD`
-  - `large_payload` — forward payload exceeds `LARGE_PAYLOAD_BYTES`
-  - `asymmetric_upload` — forward/backward byte ratio anomaly
-  - `rate_spike` — packet rate exceeds `RATE_SPIKE_MULTIPLIER` × baseline
-  - `sqli` — SQL injection patterns in payload
-  - `xss` — cross-site scripting patterns in payload
-  - `lfi` — local file inclusion patterns in payload
-  - `malicious_ja3` — JA3 hash matches known-malicious list
+  - `icmp_flood` — more than `ICMP_FLOOD_THRESHOLD` forward ICMP packets in the flow
+  - `syn_scan` — SYN flag count above `PORT_SCAN_THRESHOLD` with fewer than 5 forward packets
+  - `large_payload` — a forward packet larger than `LARGE_PAYLOAD_BYTES`
+  - `asymmetric_upload` — more than 10 forward packets and a forward/backward byte ratio above 50
+  - `payload:sql_injection`, `payload:xss`, `payload:command_injection`, `payload:path_traversal`, `payload:log4j`, `payload:shellshock` — regex signatures matched on the first 4 KB of each packet
+  - `malicious_ja3` — JA3 hash matches the known-malicious list
+- The rules marked in `CRITICAL_RULES` (all six `payload:*` rules and `malicious_ja3` by default) force an alert regardless of the weighted blend. There is no rate-spike rule.
 
 ## Graceful Degradation
 

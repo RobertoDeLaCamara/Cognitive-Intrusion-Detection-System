@@ -50,7 +50,7 @@ CNDS is structured as a linear pipeline: capture → feature extraction → dete
 │                                                                     │
 │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │
 │  │ Supervised       │  │ Isolation Forest │  │ LSTM Autoencoder │  │
-│  │ weight: 40%      │  │ weight: 30%      │  │ weight: 20%      │  │
+│  │ weight: 30%      │  │ weight: 20%      │  │ weight: 10%      │  │
 │  │ 76 flow features │  │ 18 host features │  │ 20-step seq/IP   │  │
 │  │ 10 attack types  │  │ anomaly score    │  │ reconstruction   │  │
 │  │ FT-T preferred / │  │                  │  │                  │  │
@@ -61,7 +61,7 @@ CNDS is structured as a linear pipeline: capture → feature extraction → dete
 │           │            │            ┌─────────────────┘            │
 │           │            │            │  ┌──────────────────┐        │
 │           │            │            │  │ Rules Engine     │        │
-│           │            │            │  │ weight: 10%      │        │
+│           │            │            │  │ weight: 25%      │        │
 │           │            │            │  │ 6 heuristic rules│        │
 │           │            │            │  └────────┬─────────┘        │
 └───────────┼────────────┼────────────┼───────────┼──────────────────┘
@@ -260,17 +260,18 @@ triggered_rules: list[str]   # from rules engine
 #### Scoring Algorithm
 
 1. **Collect available scores**: Engines that return `is_available=False` are excluded.
-2. **Dynamic weight redistribution**: Base weights `{supervised: 0.40, iforest: 0.30, lstm: 0.20, rules: 0.10}` are re-normalized across available engines only.
+2. **Dynamic weight redistribution**: Base weights `{supervised: 0.30, iforest: 0.20, lstm: 0.10, rules: 0.25, baseline: 0.15}` (defaults in `src/config.py`) are re-normalized across available engines only.
 3. **Per-attack-type overrides**: If `ATTACK_TYPE_WEIGHTS` env var contains a JSON mapping for the detected attack type, those weights replace the base weights.
 4. **Weighted average**: `raw_score = Σ(weight_i × score_i) / Σ(weight_i)`.
 5. **Temperature scaling**: `calibrated = sigmoid(logit(raw_score) / CALIBRATION_TEMPERATURE)`. Default temperature = 1.0 (no-op).
 6. **Threshold gate**: If `calibrated_score >= ENSEMBLE_THRESHOLD` (default 0.55), `is_anomaly = True`.
 7. **Severity mapping**:
-   - `< 0.55` → not an alert
-   - `0.55 – 0.70` → `low`
-   - `0.70 – 0.80` → `medium`
-   - `0.80 – 0.90` → `high`
-   - `≥ 0.90` → `critical`
+   - `< 0.55` → `low` (not an alert)
+   - `0.55 – 0.70` → `medium`
+   - `0.70 – 0.85` → `high`
+   - `≥ 0.85` → `critical`
+   - Attack labels containing `DDoS`, `DoS`, `Infiltration` or `Web Attack` are `critical` from 0.70 (`severity_from_score`)
+   - Any `CRITICAL_RULES` hit forces score 1.0 and an alert
 
 ---
 
@@ -340,7 +341,7 @@ triggered_rules: list[str]   # from rules engine
 - Lifespan context manager: initializes DB, starts periodic cleanup task.
 - CORS middleware (configured via `CORS_ORIGINS`).
 - Optional legacy API-key auth via `X-API-Key` header.
-- Monitoring Service exporter at `/metrics`.
+- Prometheus exporter at `/metrics`.
 - OpenTelemetry tracing via `OTEL_EXPORTER_OTLP_ENDPOINT`.
 - Per-IP rate limiting: `RATE_LIMIT_REQUESTS` per `RATE_LIMIT_WINDOW` seconds.
 
@@ -526,7 +527,7 @@ Key configuration categories:
 | Auth | `JWT_SECRET`, `JWT_ALGORITHM`, `JWT_EXPIRE_MINUTES` |
 | Enrichment | `GEOIP_DB_PATH`, `CORRELATION_*`, `ADAPTIVE_WEIGHTS_ENABLED` |
 | Notifications | `WEBHOOK_URLS`, `NOTIFY_MIN_SEVERITY`, `TELEGRAM_*` |
-| Observability | `Monitoring Service_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `LOG_FORMAT` |
+| Observability | `PROMETHEUS_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `LOG_FORMAT` |
 | IP filtering | `IP_ALLOWLIST`, `IP_BLOCKLIST`, `TRUSTED_OUTBOUND` |
 | Guardian auto-response | `GUARDIAN_ENABLED`, `GUARDIAN_MIN_SEVERITY`, `GUARDIAN_WHITELIST`, `GUARDIAN_BLOCK_MINUTES`, `GUARDIAN_CIRCUIT_*`, `ADGUARD_*` |
 

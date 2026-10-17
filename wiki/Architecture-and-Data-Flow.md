@@ -29,11 +29,13 @@
                               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │  on_flow_complete()  (src/pipeline.py)                                │
+│  0. trusted-outbound filter; threat-intel IP / JA3 lookup           │
 │  1. supervised.predict(flow_vec)           → (attack_type, conf)    │
 │  2. isolation_forest.anomaly_score(host)   → [0,1]                  │
-│  3. lstm.update(ip, host); .score(ip)      → [0,1]                  │
-│  4. rules.evaluate(record, payload, ja3)   → (score, rules_fired)   │
-│  5. ensemble.score(EngineScores)           → EnsembleResult          │
+│  3. lstm.update(ip, host); .anomaly_score(ip) → [0,1]               │
+│  4. baseline.update/anomaly_score(ip, host) → [0,1]                 │
+│  5. rules.evaluate(record, flow_vec, payload, ja3) → (score, rules) │
+│  6. ensemble.score(EngineScores)           → EnsembleResult          │
 └─────────────────────────────┬───────────────────────────────────────┘
                               │
               [score ≥ ENSEMBLE_THRESHOLD (0.55)]
@@ -70,16 +72,16 @@ Every time a flow expires (idle > `FLOW_TIMEOUT` seconds, default 120s):
 
 2. HostExtractor.extract_features(src_ip)
       └─ sliding window last 100 packets for that IP
-      └─ returns np.ndarray[18] or None if < 10 packets
+      └─ returns np.ndarray[18], or None if the IP has seen fewer than 3 packets
 
-3. PayloadAnalyzer.analyze(payloads)
-      └─ 30+ regex patterns (SQLi, XSS, cmd injection, shells, dir traversal)
-      └─ each pattern runs in daemon thread with 1s timeout (ReDoS protection)
-      └─ returns (triggered_rules: List[str], features: np.ndarray[10])
+3. PayloadAnalyzer (per packet: analyze_payload; per flow: extract_payload_features)
+      └─ 6 regex patterns (sql_injection, xss, command_injection, path_traversal,
+         log4j, shellshock) matched directly on the first 4 KB, after a cheap pre-screen
+      └─ analyze_payload → List[str] of pattern names; extract_payload_features → np.ndarray[10]
 
-4. JA3.extract(tls_packet)
+4. JA3.extract_ja3(tls_packet)
       └─ binary TLS ClientHello parse; GREASE values filtered (RFC 8701)
-      └─ returns (hash: str, is_malicious: bool)
+      └─ returns (ja3_hash, ja3_string), or None if not a ClientHello; the malicious flag comes from the known-bad hash list
 
 5. Engine scoring (parallel conceptually, sequential in practice):
    supervised.predict(flow_vec ++ payload_features)
@@ -87,17 +89,22 @@ Every time a flow expires (idle > `FLOW_TIMEOUT` seconds, default 120s):
    isolation_forest.anomaly_score(host_vec)
       → float [0,1]; None if model unavailable
    lstm.update(src_ip, host_vec); lstm.anomaly_score(src_ip)
-      → float [0,1]; None if buffer < seq_len
-   rules.evaluate(record, payload_matches, ja3_info)
+      → float [0,1]; 0.0 until the per-IP buffer holds seq_len (20) vectors
+   baseline.update(src_ip, host_vec); baseline.anomaly_score(src_ip, host_vec)
+      → float [0,1]; engine unavailable until a baseline window has been trained
+   rules.evaluate(record, flow_vec, payload_matches, ja3_info)
       → (score: float, triggered: List[str])
 
 6. EnsembleScorer.score(EngineScores)
-      └─ weighted sum: 0.40*RF + 0.30*IF + 0.20*LSTM + 0.10*Rules
+      └─ weighted sum: 0.30*Supervised + 0.20*IF + 0.10*LSTM + 0.25*Rules + 0.15*Baseline
+         (defaults; WEIGHT_* env vars, must sum to 1.0)
       └─ if engine unavailable → redistribute weight proportionally
+      └─ threat-intel hit → score + 0.30 (capped at 1.0)
+      └─ any CRITICAL_RULES hit → score forced to 1.0 and is_anomaly
       └─ Platt temperature scaling: calibrated_score = sigmoid(logit/T)
       └─ returns EnsembleResult(score, is_anomaly, engine_scores, calibrated_score)
 
-7. if is_anomaly (score ≥ 0.55):
+7. if is_anomaly (calibrated score ≥ ENSEMBLE_THRESHOLD 0.55, or a critical rule fired):
       └─ dedup check (src_ip, attack_type) within 300s
       └─ if new: enqueue to background writer
 ```
@@ -108,8 +115,9 @@ Every time a flow expires (idle > `FLOW_TIMEOUT` seconds, default 120s):
 |---------|---------|------|-------|
 | api | bridge | 8000 | FastAPI + async DB writes |
 | detector | host | — | Raw sockets (root required) |
-| dashboard | bridge | 8501 | Streamlit; polls API |
-| postgres | bridge | 5432 (internal) | Required — `api` and `detector` write concurrently, and SQLite has no concurrent-writer support |
+| dashboard | bridge | 8501 | Streamlit; polls API. Opt-in: `--profile dashboard` |
+| postgres | bridge | 127.0.0.1:5432 | Required — `api` and `detector` write concurrently, and SQLite has no concurrent-writer support. Needs `POSTGRES_PASSWORD` |
+| demo-seed | bridge | — | One-shot synthetic data seeder. Opt-in: `--profile demo` |
 
 `detector` uses `network_mode: host` for raw packet access. It writes alerts to the database **directly** via its own `DATABASE_URL` — not through the API's HTTP interface — because host networking means it can't resolve other containers' service names. Both `api` and `detector` must therefore point at the same PostgreSQL instance.
 
@@ -120,7 +128,7 @@ PostgreSQL (healthy)
     ↓
 API (healthy — /health returns 200)
     ↓
-Detector + Dashboard
+Detector (also waits for PostgreSQL) + Dashboard (profile `dashboard`)
 ```
 
 ## Network & Ports
@@ -129,7 +137,7 @@ Detector + Dashboard
 |---------|----------|----------|---------|
 | API | 8000 | 8000 | REST + WebSocket |
 | Dashboard | 8501 | 8501 | Streamlit UI |
-| Monitoring Service | — | /metrics | Scrape endpoint on API |
+| Prometheus | — | /metrics | Scrape endpoint on API (`PROMETHEUS_ENABLED=true`) |
 | Syslog-CEF | — | 514 UDP/TCP | SIEM forwarding (optional) |
 
 ## Async Alert Writer
@@ -144,8 +152,7 @@ Bounded queue (capacity 1000)
 Background writer thread
     ↓ GeoIP lookup
     ↓ MITRE mapping
-    ↓ SQLite/PostgreSQL INSERT
-    ↓ JSON log append
+    ↓ SQLite/PostgreSQL INSERT (synchronous SQLAlchemy engine in the writer thread)
 ```
 
 This ensures packet processing is never blocked by slow DB writes.
@@ -170,4 +177,4 @@ guardian_expiry_loop()  (same interval)
     └─ PENDING rows past expires_at → MitigationBackend.unblock() → status=EXPIRED
 ```
 
-Off by default (`GUARDIAN_ENABLED=false`). Never hooks into the capture pipeline above — it only reads the `alerts` table. See [Configuration](Configuration) for env vars and [Deployment](Deployment) for the setup/safety checklist (especially: never put a broad LAN CIDR in `GUARDIAN_WHITELIST`).
+Off by default (`GUARDIAN_ENABLED=false`). Never hooks into the capture pipeline above — it only reads the `alerts` table. See [Configuration](Configuration.md) for env vars and [Deployment](Deployment.md) for the setup/safety checklist (especially: never put a broad LAN CIDR in `GUARDIAN_WHITELIST`).

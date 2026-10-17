@@ -1,12 +1,12 @@
 # 0001. Date-range filter on GET /api/alerts
 
-- Status: **Proposed**
+- Status: **Accepted** — implemented in `689e718` (merged in #14). The `hours` upper bound was added afterwards by [ADR 0002](0002-bound-hours-get-api-alerts-api-alerts.md).
 - Date: 2026-10-14
 - Issue: cnds#5
 
 ## Context
 
-`GET /api/alerts` (`src/api/routers/alerts.py:20-38`) filters by `severity`, `acknowledged` and `src_ip`. It paginates with `limit`/`offset` and has no time filter. Analysts who want a time window have to download everything and filter on the client.
+`GET /api/alerts` (`src/api/routers/alerts.py`, `list_alerts`; line numbers below are as of the proposal) filters by `severity`, `acknowledged` and `src_ip`. It paginates with `limit`/`offset` and has no time filter. Analysts who want a time window have to download everything and filter on the client.
 
 Other endpoints in the same router already filter by time:
 

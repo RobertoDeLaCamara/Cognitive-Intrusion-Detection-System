@@ -1,51 +1,50 @@
 # CNDS — API Reference
 
-Base URL: `http://<host>:8000`
+Base URL: `http://<host>:8000`. Interactive docs: `http://<host>:8000/docs` (Swagger UI) and `/openapi.json`. Application: `src/api/main.py`.
 
-Interactive docs: `http://<host>:8000/docs` (Swagger UI)
-
----
+> Per-endpoint reference, checked against `src/api/routers/*.py`. The same content is maintained in the wiki page `wiki/API-Reference.md`; the wiki also has a shorter `REST-API.md` (quick table plus curl examples).
 
 ## Authentication
 
-CNDS supports two authentication modes:
+At least one mechanism must be configured: the API refuses to start with neither `API_KEY` nor `JWT_SECRET` unless `AUTH_DISABLED=true` (lab use only), which leaves every endpoint open.
 
-### JWT (Recommended)
-1. Obtain a token:
-```http
-POST /api/auth/token
-Content-Type: application/x-www-form-urlencoded
+| Mechanism | Env Var | Header / Param | Scope |
+|-----------|---------|----------------|-------|
+| API key (legacy) | `API_KEY` | `X-API-Key: <key>` | Every HTTP route except `/health`, `/docs`, `/openapi.json`, `/metrics`, `/api/auth/*` (`/ws/alerts` authenticates inside its own handler) |
+| JWT | `JWT_SECRET` | `Authorization: Bearer <token>` | Only routes that declare a role (table below), plus the `/ws/alerts` `?token=` |
 
-username=analyst&password=secret
-```
-Response:
-```json
-{"access_token": "eyJ...", "token_type": "bearer"}
-```
-2. Use the token on subsequent requests:
-```http
-Authorization: Bearer eyJ...
-```
+### JWT roles
 
-### Legacy API Key
-Set `API_KEY` in `.env`. Send as:
-```http
-X-API-Key: <your-key>
-```
+Tokens carry a `role` claim: `admin`, `analyst` or `viewer`. A route with `require_role(...)` returns 401 when the token is missing/invalid and 403 when the role is not allowed. Routes without a role check are **not** protected by JWT alone.
 
-### WebSocket Authentication
-Append the JWT token as a query parameter:
-```
-ws://host:8000/ws/alerts?token=eyJ...
-```
-
-### Roles
-
-| Role | Capabilities |
+| Route | Roles allowed (when `JWT_SECRET` is set) |
 |---|---|
-| `viewer` | Read alerts, incidents, stats |
-| `analyst` | All viewer + acknowledge alerts, create incidents, manage suppression rules |
-| `admin` | All analyst + create/delete users, delete suppression rules |
+| `GET /api/alerts/export` | admin, analyst |
+| `POST /api/incidents` | admin, analyst |
+| `POST /api/suppression-rules` | admin, analyst |
+| `DELETE /api/suppression-rules/{rule_id}` | admin |
+| `GET /api/baseline/status`, `GET /api/baseline/windows` | admin, analyst, viewer |
+| `POST`/`GET /api/auth/users`, `DELETE /api/auth/users/{user_id}` | admin |
+| `GET /api/alerts`, `GET /api/alerts/{id}`, `PATCH /api/alerts/{id}`, `GET /api/alerts/trends`, `GET /api/incidents`, `GET /api/stats`, `GET /api/suppression-rules`, `GET /api/adaptive-weights`, `GET /api/dns-log`, `POST /api/predict` | none (open) |
+
+There is no bootstrap user: the first `admin` has to be inserted directly into the `users` table (password hashed with bcrypt), because `POST /api/auth/users` itself needs an admin token once `JWT_SECRET` is set.
+
+### `POST /api/auth/token`
+
+JSON body (not form-encoded). Returns 501 if `JWT_SECRET` is not configured, 401 on bad credentials.
+
+```bash
+curl -X POST http://localhost:8000/api/auth/token \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "secret"}'
+# {"access_token": "<jwt>", "token_type": "bearer"}
+```
+
+### User management (admin)
+
+- `POST /api/auth/users` body `{"username", "password", "role"}` (`role` defaults to `viewer`; 400 on an unknown role, 409 on a duplicate username)
+- `GET /api/auth/users` lists users (`id`, `username`, `role`, `is_active`)
+- `DELETE /api/auth/users/{user_id}` returns `{"status": "deleted"}` or 404
 
 ---
 
@@ -53,9 +52,8 @@ ws://host:8000/ws/alerts?token=eyJ...
 
 ### `GET /health`
 
-Returns engine availability and capture statistics. No authentication required.
+Always open. Returns engine availability and capture statistics (`capture_stats` is `null` unless the API runs inside `main.py --api`).
 
-**Response:**
 ```json
 {
   "status": "ok",
@@ -65,15 +63,68 @@ Returns engine availability and capture statistics. No authentication required.
     "lstm": false,
     "rules": true
   },
-  "capture": {
-    "processed": 124853,
-    "dropped": 0,
-    "queue_size": 12,
-    "active_workers": 4
-  },
-  "uptime_seconds": 3621
+  "capture_stats": null
 }
 ```
+
+The baseline engine is not listed here; see `GET /api/baseline/status`.
+
+---
+
+## Prediction
+
+### `POST /api/predict`
+
+Run the supervised, Isolation Forest, LSTM and rules engines on pre-extracted features and (for anomalies) persist an alert. Useful for testing and integration. All fields except `src_ip` are optional.
+
+| Field | Type | Notes |
+|---|---|---|
+| `src_ip` | string | Required, must be a valid IP (else 422) |
+| `dst_ip` | string | Optional, validated as an IP |
+| `src_port`, `dst_port`, `protocol` | int | Optional |
+| `flow_features` | float[76] | Exactly 76 values; enables supervised + rules |
+| `host_features` | float[18] | Exactly 18 values; enables Isolation Forest + LSTM |
+| `payload_features` | float[10] | Exactly 10 values |
+| `payload_matches` | string[] | Pattern names, e.g. `["sql_injection"]` |
+
+```json
+{
+  "src_ip": "192.168.1.50",
+  "dst_ip": "10.0.0.1",
+  "dst_port": 80,
+  "protocol": 6,
+  "host_features": [45.2, 5200.0, 115.0, 800.0, 452, 52000, 0.02, 0.005, 12.0, 10.0, 0.9, 0.1, 0.0, 3.0, 0.2, 3.5, 80.0, 200.0]
+}
+```
+
+**Response** (`PredictResponse`) for the request above, run against the bundled models (output of a real call; only the Isolation Forest is active because only `host_features` were sent; `supervised`/`rules` appear when `flow_features` is supplied, `lstm` once its per-IP buffer is warm):
+
+```json
+{
+  "src_ip": "192.168.1.50",
+  "ensemble_score": 0.663,
+  "is_anomaly": true,
+  "severity": "medium",
+  "attack_type": null,
+  "engine_scores": {
+    "supervised": null, "isolation_forest": 0.663, "lstm": null, "rules": null,
+    "attack_type": null, "triggered_rules": []
+  },
+  "active_engines": ["isolation_forest"],
+  "alert_id": 1,
+  "src_geo": null,
+  "mitre_techniques": [],
+  "ja3_hash": null
+}
+```
+
+Behaviour worth knowing:
+
+- Addresses in `IP_ALLOWLIST` return score 0 with no engines; addresses in `IP_BLOCKLIST` return score 1.0, `severity: "critical"`, `attack_type: "Blocklisted"` (no alert row is written for either).
+- The score is multiplied by `CONFIDENCE_DECAY_FACTOR` per repeat from the same IP inside `CONFIDENCE_DECAY_WINDOW`.
+- A repeat `(src_ip, attack_type)` inside `DEDUP_WINDOW_SECS` returns `alert_id: null`; so does a match against a suppression rule.
+- A persisted alert is broadcast on `/ws/alerts`, correlated into incidents and sent to webhook/Telegram if its severity meets `NOTIFY_MIN_SEVERITY`.
+- This path does not run the baseline engine or the threat-intel check; the live-capture pipeline does.
 
 ---
 
@@ -81,142 +132,66 @@ Returns engine availability and capture statistics. No authentication required.
 
 ### `GET /api/alerts`
 
-List alerts with optional filtering. Requires authentication.
-
-**Query Parameters:**
+List alerts, newest first.
 
 | Parameter | Type | Default | Description |
-|---|---|---|---|
-| `severity` | string | — | Filter: `low`, `medium`, `high`, `critical` |
-| `src_ip` | string | — | Filter by source IP |
-| `acknowledged` | bool | — | Filter by acknowledgement status |
-| `hours` | int | 24 | Return alerts from last N hours |
-| `limit` | int | 100 | Max results |
+|-----------|------|---------|-------------|
+| `severity` | string | — | `low`, `medium`, `high`, `critical` |
+| `src_ip` | string | — | Exact source IP |
+| `acknowledged` | bool | — | Acknowledged / unacknowledged |
+| `start` | datetime | — | Inclusive lower bound, ISO 8601. Naive values are UTC. |
+| `end` | datetime | — | Inclusive upper bound, ISO 8601. Naive values are UTC. `start` after `end` returns 422. |
+| `hours` | int | — | Only alerts from the last N hours; `1 <= hours <= 87600` (10 years), otherwise 422 |
+| `limit` | int | 50 | Max results, `le=500` |
 | `offset` | int | 0 | Pagination offset |
 
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "timestamp": "2026-03-29T14:22:01Z",
-    "src_ip": "[CLIENT_IP]",
-    "dst_ip": "10.0.0.5",
-    "src_port": 54231,
-    "dst_port": 80,
-    "protocol": "TCP",
-    "attack_type": "DoS Hulk",
-    "severity": "high",
-    "ensemble_score": 0.83,
-    "engine_scores": {
-      "supervised": 0.91,
-      "iforest": 0.74,
-      "lstm": 0.61,
-      "rules": 1.0
-    },
-    "triggered_rules": ["icmp_flood"],
-    "src_geo": {
-      "country": "United States",
-      "city": "San Jose",
-      "lat": 37.338,
-      "lon": -121.886
-    },
-    "mitre_techniques": [
-      {"id": "T1498", "name": "Network Denial of Service", "tactic": "Impact"}
-    ],
-    "ja3_hash": "a0e9f5d64349fb13191bc781f81f42e1",
-    "ja3_string": "771,49195-49199...,0-23...",
-    "acknowledged": false,
-    "notes": null,
-    "incident_id": null
-  }
-]
+There is no `attack_type` filter and no default time window. All filters combine with AND; if both `hours` and `start` are given, both lower bounds apply.
+
+```bash
+curl "http://localhost:8000/api/alerts?severity=high&hours=6&acknowledged=false"
+curl "http://localhost:8000/api/alerts?start=2026-10-01T00:00:00Z&end=2026-10-02T00:00:00Z"
 ```
 
----
+Each item (`AlertOut`): `id`, `timestamp`, `src_ip`, `dst_ip`, `src_port`, `dst_port`, `attack_type`, `severity`, `ensemble_score`, `engine_scores`, `triggered_rules`, `acknowledged`, `notes`, `incident_id`, `src_geo`, `mitre_techniques`, `ja3_hash`.
 
-### `GET /api/alerts/{id}`
+### `GET /api/alerts/{alert_id}`
 
-Fetch a single alert by ID.
+Single alert (same fields as above; the raw feature vectors are stored but not returned). 404 if unknown.
 
-**Response:** Same structure as the list item above.
+### `PATCH /api/alerts/{alert_id}`
 
----
+Update any of `acknowledged`, `notes`, `incident_id`. This is also how an alert is linked to an incident.
 
-### `PATCH /api/alerts/{id}`
-
-Acknowledge an alert, add notes, or link it to an incident. Requires `analyst` role.
-
-**Request body:**
 ```json
-{
-  "acknowledged": true,
-  "notes": "Confirmed DoS from customer lab. Suppressing.",
-  "incident_id": 5
-}
+{"acknowledged": true, "notes": "Confirmed DoS from 192.168.1.50", "incident_id": 3}
 ```
-
-All fields are optional. Only provided fields are updated.
-
-**Response:** Updated alert object.
-
----
 
 ### `GET /api/alerts/export`
 
-Stream alerts as CSV or JSON for SIEM/ticketing ingestion. Requires authentication.
+Bulk export (requires `admin` or `analyst` when JWT is on).
 
-**Query Parameters:**
+| Parameter | Values | Default |
+|-----------|--------|---------|
+| `format` | `csv`, `json` | `json` |
+| `severity` | string | — |
+| `src_ip` | string | — |
+| `hours` | int, `1..87600` | — (no time filter) |
+| `limit` | int, `le=10000` | 1000 |
 
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `format` | string | `json` | `json` or `csv` |
-| `severity` | string | — | Filter by severity |
-| `hours` | int | 24 | Export from last N hours |
-
-**Response:** Streaming file download with `Content-Disposition: attachment`.
-
----
+Returned as a download (`alerts.csv` / `alerts.json`). There is no `start`/`end` here.
 
 ### `GET /api/alerts/trends`
 
-Alert counts bucketed by time period for trend analysis.
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `hours` | 24 | Lookback window, 1–168 |
+| `bucket` | `hour` | `hour` or `day` |
 
-**Query Parameters:**
-
-| Parameter | Type | Default | Description |
-|---|---|---|---|
-| `bucket` | string | `hour` | `hour` or `day` |
-| `hours` | int | 24 | Lookback window |
-
-**Response:**
-```json
-[
-  {"bucket": "2026-03-29T13:00:00Z", "count": 12},
-  {"bucket": "2026-03-29T14:00:00Z", "count": 47}
-]
-```
-
----
+Response: `{"bucket": "hour", "hours": 24, "data": {"2026-10-01T10:00:00Z": {"total": 3, "by_severity": {"high": 2, "medium": 1}}}}`.
 
 ### `GET /api/stats`
 
-Alert counts by severity for dashboard summary widgets.
-
-**Response:**
-```json
-{
-  "total": 142,
-  "by_severity": {
-    "low": 65,
-    "medium": 48,
-    "high": 24,
-    "critical": 5
-  },
-  "acknowledged": 89,
-  "unacknowledged": 53
-}
-```
+`{"total_alerts": N, "unacknowledged": N, "by_severity": {"low": N, "medium": N, "high": N, "critical": N}}`
 
 ---
 
@@ -224,310 +199,91 @@ Alert counts by severity for dashboard summary widgets.
 
 ### `GET /api/incidents`
 
-List incidents. Requires authentication.
-
-**Query Parameters:** `status` (open/investigating/resolved/closed), `severity`, `limit`, `offset`.
-
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "title": "Repeated DoS from [CLIENT_IP]",
-    "description": "Auto-created: 7 alerts from same source in 300s",
-    "status": "open",
-    "severity": "high",
-    "assigned_to": null,
-    "created_at": "2026-03-29T14:22:05Z",
-    "updated_at": "2026-03-29T14:22:05Z",
-    "resolved_at": null,
-    "notes": null,
-    "alert_count": 7
-  }
-]
-```
-
----
+List incidents, newest first. Query: `limit` (default 20, max 200), `status` (`open`, `investigating`, `resolved`, `closed`). There is no `severity` filter.
 
 ### `POST /api/incidents`
 
-Create an incident manually. Requires `analyst` role.
+Create an incident (201; `admin`/`analyst` when JWT is on).
 
-**Request body:**
 ```json
-{
-  "title": "Suspected lateral movement",
-  "description": "Multiple internal IPs generating scan alerts",
-  "severity": "high",
-  "assigned_to": "alice"
-}
+{"title": "DDoS campaign", "description": "...", "severity": "critical", "assigned_to": "analyst@example.com"}
 ```
 
----
-
-### `GET /api/incidents/{id}`
-
-Fetch incident with all linked alerts.
+Incidents are also created automatically by correlation when one source IP reaches `CORRELATION_THRESHOLD` alerts inside `CORRELATION_WINDOW_SECS` (title `Correlated attack from <ip>`); this happens on the `/api/predict` path.
 
 ---
 
-### `PATCH /api/incidents/{id}`
-
-Update status, assignee, or notes. Requires `analyst` role.
-
-**Request body:**
-```json
-{
-  "status": "investigating",
-  "assigned_to": "bob",
-  "notes": "Coordinating with network team."
-}
-```
-
----
-
-### `DELETE /api/incidents/{id}`
-
-Delete incident. Requires `admin` role.
-
----
-
-## Suppression Rules
+## Suppression rules
 
 ### `GET /api/suppression-rules`
 
-List active suppression rules. Requires authentication.
-
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "src_ip": "[INTERNAL_IP]",
-    "dst_ip": null,
-    "attack_type": "PortScan",
-    "min_severity": "low",
-    "reason": "Vulnerability scanner — authorized",
-    "created_at": "2026-03-29T12:00:00Z",
-    "expires_at": "2026-03-30T12:00:00Z"
-  }
-]
-```
-
----
+Rules that have not expired yet.
 
 ### `POST /api/suppression-rules`
 
-Create a suppression rule. Requires `analyst` role.
+Create a rule (201; `admin`/`analyst`). All match fields are optional; `duration_minutes` defaults to 120 (1–10080, i.e. at most 7 days). The server computes `expires_at`; clients do not send it.
 
-**Request body:**
 ```json
 {
-  "src_ip": "[INTERNAL_IP]",
-  "attack_type": "PortScan",
-  "min_severity": "low",
-  "reason": "Authorized vulnerability scanner",
-  "expires_at": "2026-03-30T12:00:00Z"
+  "src_ip": "192.168.1.20",
+  "attack_type": null,
+  "min_severity": null,
+  "reason": "Scheduled vulnerability scan",
+  "duration_minutes": 240
 }
 ```
 
-All fields except `reason` are optional. A rule with all null match fields suppresses all alerts.
+### `DELETE /api/suppression-rules/{rule_id}`
+
+204 on success (`admin`), 404 if unknown. Expired rules are purged by a background task every 5 minutes.
+
+Suppression is applied on the `/api/predict` path only.
 
 ---
 
-### `DELETE /api/suppression-rules/{id}`
-
-Delete a suppression rule. Requires `admin` role.
-
----
-
-## Adaptive Weights
+## Adaptive weights
 
 ### `GET /api/adaptive-weights`
 
-Compute suggested engine weights from analyst TP/FP feedback. Requires authentication.
-
-**Response:**
-```json
-{
-  "current_weights": {
-    "supervised": 0.40,
-    "iforest": 0.30,
-    "lstm": 0.20,
-    "rules": 0.10
-  },
-  "suggested_weights": {
-    "supervised": 0.48,
-    "iforest": 0.27,
-    "lstm": 0.17,
-    "rules": 0.08
-  },
-  "sample_count": 215,
-  "meets_min_samples": true
-}
-```
-
-Apply suggested weights by updating `.env` and restarting.
+Returns `{"status": "ok", "weights": {...}}` or `{"status": "insufficient_data", "weights": null}`. Requires `ADAPTIVE_WEIGHTS_ENABLED=true` and at least `ADAPTIVE_MIN_SAMPLES` (default 100) acknowledged alerts. The weights cover supervised / isolation_forest / lstm / rules only and are informational: nothing applies them automatically.
 
 ---
 
-## DNS Log
+## Baseline
+
+### `GET /api/baseline/status`
+
+Collector progress, trigger thresholds/ratios and ETA, loaded baseline-engine info, and a drift score versus the last trained window (`verdict`: `nominal`, `warning`, `critical`). Fields are `null` when the collector is disabled.
+
+### `GET /api/baseline/windows`
+
+`{"windows": [...], "total": N}`, most recent first. Query `limit` 1–20 (default 20).
+
+---
+
+## DNS log
 
 ### `GET /api/dns-log`
 
-Return logged DNS queries. Requires authentication.
-
-**Query Parameters:** `src_ip`, `hours` (default 24), `limit` (default 100).
-
-**Response:**
-```json
-[
-  {
-    "timestamp": "2026-03-29T14:20:11Z",
-    "src_ip": "[CLIENT_IP]",
-    "query": "evil.domain.com",
-    "query_type": "A",
-    "response": "203.0.113.5"
-  }
-]
-```
+Queries captured by the detector when `DNS_LOGGING_ENABLED=true`; optional `src_ip` filter. The log lives in the memory of the process that captures, so an API running in a different container (the default compose layout) returns an empty log.
 
 ---
 
-## Manual Prediction
-
-### `POST /api/predict`
-
-Run the full detection pipeline on pre-computed feature vectors. Suitable for integration into external capture tools (Zeek, Arkime, etc.) or CI/CD pipeline testing. Requires authentication.
-
-**Request body:**
-```json
-{
-  "src_ip": "[CLIENT_IP]",
-  "dst_ip": "10.0.0.5",
-  "dst_port": 80,
-  "protocol": "TCP",
-  "flow_features": [0.0, 15.0, 1200.0, 300.0, ...],
-  "host_features": [45.2, 18300.0, 406.7, ...],
-  "payload_features": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 4.1, 406.0, 0.02]
-}
-```
-
-- `flow_features`: 76 floats in `FLOW_FEATURE_NAMES` order.
-- `host_features`: 18 floats in `HOST_FEATURE_NAMES` order.
-- `payload_features`: 10 floats (optional; zeros if omitted).
-
-**Response:**
-```json
-{
-  "ensemble_score": 0.81,
-  "attack_type": "PortScan",
-  "is_anomaly": true,
-  "severity": "high",
-  "engine_scores": {
-    "supervised": 0.88,
-    "iforest": 0.72,
-    "lstm": null,
-    "rules": 1.0
-  },
-  "triggered_rules": ["syn_scan"],
-  "mitre_techniques": [
-    {"id": "T1046", "name": "Network Service Scanning", "tactic": "Discovery"}
-  ]
-}
-```
-
-`lstm` is `null` when the LSTM sequence buffer for the IP is not yet full.
-
----
-
-## Authentication Endpoints
-
-### `POST /api/auth/token`
-
-Issue a JWT access token. No authentication required.
-
-**Request body** (form-encoded):
-```
-username=alice&password=secret123
-```
-
-**Response:**
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "token_type": "bearer",
-  "expires_in": 3600
-}
-```
-
----
-
-### `GET /api/auth/users`
-
-List users. Requires `admin` role.
-
-**Response:**
-```json
-[
-  {"id": 1, "username": "alice", "role": "admin", "is_active": true},
-  {"id": 2, "username": "bob", "role": "analyst", "is_active": true}
-]
-```
-
----
-
-### `POST /api/auth/users`
-
-Create a user. Requires `admin` role.
-
-**Request body:**
-```json
-{
-  "username": "carol",
-  "password": "strongpassword",
-  "role": "analyst"
-}
-```
-
----
-
-### `DELETE /api/auth/users/{id}`
-
-Delete a user. Requires `admin` role.
-
----
-
-## WebSocket
+## WebSocket — real-time alert stream
 
 ### `WS /ws/alerts`
 
-Real-time alert stream. Each fired alert is broadcast as a JSON message immediately after enrichment and persistence. Maximum 100 concurrent connections (excess connections are rejected with close code 4029).
+Broadcasts alerts persisted through `POST /api/predict`. When `JWT_SECRET` is set, connect with `?token=<JWT>`; closes with 4001 (missing token), 4003 (invalid/expired) or 4029 (more than 100 clients). The `API_KEY` header check does not apply to WebSockets.
 
-**Connection:**
+```javascript
+const ws = new WebSocket('ws://localhost:8000/ws/alerts');
+ws.onmessage = (event) => {
+  const alert = JSON.parse(event.data);
+  console.log(alert.attack_type, alert.severity, alert.src_ip);
+};
 ```
-ws://host:8000/ws/alerts?token=eyJ...
-```
 
-When `JWT_SECRET` is not set, the token parameter is not required.
-
-**Message format:** Same schema as `GET /api/alerts` list item.
-
-**Example (Python):**
-```python
-import asyncio
-import websockets
-import json
-
-async def stream_alerts():
-    uri = "ws://localhost:8000/ws/alerts?token=eyJ..."
-    async with websockets.connect(uri) as ws:
-        async for message in ws:
-            alert = json.loads(message)
-            print(f"[{alert['severity']}] {alert['attack_type']} from {alert['src_ip']}")
-
-asyncio.run(stream_alerts())
-```
+Message fields: `id`, `src_ip`, `dst_ip`, `ensemble_score`, `severity`, `attack_type`, `triggered_rules`, `timestamp`, `src_geo`. Alerts written by the live-capture process are not pushed here; they appear in `GET /api/alerts`.
 
 ---
 
@@ -535,48 +291,60 @@ asyncio.run(stream_alerts())
 
 ### `GET /metrics`
 
-Monitoring Service metrics. No authentication required.
+Registered only when `PROMETHEUS_ENABLED=true` and `prometheus_client` is installed. Main series:
 
-**Key metrics exposed:**
+| Metric | Type | Labels |
+|--------|------|--------|
+| `cnds_http_requests_total` | Counter | method, endpoint, status |
+| `cnds_http_request_duration_seconds` | Histogram | method, endpoint |
+| `cnds_alerts_total` | Counter | severity, engine |
+| `cnds_alerts_suppressed_total` | Counter | reason (`dedup`, `suppression_rule`) |
+| `cnds_ensemble_score` | Histogram | is_anomaly |
+| `cnds_baseline_*` | Gauges | collector, trigger progress, engine and drift state |
 
-| Metric | Type | Description |
-|---|---|---|
-| `cnds_alerts_total` | Counter | Total alerts by severity and attack_type |
-| `cnds_packets_processed_total` | Counter | Packets processed |
-| `cnds_packets_dropped_total` | Counter | Packets dropped (queue full) |
-| `cnds_ensemble_score` | Histogram | Score distribution |
-| `cnds_engine_latency_seconds` | Histogram | Per-engine inference latency |
-| `cnds_active_flows` | Gauge | Current tracked flows |
-| `cnds_tracked_ips` | Gauge | Current tracked host IPs |
-| `http_requests_total` | Counter | HTTP request count by endpoint |
-| `http_request_duration_seconds` | Histogram | HTTP latency by endpoint |
+OpenTelemetry traces are exported to `OTEL_EXPORTER_OTLP_ENDPOINT` if set.
+
+---
+
+## Rate limiting
+
+Per-client-IP sliding window, in memory (`src/api/rate_limit.py`). Set `RATE_LIMIT_REQUESTS` to 0 to disable.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RATE_LIMIT_REQUESTS` | 60 | Requests per window |
+| `RATE_LIMIT_WINDOW` | 60 | Window in seconds |
+
+Returns HTTP 429 with a `Retry-After` header when exceeded. `/health`, `/docs`, `/openapi.json` and `/metrics` are exempt.
 
 ---
 
 ## Error Responses
 
-All endpoints use standard HTTP status codes:
-
 | Code | Meaning |
 |---|---|
-| 400 | Bad request — validation error on request body |
-| 401 | Unauthorized — missing or invalid token |
-| 403 | Forbidden — insufficient role |
-| 404 | Not found |
-| 422 | Unprocessable entity — Pydantic schema error |
-| 429 | Too many requests — rate limit exceeded |
-| 500 | Internal server error |
+| 400 | Bad request — e.g. unknown role on `POST /api/auth/users` |
+| 401 | Missing/invalid API key, missing/invalid/expired token |
+| 403 | Authenticated but role not allowed |
+| 404 | Alert / user / suppression rule not found |
+| 409 | Username already exists |
+| 422 | Request validation error (Pydantic): bad IP, out-of-range `hours`, `start` after `end`, ... |
+| 429 | Rate limit exceeded |
+| 501 | `POST /api/auth/token` while `JWT_SECRET` is unset |
 
-**Error body:**
-```json
-{"detail": "Human-readable error message"}
+Error body: `{"detail": "Human-readable error message"}` (a list of objects for 422).
+
+## WebSocket client example (Python)
+
+```python
+import asyncio, json, websockets
+
+async def stream_alerts():
+    uri = "ws://localhost:8000/ws/alerts?token=eyJ..."   # drop ?token= when JWT_SECRET is unset
+    async with websockets.connect(uri) as ws:
+        async for message in ws:
+            alert = json.loads(message)
+            print(f"[{alert['severity']}] {alert['attack_type']} from {alert['src_ip']}")
+
+asyncio.run(stream_alerts())
 ```
-
----
-
-## Rate Limiting
-
-Per-IP rate limiting is enforced on all endpoints:
-- Default: `RATE_LIMIT_REQUESTS` requests per `RATE_LIMIT_WINDOW` seconds.
-- Exceeded requests receive `429 Too Many Requests`.
-- The `/health` and `/metrics` endpoints are exempt.

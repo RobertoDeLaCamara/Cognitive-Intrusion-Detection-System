@@ -42,29 +42,31 @@ Traffic flows through the system in this order:
    - `ja3.py` → JA3 MD5 fingerprint from TLS ClientHello
 
 3. **Detection engines** (`src/engines/`): All engines are instantiated as singletons in `registry.py` and implement the `DetectionEngine` protocol from `protocol.py`. Engines gracefully degrade when model files are absent (`is_available` flag):
-   - `supervised.py` — Random Forest on 76 flow features; bundled lite model at `models/rf_lite_model.joblib` works out of the box
+   - `ft_transformer_engine.py` — preferred supervised engine (unified FT-Transformer, 76 flow features, UNSW-NB15 classes); loaded from MLflow, then `models/unified/`; needs `torch`. `registry.py` picks it when its checkpoint is available
+   - `supervised.py` — Random Forest fallback on 76 flow features; bundled lite model at `models/rf_lite_model.joblib` works out of the box
    - `isolation_forest.py` — novelty scoring on 18 host features
    - `lstm_autoencoder.py` — sequence reconstruction error on host feature time-series per IP
    - `rules.py` — threshold/pattern rules including JA3 blocklist checks
    - `baseline_engine.py` — live-trained IsolationForest+LSTM from the unsupervised pipeline
 
-4. **Ensemble** (`src/ensemble/scorer.py`): `EnsembleScorer.score()` takes an `EngineScores` dataclass, redistributes weights of unavailable engines proportionally, applies Platt temperature calibration, and returns an `EnsembleResult`. Default weights: supervised 40%, iforest 30%, lstm 20%, rules 10%. Weights must sum to 1.0 or startup raises `ConfigurationError`.
+4. **Ensemble** (`src/ensemble/scorer.py`): `EnsembleScorer.score()` takes an `EngineScores` dataclass, redistributes weights of unavailable engines proportionally, applies Platt temperature calibration, and returns an `EnsembleResult`. Default weights (`src/config.py`): supervised 30%, iforest 20%, lstm 10%, rules 25%, baseline 15%. Weights must sum to 1.0 (±0.01) or startup raises `ConfigurationError`. Any rule listed in `CRITICAL_RULES` forces score 1.0 and an alert regardless of the blend; a threat-intel hit adds +0.30. Severity (`severity_from_score`): ≥0.85 critical, ≥0.70 high, ≥0.55 medium, else low; DoS/DDoS/Infiltration/Web Attack labels reach critical from 0.70.
 
 5. **Pipeline callback** (`src/pipeline.py`): `on_flow_complete()` is the central callback wiring features → engines → ensemble → deduplication → alert persistence. Alert writes are off-loaded to a background writer thread via a bounded queue to avoid blocking capture workers.
 
-6. **Unsupervised baseline** (`src/unsupervised/`): A background pipeline continuously collects host feature vectors. `CompositeTrigger` fires when four conditions are all met (50k vectors, 20 distinct IPs, 30 min elapsed, port entropy ≥ 2.5 bits). `WindowTrainer` then fits a new IsolationForest + LSTM Autoencoder and logs artifacts to MLflow under experiment `cnds-unsupervised-baseline`.
+6. **Unsupervised baseline** (`src/unsupervised/`): A background pipeline continuously collects host feature vectors. `CompositeTrigger` fires when four conditions are all met (50k vectors, 20 distinct IPs, 30 min elapsed, port entropy ≥ 2.5 bits); a 500k-vector hard cap also forces a window. `WindowTrainer` then fits a new IsolationForest + LSTM Autoencoder and logs artifacts to MLflow under experiment `cnds-unsupervised-baseline`.
 
-7. **API** (`src/api/`): Async FastAPI app with SQLAlchemy (aiosqlite/asyncpg). Alembic migrations run automatically on startup. JWT auth is optional (`JWT_SECRET` env var). WebSocket endpoint `/ws/alerts` streams real-time alerts.
+7. **API** (`src/api/`): Async FastAPI app with SQLAlchemy (aiosqlite/asyncpg). Alembic migrations run automatically on startup. The API refuses to start unless `API_KEY`, `JWT_SECRET` or `AUTH_DISABLED=true` is set: `API_KEY` adds an `X-API-Key` header check on (almost) every route; `JWT_SECRET` enables Bearer tokens (roles `admin`/`analyst`/`viewer`) but only on routes that declare `require_role` (export, incident/suppression writes, `/api/baseline/*`, `/api/auth/users*`). WebSocket endpoint `/ws/alerts` streams alerts that arrive through `POST /api/predict` (JWT on: `?token=`; key-only: `X-API-Key` header or `?key=`). The Guardian background tasks start in the API lifespan when `GUARDIAN_ENABLED=true`.
 
-8. **Enrichment** (`src/enrichment/`): Every alert is enriched with MITRE ATT&CK mappings (`mitre.py`), optional GeoIP (`geoip.py`), and may trigger webhooks/Telegram notifications (`notifications.py`). Alert correlation (`correlation.py`) auto-creates incidents when the same IP fires ≥ `CORRELATION_THRESHOLD` alerts within `CORRELATION_WINDOW_SECS`.
+8. **Enrichment** (`src/enrichment/`): Every persisted alert gets MITRE ATT&CK mappings (`mitre.py`) and optional GeoIP (`geoip.py`) on both the capture and API paths. Only the `POST /api/predict` path additionally applies IP allow/block lists, confidence decay, suppression rules, correlation (`correlation.py`, auto-incident when the same IP reaches ≥ `CORRELATION_THRESHOLD` alerts within `CORRELATION_WINDOW_SECS`), the WebSocket broadcast and webhook/Telegram notifications (`notifications.py`); the capture pipeline (`src/pipeline.py`) does not call them.
 
 9. **MCP server + triage agent** (`src/mcp_server/`, `src/triage/`): the MCP server is read-only at the DB engine and has no enforcement tools. The triage agent (`python -m src.triage`, out of process) writes only the append-only `triage_annotations` table — never `alerts` workflow fields, never `mitigation_actions`. The Guardian and the human are the only actuators; keep it that way (`tests/test_triage.py::test_triage_package_has_no_actuation_paths`). See `doc/triage-agent.md`.
 
 ## Key design constraints
 
 - **SQLite does not support concurrent writers.** When running `main.py --api`, only one process writes; for multi-container Docker deployments use `DATABASE_URL=postgresql+asyncpg://...`.
-- **Engine weights** (including `WEIGHT_BASELINE`) must sum to exactly 1.0 — validated at import time in `src/config.py`.
-- **Model files** are gitignored except `rf_lite_model.joblib` (1.6 MB bundled) and `lstm_config.json`. Missing engines are skipped, not errors.
+- **Engine weights** (including `WEIGHT_BASELINE`) must sum to 1.0 (±0.01) — validated at import time in `src/config.py`.
+- **Model files** are gitignored (`models/**/*.joblib|pt|pkl`) except `rf_lite_model.joblib` (1.6 MB bundled), `lstm_config.json` and the small `*_meta.json` / `unified/unified_metadata.json` files. Missing engines are skipped, not errors.
+- **Reserved config values:** `API_HOST`, `API_PORT`, `MIN_PACKETS_FOR_ML`, `RATE_SPIKE_MULTIPLIER`, `ALERT_COOLDOWN_SECS` and `IF_*` are defined in `src/config.py` but no runtime code reads them.
 - **`pytest.ini`** sets `asyncio_mode = auto` — all async tests run without explicit `@pytest.mark.asyncio`.
 - Test fixtures and an in-memory DB are in `tests/conftest.py`.
 - **`torch` is not in `requirements.txt`** — it is installed separately in Docker to force the CPU build. Tests that require torch use `pytest.importorskip("torch")` and skip gracefully in bare environments.

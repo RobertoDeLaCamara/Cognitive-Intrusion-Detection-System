@@ -109,7 +109,9 @@ detector:
 
 ## Configuration
 
-All configuration is via environment variables, typically loaded from a `.env` file. `src/config.py` validates all required values on import.
+All configuration is via environment variables. `docker-compose.yml` loads `.env.example` and then `.env` into the containers; the Python code does not read `.env` itself, so outside compose export the variables (`uvicorn ... --env-file .env`, or `set -a; . ./.env; set +a`). `src/config.py` validates weights, thresholds and intervals on import.
+
+The block below is an **example production configuration**; several values differ from the defaults in `src/config.py` (see the table in the README for the defaults).
 
 ### Core Variables
 
@@ -122,7 +124,7 @@ PACKET_QUEUE_SIZE=10000         # Bounded queue size (packets; drop when full)
 # ── Flow Analysis ────────────────────────────────────────────────────────
 FLOW_TIMEOUT=120                # Seconds before an inactive flow is flushed
 MAX_ACTIVE_FLOWS=50000          # Max concurrent tracked flows
-MIN_PACKETS_FOR_ML=5            # Min flow packets before sending to ML engines
+MIN_PACKETS_FOR_ML=5            # reserved: defined in config.py but not read by the code
 ACTIVE_IDLE_THRESH=5.0          # Seconds to split active/idle periods
 
 # ── Host Analysis ────────────────────────────────────────────────────────
@@ -130,6 +132,7 @@ HOST_WINDOW_SIZE=100            # Sliding window size (packets) per tracked IP
 MAX_TRACKED_IPS=5000            # LRU eviction ceiling for host state
 
 # ── Detection Ensemble ───────────────────────────────────────────────────
+# Values below are those of .env.example; the code defaults in src/config.py are 0.30 / 0.20 / 0.10 / 0.25 / 0.15
 WEIGHT_SUPERVISED=0.35
 WEIGHT_IFOREST=0.25
 WEIGHT_LSTM=0.15
@@ -139,10 +142,10 @@ ENSEMBLE_THRESHOLD=0.55         # Score above which is_anomaly=True
 CALIBRATION_TEMPERATURE=1.0     # Temperature scaling (1.0 = no-op)
 
 # Per-attack-type weight overrides (JSON)
-# ATTACK_TYPE_WEIGHTS={"PortScan": {"rules": 0.4, "supervised": 0.4, "iforest": 0.2, "lstm": 0.0}}
+# ATTACK_TYPE_WEIGHTS={"PortScan": {"rules": 0.4, "supervised": 0.4, "isolation_forest": 0.2, "lstm": 0.0}}
 
 # ── Rules Engine ─────────────────────────────────────────────────────────
-ICMP_FLOOD_THRESHOLD=100        # ICMP packets/second threshold
+ICMP_FLOOD_THRESHOLD=100        # forward ICMP packets in one flow (default 50)
 PORT_SCAN_THRESHOLD=50          # SYN count threshold
 LARGE_PAYLOAD_BYTES=65000       # Payload size threshold
 
@@ -183,35 +186,35 @@ CORRELATION_WINDOW_SECS=300     # Incident grouping window
 CORRELATION_THRESHOLD=5         # Alerts per IP before auto-incident
 
 # ── Notifications ────────────────────────────────────────────────────────
-WEBHOOK_URLS=                   # Space-separated list of webhook URLs
+WEBHOOK_URLS=                   # Comma-separated list of webhook URLs
 NOTIFY_MIN_SEVERITY=medium
 TELEGRAM_BOT_TOKEN=
 TELEGRAM_CHAT_ID=
 
 # ── Observability ────────────────────────────────────────────────────────
-Monitoring Service_ENABLED=true
+PROMETHEUS_ENABLED=true
 OTEL_EXPORTER_OTLP_ENDPOINT=    # http://otel-collector:4318 (empty = disabled)
 LOG_FORMAT=json                  # json or text
 
 # ── Alert Behavior ───────────────────────────────────────────────────────
 DEDUP_WINDOW_SECS=60            # Suppress repeat (src_ip, attack_type) within window
 CONFIDENCE_DECAY_FACTOR=0.9     # Score multiplier per repeat alert
-ALERT_COOLDOWN_SECS=30          # Min seconds between alerts from same IP
+ALERT_COOLDOWN_SECS=30          # reserved: not read by the code (dedup is DEDUP_WINDOW_SECS)
 
 # ── IP Filtering ─────────────────────────────────────────────────────────
 IP_ALLOWLIST=                   # IPs or CIDR ranges; skip detection entirely
 IP_BLOCKLIST=                   # IPs or CIDR ranges; auto-flag all traffic
 
 # Trusted outbound (JSON): skip detection for specific src→domain pairs
-# TRUSTED_OUTBOUND={"[INTERNAL_IP]": ["relay.nas-provider.com"]}
+# TRUSTED_OUTBOUND={"192.168.1.20": ["relay.nas-provider.com"]}
 
 # ── JA3 ──────────────────────────────────────────────────────────────────
 JA3_ENABLED=true
 MALICIOUS_JA3_FILE=             # Path to file with one JA3 hash per line
 
-# ── ML Tracking ───────────────────────────────────────────────────────────────
-ML Tracking_TRACKING_URI=            # Empty = use local model files
-ML Tracking_REGISTRY_NAME=cnds
+# ── MLflow ───────────────────────────────────────────────────────────────
+MLFLOW_TRACKING_URI=            # Empty = use local model files
+MLFLOW_REGISTRY_NAME=cnds
 
 # ── Adaptive Weights ─────────────────────────────────────────────────────
 ADAPTIVE_WEIGHTS_ENABLED=false
@@ -229,10 +232,10 @@ GUARDIAN_ENABLED=false          # Master switch — review GUARDIAN_WHITELIST fi
 GUARDIAN_MIN_SEVERITY=critical  # low/medium/high/critical
 GUARDIAN_POLL_INTERVAL_SECS=15
 GUARDIAN_BLOCK_MINUTES=30       # Auto-rollback delay
-GUARDIAN_WHITELIST=[GATEWAY_IP],[THIS_HOST_IP]  # NEVER a broad LAN CIDR — see below
+GUARDIAN_WHITELIST=192.168.1.1,192.168.1.62  # NEVER a broad LAN CIDR — see below
 GUARDIAN_CIRCUIT_MAX_ACTIONS=5
 GUARDIAN_CIRCUIT_WINDOW_SECS=600
-ADGUARD_URL=http://[ADGUARD_HOST]:8001
+ADGUARD_URL=http://192.168.1.62:8001
 ADGUARD_USERNAME=
 ADGUARD_PASSWORD=
 ```
@@ -313,11 +316,11 @@ If models are absent, CNDS starts in **rules-only mode**. The `/health` endpoint
 {"engines": {"supervised": false, "isolation_forest": false, "lstm": false, "rules": true}}
 ```
 
-### Loading models from ML Tracking
+### Loading models from MLflow
 
 ```bash
-ML Tracking_TRACKING_URI=http://ML Tracking-server:5000
-ML Tracking_REGISTRY_NAME=cnds
+MLFLOW_TRACKING_URI=http://mlflow-server:5000
+MLFLOW_REGISTRY_NAME=cnds
 ```
 
 CNDS will attempt to load registered model versions from the registry instead of local files. Falls back to local files if registry is unreachable.
@@ -348,7 +351,7 @@ The guardian (`src/guardian/`) turns critical-severity detections into automated
 The only backend shipped today is `AdGuardBackend` — DNS-level blocking via [AdGuard Home](https://adguard.com/en/adguard-home/overview.html)'s access-control API. This requires an AdGuard Home instance already running as your network's DNS resolver:
 
 ```bash
-ADGUARD_URL=http://[ADGUARD_HOST]:8001
+ADGUARD_URL=http://192.168.1.62:8001
 ADGUARD_USERNAME=your-adguard-user
 ADGUARD_PASSWORD=your-adguard-password
 ```
@@ -358,7 +361,7 @@ If your network's router/firewall has no usable API (common on consumer/ISP-supp
 ### 2. Build the whitelist — do this before enabling
 
 ```bash
-GUARDIAN_WHITELIST=[GATEWAY_IP],[YOUR_DEVICE_IP_1],[YOUR_DEVICE_IP_2],...
+GUARDIAN_WHITELIST=192.168.1.1,192.168.1.10,192.168.1.11,...
 ```
 
 **Never include a broad LAN range here** (e.g. `192.168.1.0/24`, or any CIDR covering the whole subnet the detector monitors). The detector captures traffic on that exact network — whitelisting the whole range means the guardian will never block anything it detects, silently defeating the entire feature. List your gateway, your own infrastructure hosts, and your personal devices' IPs explicitly instead.
@@ -434,13 +437,25 @@ python siem/syslog/forwarder.py --listen-port 5514 --target-host siem-server --t
    ```bash
    openssl rand -hex 32
    ```
-2. Create initial admin user via API on first startup:
+2. Create the initial admin user directly in the database. Once `JWT_SECRET` is set, `POST /api/auth/users` requires an admin Bearer token (an `X-API-Key` does not satisfy it), so the first admin cannot be created through the API:
    ```bash
-   curl -X POST http://localhost:8000/api/auth/users \
-     -H "X-API-Key: $INITIAL_API_KEY" \
-     -d '{"username": "admin", "password": "strong-password", "role": "admin"}'
+   venv/bin/python - <<'EOF'
+   import asyncio
+   from src.api.database import AsyncSessionLocal, init_db
+   from src.api.models import User
+   from src.api.auth import hash_password
+
+   async def main():
+       await init_db()
+       async with AsyncSessionLocal() as db:
+           db.add(User(username="admin", password_hash=hash_password("strong-password"), role="admin"))
+           await db.commit()
+
+   asyncio.run(main())
+   EOF
    ```
-3. Disable legacy API key by removing `API_KEY` from `.env`.
+   (run with `DATABASE_URL` pointing at the production database). Further users can then be created with `POST /api/auth/users` and an admin token.
+3. `JWT_SECRET` only protects the role-gated routes; keep `API_KEY` (or a reverse proxy) in place if the read routes must not be public.
 
 ### TLS
 

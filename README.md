@@ -35,7 +35,7 @@
         └───────┬────────┘    → logger + SQLite  →  FastAPI
                 │
                 ├─► SIEM (Splunk / Elastic / Syslog-CEF)
-                ├─► Webhook / Telegram notifications
+                ├─► Webhook / Telegram notifications (POST /api/predict path; see note below)
                 ├─► [MCP Server] (optional, read-only)  →  Claude Code / Desktop
                 └─► [Guardian] (optional)  critical alert → whitelist check →
                                             block src_ip (AdGuard DNS) → auto-rollback timer
@@ -52,9 +52,11 @@
 | **Rules** | Flow metadata + payload bytes + JA3 hashes | Threshold rules | ICMP floods, SYN scans, SQLi, XSS, LFI, large payloads, asymmetric upload, malicious TLS fingerprints |
 | **Threat Intelligence** | IPs, JA3 hashes, domains | External feeds (AbuseIPDB, JA3 blacklists, MISP) | Known-bad IPs, malicious JA3 fingerprints, threat intel domains |
 
-Default ensemble weights: Supervised 30 %, Isolation Forest 20 %, Rules 25 %, Baseline 15 %, LSTM 10 %.
+Default ensemble weights (`src/config.py`): Supervised 30 %, Isolation Forest 20 %, Rules 25 %, Baseline 15 %, LSTM 10 %. The shipped `.env.example` sets different values, see Configuration.
 Any missing engine has its weight redistributed proportionally across the active engines.
 Rules carries a deliberately high weight so a deterministic signature match is actually felt in the blend; in addition, any rule listed in `CRITICAL_RULES` forces an alert regardless of how the weighted engines vote.
+
+**Two detection paths.** The live-capture path (`main.py` → `src/pipeline.py`) runs all five engines plus threat-intel, trusted-outbound filtering and `(src_ip, attack_type)` dedup, then persists the alert with GeoIP and MITRE data. `POST /api/predict` (`src/api/routers/predict.py`) runs only supervised / Isolation Forest / LSTM / rules (no baseline engine, no threat-intel) and additionally applies the IP allow/block lists, confidence decay, suppression rules, incident correlation, the `/ws/alerts` broadcast and webhook/Telegram notifications. Those extras are not invoked for alerts written by the capture path; the Guardian sends its own notifications.
 
 ### Unsupervised Baseline Training
 
@@ -92,7 +94,7 @@ See [`doc/unsupervised.md`](doc/unsupervised.md) for the full developer referenc
 
 ### MITRE ATT&CK Mapping
 
-Every alert is automatically enriched with [MITRE ATT&CK](https://attack.mitre.org/) technique IDs. Mappings cover both supervised model labels (14 attack types) and rule triggers (11 rules including `malicious_ja3`). Techniques are deduplicated when multiple sources map to the same ID.
+Every alert is automatically enriched with [MITRE ATT&CK](https://attack.mitre.org/) technique IDs. Mappings cover 14 CIC-IDS2017-style attack labels (e.g. `DoS Hulk`, `PortScan`, `Web Attack – XSS`) and 11 rule triggers (including `malicious_ja3`). Techniques are deduplicated when multiple sources map to the same ID. The UNSW-NB15 classes the FT-Transformer actually emits (`Exploits`, `Fuzzers`, `Reconnaissance`, ...) have no entry, except `DoS`, which partial-matches the first `DoS *` key; for those alerts only the rule-based techniques are attached.
 
 Example alert payload:
 ```json
@@ -147,6 +149,7 @@ CNDS can go beyond detection: the **Guardian** module (`src/guardian/`) is a bac
 - **Automatic rollback:** every block expires after `GUARDIAN_BLOCK_MINUTES` and is automatically undone — a false positive locks a device out temporarily, never permanently, unless a human confirms it.
 - **Telegram inline buttons (optional):** when `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID` are set, each auto-block is sent with **Confirm** (make permanent) / **Undo now** buttons, handled via long-polling `getUpdates` — not a webhook, since most home/lab deployments have no public HTTPS endpoint for Telegram's servers to call back into. Without a token, the guardian still blocks and auto-rolls-back on schedule; it just can't be confirmed/undone early via chat.
 - **Off by default:** `GUARDIAN_ENABLED=false`. Review and populate `GUARDIAN_WHITELIST` before enabling.
+- **Runs inside the API process:** `guardian_loop`, `guardian_expiry_loop` and the Telegram listener are started by the FastAPI lifespan, so the Guardian only runs where `src.api.main:app` runs (the `api` compose service, or `main.py --api`) — not in a capture-only `main.py`.
 
 ```bash
 # .env
@@ -154,7 +157,7 @@ GUARDIAN_ENABLED=true
 GUARDIAN_MIN_SEVERITY=critical
 GUARDIAN_BLOCK_MINUTES=30
 GUARDIAN_WHITELIST=192.168.1.1,192.168.1.10,192.168.1.11   # gateway + your own devices
-ADGUARD_URL=http://[ADGUARD_HOST]:8001
+ADGUARD_URL=http://192.168.1.62:8001
 ADGUARD_USERNAME=
 ADGUARD_PASSWORD=
 ```
@@ -253,8 +256,11 @@ git clone https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-Sys
 cd Cognitive-Intrusion-Detection-System
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
+pip install torch --index-url https://download.pytorch.org/whl/cpu   # optional: FT-Transformer, LSTM, baseline engine
 cp .env.example .env
 ```
+
+`torch` is deliberately not in `requirements.txt` (the Dockerfile installs `torch==2.5.1` CPU wheels separately). Without it the FT-Transformer, LSTM and baseline engines report unavailable and are skipped. The Docker image uses Python 3.11 (`python:3.11-slim`); the dev venv in this checkout runs 3.12.
 
 ### 2. Add models
 
@@ -322,15 +328,18 @@ uvicorn src.api.main:app --host 0.0.0.0 --port 8000
 # Stop automatically after N seconds
 sudo venv/bin/python main.py --duration 60
 
-# Docker Compose (API + detector + Streamlit dashboard)
-# NOTE: The default SQLite backend does not support concurrent writers.
-# In docker-compose, only the API service writes to the DB.
-# For production multi-container setups, use PostgreSQL:
-#   DATABASE_URL=postgresql+asyncpg://user:pass@db:5432/cnds
+# Docker Compose (postgres + api + detector; the dashboard is opt-in)
+# POSTGRES_PASSWORD must be set in .env — compose refuses to start without it.
+# api and detector both write to the same PostgreSQL service (the compose file
+# overrides DATABASE_URL for them); SQLite is not used in this topology.
 docker-compose up -d
 # API:       http://localhost:8000
+docker-compose --profile dashboard up -d    # adds the Streamlit dashboard
 # Dashboard: http://localhost:8501
+docker-compose --profile demo up demo-seed  # optional one-shot synthetic data
 ```
+
+`main.py --api` always serves on `0.0.0.0:8000`; `API_HOST` / `API_PORT` are defined in `src/config.py` but are not read by `main.py` or by the Dockerfile `CMD`, so change the port with the uvicorn `--port` flag or the compose port mapping.
 
 ---
 
@@ -342,9 +351,9 @@ Base URL: `http://localhost:8000`
 |---|---|---|
 | `/health` | GET | Engine availability + capture stats |
 | `/api/predict` | POST | Run all engines on supplied features |
-| `/api/alerts` | GET | List alerts (filter: `severity`, `src_ip`, `acknowledged`) |
-| `/api/alerts/export` | GET | Export alerts as CSV/JSON (filter: `format`, `severity`, `hours`) |
-| `/api/alerts/trends` | GET | Alert counts bucketed by hour/day (filter: `hours`, `bucket`) |
+| `/api/alerts` | GET | List alerts (filter: `severity`, `src_ip`, `acknowledged`, `start`, `end`, `hours`; paging: `limit` ≤ 500, `offset`) |
+| `/api/alerts/export` | GET | Export alerts as CSV/JSON (filter: `format`, `severity`, `src_ip`, `hours`, `limit` ≤ 10000) — requires `admin` or `analyst` when JWT is on |
+| `/api/alerts/trends` | GET | Alert counts bucketed by hour/day (filter: `hours` 1–168, `bucket`) |
 | `/api/alerts/{alert_id}` | GET | Get single alert by ID |
 | `/api/alerts/{alert_id}` | PATCH | Acknowledge alert, add notes, link to incident |
 | `/api/incidents` | GET / POST | Incident management (POST requires admin/analyst) |
@@ -352,13 +361,19 @@ Base URL: `http://localhost:8000`
 | `/api/suppression-rules` | GET / POST | List or create suppression rules (POST requires admin/analyst) |
 | `/api/suppression-rules/{rule_id}` | DELETE | Remove a suppression rule (requires admin) |
 | `/api/adaptive-weights` | GET | Compute adaptive engine weights from feedback |
+| `/api/baseline/status` | GET | Unsupervised baseline collector, trigger progress, engine info, drift (any role when JWT is on) |
+| `/api/baseline/windows` | GET | History of trained baseline windows (`limit` 1–20) |
 | `/api/dns-log` | GET | DNS query logs (filter: `src_ip`) |
-| `/api/auth/token` | POST | Issue JWT token (when `JWT_SECRET` is set) |
+| `/api/auth/token` | POST | Issue JWT token from a JSON body `{"username", "password"}` (501 unless `JWT_SECRET` is set) |
 | `/api/auth/users` | GET / POST | User management (requires admin) |
 | `/api/auth/users/{user_id}` | DELETE | Delete user (requires admin) |
 | `/ws/alerts` | WebSocket | Real-time alert stream (`?token=JWT` when auth enabled) |
-| `/metrics` | GET | Monitoring Service metrics (when `Monitoring Service_ENABLED=true`) |
+| `/metrics` | GET | Prometheus metrics (when `PROMETHEUS_ENABLED=true`) |
 | `/docs` | GET | Swagger UI (auto-generated) |
+
+**Time filters on `GET /api/alerts`.** `start` / `end` are inclusive ISO 8601 bounds (naive values are read as UTC; `start` after `end` returns 422). `hours` is the "last N hours" shorthand and must be between 1 and 87600 (10 years); larger values return 422 instead of a 500. The same `hours` bound applies to `/api/alerts/export`, which has no `start`/`end`. When several time filters are given they all apply (AND). See [ADR 0001](docs/adr/0001-date-range-filter-get-api-alerts.md) and [ADR 0002](docs/adr/0002-bound-hours-get-api-alerts-api-alerts.md).
+
+**Authentication.** The API refuses to start unless `API_KEY` or `JWT_SECRET` is set, or `AUTH_DISABLED=true` (lab use only; it logs a warning). `API_KEY` adds a legacy `X-API-Key` header check on every route except `/health`, `/docs`, `/openapi.json`, `/metrics` and `/api/auth/*` (`/ws/alerts` is a WebSocket and checks the credential in its own handler: the key via `X-API-Key` or `?key=` in key-only mode). `JWT_SECRET` turns on `Authorization: Bearer` checks, but only on routes that declare a role: `/api/alerts/export`, `POST /api/incidents`, `POST`/`DELETE /api/suppression-rules`, `/api/baseline/*` and `/api/auth/users*`, plus the `/ws/alerts` token (with JWT on, the token is the only accepted credential). The remaining read routes (`GET /api/alerts`, `/api/stats`, `/api/incidents`, `/api/predict`, ...) stay open under JWT alone, so combine JWT with `API_KEY` or a reverse proxy if the API is exposed.
 
 ### Example: manual prediction
 
@@ -366,7 +381,7 @@ Base URL: `http://localhost:8000`
 curl -X POST http://localhost:8000/api/predict \
   -H "Content-Type: application/json" \
   -d '{
-    "src_ip": "[CLIENT_IP]",
+    "src_ip": "192.168.1.50",
     "dst_ip": "10.0.0.1",
     "dst_port": 80,
     "protocol": 6,
@@ -437,6 +452,8 @@ pytest tests/test_flow_extractor.py -v
 
 Copy `.env.example` to `.env` and adjust as needed.
 
+**Where `.env` is read.** `docker-compose.yml` loads `.env.example` and then `.env` as `env_file` for `api`, `detector` and `demo-seed`. The Python code itself does not load `.env` (there is no `python-dotenv` call in `src/`), so for a bare `main.py` / `uvicorn` run export the variables yourself (`uvicorn ... --env-file .env` works for the API-only command; for `sudo main.py` use `set -a; . ./.env; set +a; sudo -E venv/bin/python main.py`). Because compose loads `.env.example` first, the containers run with the weights written there (supervised 0.35, iforest 0.25, lstm 0.15, rules 0.05, baseline 0.20) unless `.env` overrides them; the table below lists the defaults of `src/config.py`, which apply to bare runs.
+
 **Note:** Configuration is validated on startup. Invalid settings (e.g., weights not summing to 1.0) will cause a `ConfigurationError`.
 
 | Variable | Default | Description |
@@ -449,7 +466,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `ACTIVE_IDLE_THRESH` | `1.0` | Seconds of inactivity to mark a flow idle |
 | `HOST_WINDOW_SIZE` | `100` | Packet history window per IP for host features |
 | `MAX_TRACKED_IPS` | `5000` | Max IPs tracked by host extractor / LSTM buffers |
-| `MIN_PACKETS_FOR_ML` | `10` | Min packets before ML engines activate |
+| `MIN_PACKETS_FOR_ML` | `10` | Reserved — defined in `src/config.py` and reported by the MCP `get_detection_config` tool, but not read by the detection code |
 | `ENSEMBLE_THRESHOLD` | `0.55` | Score above which an alert fires |
 | `WEIGHT_SUPERVISED` | `0.30` | Supervised engine weight |
 | `WEIGHT_IFOREST` | `0.20` | Isolation Forest weight |
@@ -459,11 +476,11 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `LARGE_PAYLOAD_BYTES` | `10000` | Forward payload size (bytes) that triggers the large-payload rule |
 | `MAX_PAYLOAD_SAMPLES` | `50` | Max payload samples stored per flow for feature extraction |
 | `PAYLOAD_SAMPLE_BYTES` | `4096` | Max bytes kept per payload sample |
-| `RATE_SPIKE_MULTIPLIER` | `2.0` | Multiplier for rate-spike rule detection |
+| `RATE_SPIKE_MULTIPLIER` | `2.0` | Reserved — no rate-spike rule exists in `src/engines/rules.py`; the value is only imported and reported |
 | `ICMP_FLOOD_THRESHOLD` | `50` | ICMP packet count that triggers flood rule |
 | `PORT_SCAN_THRESHOLD` | `20` | SYN count threshold for scan detection |
-| `ALERT_COOLDOWN_SECS` | `60` | Seconds before a duplicate alert can fire again |
-| `DEDUP_WINDOW_SECS` | `300` | Alert deduplication window (seconds) |
+| `ALERT_COOLDOWN_SECS` | `60` | Reserved — only reported by `get_detection_config`; duplicate suppression is `DEDUP_WINDOW_SECS` |
+| `DEDUP_WINDOW_SECS` | `300` | Alert deduplication window per `(src_ip, attack_type)` (seconds), applied by the capture pipeline and `/api/predict` |
 | `MODELS_DIR` | `models` | Directory containing model files |
 | `RF_MODEL_FILE` | `rf_model.joblib` | Full RF model (gitignored, fallback only) |
 | `RF_LITE_MODEL_FILE` | `rf_lite_model.joblib` | Bundled lite RF model (committed, second-tier fallback) |
@@ -474,27 +491,31 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `FT_SCORE_THRESHOLD` | `0.50` | Min FT anomaly score (1 − P(Benign)) to contribute |
 | `MLFLOW_FT_REGISTRY_NAME` | `ml-ids-unified-ft-transformer` | MLflow registered model name to load FT from |
 | `MLFLOW_FT_STAGE` | `None` | MLflow stage to pin (default = latest version) |
+| `IF_CONTAMINATION`, `IF_N_ESTIMATORS`, `IF_MIN_SAMPLES`, `IF_TRAINING_STATUS_FILE` | `0.05`, `200`, `100`, `/tmp/cnds_if_training_status.json` | Reserved — defined in `src/config.py` but not read; the baseline `WindowTrainer` uses its own constructor defaults (contamination 0.01, 200 estimators) |
 | `IF_MODEL_FILE` | `isolation_forest.joblib` | Isolation Forest model filename |
 | `IF_SCALER_FILE` | `if_scaler.joblib` | IF scaler filename |
 | `LSTM_MODEL_FILE` | `lstm_autoencoder.pt` | LSTM model filename |
 | `LSTM_CONFIG_FILE` | `lstm_config.json` | LSTM config filename |
 | `DATABASE_URL` | `sqlite+aiosqlite:///./cnds.db` | SQLite or PostgreSQL URL |
-| `API_HOST` | `0.0.0.0` | API bind address |
-| `API_PORT` | `8000` | API listen port |
+| `API_HOST` | `0.0.0.0` | Reserved — not read by `main.py`, uvicorn or the Dockerfile (bind is fixed to `0.0.0.0:8000`) |
+| `API_PORT` | `8000` | Reserved — see `API_HOST` |
 | `API_KEY` | _(empty)_ | API key (`X-API-Key`); the API refuses to start if neither this nor `JWT_SECRET` is set, unless `AUTH_DISABLED=true` |
 | `AUTH_DISABLED` | `false` | Only `true` runs the API without auth (logs a warning); lab/local use only |
 | `CORS_ORIGINS` | _(empty)_ | Comma-separated allowed origins; defaults to `http://localhost:3000` |
 | `ATTACK_TYPE_WEIGHTS` | `{}` | JSON: per-attack-type engine weight overrides |
-| `CALIBRATION_TEMPERATURE` | `1.0` | Platt scaling temperature (>1 softer, <1 sharper) |
-| `ML Tracking_TRACKING_URI` | `http://[MAIN_NODE_IP]:5050` | ML Tracking server URL; empty disables ML Tracking |
-| `ML Tracking_REGISTRY_NAME` | `cnds` | ML Tracking model registry name |
-| `AWS_ACCESS_KEY_ID` | — | S3-compatible storage access key for ML Tracking artifact store |
-| `AWS_SECRET_ACCESS_KEY` | — | S3-compatible storage secret key for ML Tracking artifact store |
-| `ML Tracking_S3_ENDPOINT_URL` | `http://[BACKUP_SERVER_IP]:9000` | S3-compatible storage S3 endpoint for ML Tracking artifacts |
+| `CALIBRATION_TEMPERATURE` | `1.0` | Platt scaling temperature in (0, 10] (>1 softer, <1 sharper) |
+| `CRITICAL_RULES` | `payload:sql_injection,payload:command_injection,payload:log4j,payload:shellshock,payload:xss,payload:path_traversal,malicious_ja3` | Comma-separated rule names that force `is_anomaly` and score 1.0 regardless of the weighted blend |
+| `TRUSTED_OUTBOUND` | `{}` | JSON `{"<src_ip>": ["domain.suffix", ...]}`; flows from that IP to a reverse-resolved matching host skip detection (capture pipeline only) |
+| `FT_TEMPERATURE` | `2.0` | Logit temperature for the FT-Transformer softmax, range [0.1, 10]; `1.0` disables scaling |
+| `MLFLOW_TRACKING_URI` | `http://your-mlflow-host:5050` | MLflow server URL; empty disables MLflow |
+| `MLFLOW_REGISTRY_NAME` | `cnds` | MLflow model registry name |
+| `AWS_ACCESS_KEY_ID` | — | S3-compatible storage access key for MLflow artifact store |
+| `AWS_SECRET_ACCESS_KEY` | — | S3-compatible storage secret key for MLflow artifact store |
+| `MLFLOW_S3_ENDPOINT_URL` | `http://your-minio-host:9000` | S3-compatible storage S3 endpoint for MLflow artifacts |
 | `JWT_SECRET` | _(empty)_ | JWT signing secret; if empty, `API_KEY` or `AUTH_DISABLED=true` is required |
 | `JWT_ALGORITHM` | `HS256` | JWT signing algorithm |
 | `JWT_EXPIRE_MINUTES` | `60` | JWT token expiry (minutes) |
-| `Monitoring Service_ENABLED` | `false` | Enable Monitoring Service metrics at `/metrics` |
+| `PROMETHEUS_ENABLED` | `false` | Enable Prometheus metrics at `/metrics` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | _(empty)_ | OpenTelemetry OTLP endpoint |
 | `GEOIP_DB_PATH` | _(empty)_ | Path to GeoLite2-City.mmdb; empty disables GeoIP |
 | `CORRELATION_WINDOW_SECS` | `300` | Time window for alert correlation (seconds) |
@@ -515,7 +536,8 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `LOG_FORMAT` | `text` | Log output format: `text` or `json` (structured) |
 | `JA3_ENABLED` | `true` | Extract JA3 fingerprints from TLS ClientHello |
 | `MALICIOUS_JA3_FILE` | _(empty)_ | Path to known-malicious JA3 hashes (one per line); empty disables |
-| `BASELINE_COLLECTION_ENABLED` | `true` | Enable unsupervised baseline collection and training |
+| `BASELINE_COLLECTION_ENABLED` | `true` | Enable unsupervised baseline collection and training (read by `main.py` only; any value other than `false` keeps it on) |
+| `BASELINE_DRIFT_WARN` / `BASELINE_DRIFT_CRIT` | `0.30` / `0.60` | Drift-score thresholds for the `warning` / `critical` verdicts (below `WARN` it is `nominal`) in `/api/baseline/status` |
 | `ABUSEIPDB_URL` | _(empty)_ | AbuseIPDB blacklist URL; empty disables IP feed |
 | `ABUSEIPDB_API_KEY` | _(empty)_ | AbuseIPDB API key |
 | `MALICIOUS_JA3_URL` | _(empty)_ | URL to fetch known-malicious JA3 hashes (one per line) |
@@ -532,6 +554,19 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `ADGUARD_URL` | `http://192.168.1.62:8001` | AdGuard Home base URL used as the enforcement backend |
 | `ADGUARD_USERNAME` | _(empty)_ | AdGuard Home basic-auth username |
 | `ADGUARD_PASSWORD` | _(empty)_ | AdGuard Home basic-auth password |
+| `TRIAGE_MODE` | `workflow` | `workflow` (context in the prompt, no tools) or `agent` (read-only `cnds` MCP tools) |
+| `TRIAGE_MIN_SEVERITY` | `high` | Lowest severity the triage agent annotates |
+| `TRIAGE_LOOKBACK_HOURS` | `24` | How far back the triage agent looks for unannotated alerts |
+| `TRIAGE_BATCH_SIZE` | `10` | Alerts per run |
+| `TRIAGE_MIN_CONFIDENCE` | `0.6` | Below this the stored verdict becomes `needs_human` |
+| `TRIAGE_DAILY_BUDGET_USD` / `TRIAGE_MAX_USD_PER_ALERT` | `2.0` / `0.25` | Rolling 24 h and per-alert spend caps |
+| `TRIAGE_MAX_TURNS` / `TRIAGE_TIMEOUT_SECS` | `8` / `180` | Per-call limits |
+| `TRIAGE_POLL_INTERVAL_SECS` | `300` | Poll interval for `--loop` |
+| `TRIAGE_CLAUDE_BIN` / `TRIAGE_CLAUDE_MODEL` | `claude` / _(empty = CLI default)_ | Claude CLI binary and model |
+| `TRIAGE_CLAUDE_BARE` | `true` | Pass `--bare` (needs `ANTHROPIC_API_KEY`); `false` uses the CLI's own login |
+| `TRIAGE_MCP_CONFIG` | _(empty)_ | Agent mode only: MCP config JSON registering the read-only `cnds` server |
+| `POSTGRES_PASSWORD` | _(required for compose)_ | Read by `docker-compose.yml` only; compose refuses to start without it |
+| `CNDS_API_URL` | `http://localhost:8000` | Read by `dashboard/app.py` (set to `http://api:8000` by compose) |
 
 ---
 
@@ -541,7 +576,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 ├── main.py                      # Entry point: capture + CLI
 ├── docker-compose.yml
 ├── Dockerfile
-├── CI/CDfile                  # CI/CD: build → lint → test → Quality Analysis → push
+├── Jenkinsfile                  # CI/CD: build → lint/security → test → SonarQube → advisory Claude PR review → push (master only)
 ├── sonar-project.properties
 ├── requirements.txt
 ├── requirements-mcp.txt         # Optional: MCP server SDK (src/mcp_server/)
@@ -550,8 +585,13 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   ├── env.py                   # Alembic config wired to CNDS models
 │   └── versions/                # Auto-generated migration scripts
 ├── scripts/
+│   ├── train_rf.py                # Train the full / lite Random Forest
 │   ├── retrain_with_payload.py    # Retrain RF with 86 features (76 flow + 10 payload)
 │   ├── pcap_replay.py             # PCAP replay for offline threat hunting / model eval
+│   ├── eval_engines.py            # Per-engine evaluation on synthetic samples
+│   ├── eval_triage.py             # Triage agent agreement with analyst labels
+│   ├── generate_demo_models.py    # Synthetic IF/LSTM demo models (not for production)
+│   ├── demo_seed.py               # Seed demo data (compose `demo-seed` service)
 │   └── smoke_test_ft_unified.py   # Reproduce FT-Transformer F1 macro on the held-out test split
 ├── siem/                        # SIEM integration templates
 │   ├── README.md                # Setup guide for all platforms
@@ -582,6 +622,8 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   ├── config.py                # All settings (env-var driven)
 │   ├── pipeline.py              # Detection pipeline callback (flow → engines → alert)
 │   ├── mlflow_registry.py       # Unified MLflow model registry
+│   ├── timeutils.py             # utcnow(): naive-UTC helper for DateTime columns
+│   ├── triage/                  # Out-of-process advisory triage agent (python -m src.triage)
 │   ├── models/
 │   │   └── ft_transformer.py    # FTTransformer class + load/build helpers + UNIFIED_CLASS_LABELS
 │   ├── capture/
@@ -600,10 +642,12 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   │   ├── ft_transformer_engine.py  # FT-Transformer engine (MLflow → local fallback)
 │   │   ├── isolation_forest.py  # Isolation Forest wrapper
 │   │   ├── lstm_autoencoder.py  # LSTM Autoencoder wrapper
+│   │   ├── baseline_engine.py   # Live-trained IF + LSTM baseline engine
 │   │   ├── lstm_model.py        # LSTM Autoencoder architecture (nn.Module)
 │   │   └── rules.py             # Rule-based engine (incl. JA3 rules)
 │   ├── unsupervised/
 │   │   ├── collector.py         # Thread-safe ring-capped feature vector buffer
+│   │   ├── drift.py             # Drift score vs the last trained window
 │   │   ├── triggers.py          # CompositeTrigger: four-condition window trigger
 │   │   ├── window_trainer.py    # IsolationForest + LSTM Autoencoder training + MLflow logging
 │   │   ├── artifact_schema.py   # Canonical MLflow artifact path constants
@@ -633,16 +677,17 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   │   └── server.py            # MCP Server + stdio transport
 │   └── api/
 │       ├── main.py              # FastAPI application
-│       ├── models.py            # SQLAlchemy ORM (Alert, Incident, MitigationAction)
+│       ├── models.py            # SQLAlchemy ORM (Alert, Incident, SuppressionRule, MitigationAction, TriageAnnotation, User)
 │       ├── schemas.py           # Pydantic request/response schemas
 │       ├── database.py          # Async SQLAlchemy session setup
 │       ├── auth.py              # JWT authentication and RBAC
-│       ├── metrics.py           # Monitoring Service metrics + OpenTelemetry
+│       ├── metrics.py           # Prometheus metrics + OpenTelemetry
 │       ├── rate_limit.py        # Per-IP rate limiting middleware
 │       └── routers/
 │           ├── predict.py       # POST /api/predict
-│           ├── alerts.py        # Alert + incident CRUD
-│           ├── auth.py          # POST /api/auth/token
+│           ├── alerts.py        # Alert, incident, suppression, stats, adaptive-weights, dns-log
+│           ├── auth.py          # POST /api/auth/token + user management
+│           ├── baseline.py      # GET /api/baseline/{status,windows}
 │           └── websocket.py     # WebSocket /ws/alerts
 ├── sandbox/                     # End-to-end test environments
 │   ├── orchestrator.py          # API-level sandbox (CI + demo modes)
@@ -672,14 +717,20 @@ Copy `.env.example` to `.env` and adjust as needed.
     ├── test_payload_features.py
     ├── test_ip_lists.py          # IP allowlist/blocklist tests
     ├── test_threat_intel.py      # Threat intelligence feed tests (32 tests)
+    ├── test_triage.py            # Triage agent: schema, guards, runner (26 tests)
+    ├── test_pipeline.py / test_predict.py / test_suppression.py / test_correlation.py / ...
     ├── test_guardian.py          # Guardian: AdGuard backend, whitelist, circuit breaker
     ├── test_mcp_server.py        # MCP server: queries, sanitisation, read-only guarantees (103 tests)
     ├── test_rules_engine.py
     ├── test_siem.py             # CEF syslog forwarder tests
     ├── test_ft_transformer_engine.py  # FT-Transformer integration tests (load + predict + dataset checks)
+    ├── engines/
+    │   └── test_baseline_engine.py  # BaselineEngine (24 tests)
     └── unsupervised/
-        └── test_collector.py    # BaselineCollector, CompositeTrigger, ProvenanceMetadata unit tests
+        └── test_collector.py    # BaselineCollector, CompositeTrigger, ProvenanceMetadata unit tests (43 tests)
 ```
+
+`pytest --collect-only -q` reports the current count (about 580 tests without `torch`, and it grows with every change, so this README does not pin an exact number). `pytest.ini` deselects `slow`-marked tests (`tests/unsupervised/test_window_stability.py`), and modules that need `torch` (`test_ft_transformer_engine.py`, `test_window_stability.py`) skip themselves where it is not installed, so those add to the count where `torch` is present.
 
 ---
 

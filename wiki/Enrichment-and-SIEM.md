@@ -2,21 +2,36 @@
 
 ## Enrichment Pipeline
 
-Every alert passing the ensemble threshold is enriched before persistence:
+Two paths produce alerts, and they do not enrich identically.
+
+**Live capture** (`main.py` → `src/pipeline.py`):
 
 ```
 EnsembleResult (score, attack_type, triggered_rules)
     ↓
-1. GeoIP lookup (src_ip)          → country, city, lat, lon
-2. MITRE ATT&CK mapping           → [{id, name, tactic}, ...]
-3. Incident correlation check     → auto-create incident if threshold met
-4. Confidence decay check         → reduce score for repeat alerts
-5. Suppression rule check         → discard if in maintenance window
-6. IP list filtering              → allowlist skip / blocklist escalate
-7. Notification dispatch          → webhook / Slack / Telegram
+1. Trusted-outbound filter and threat-intel lookup (before scoring)
+2. Dedup on (src_ip, attack_type) within DEDUP_WINDOW_SECS
+3. Writer thread: GeoIP lookup (src_ip), MITRE ATT&CK mapping, JA3 fields
     ↓
 SQLite / PostgreSQL INSERT
 ```
+
+**`POST /api/predict`** (`src/api/routers/predict.py`):
+
+```
+EnsembleResult
+    ↓
+1. IP allowlist skip / blocklist escalate (before scoring)
+2. Confidence decay on the score
+3. Dedup on (src_ip, attack_type)
+4. GeoIP lookup, MITRE ATT&CK mapping
+5. Suppression rule check         → discard if matched
+6. Incident correlation check     → auto-create incident if threshold met
+    ↓
+INSERT, then WebSocket broadcast and notification dispatch (webhook / Telegram)
+```
+
+IP lists, decay, suppression, correlation, WebSocket broadcast and webhook/Telegram notifications are not applied to alerts written by the capture pipeline.
 
 ---
 
@@ -35,21 +50,21 @@ File: `src/enrichment/geoip.py`
 
 File: `src/enrichment/mitre.py`
 
-Maps `attack_type` (from RF engine) and `triggered_rules` (from rules engine) to ATT&CK technique IDs. Multiple sources deduplicated by technique ID.
+Maps `attack_type` (from the supervised engine) and `triggered_rules` (from rules engine) to ATT&CK technique IDs. Multiple sources deduplicated by technique ID.
 
 | Source | Example | Technique |
 |--------|---------|-----------|
-| attack_type=DoS Hulk | T1498 | Network DoS (Impact) |
-| attack_type=PortScan | T1046 | Network Service Discovery (Discovery) |
-| attack_type=SSH-Patator | T1110 | Brute Force (Credential Access) |
-| attack_type=Web Attack-SQL Injection | T1190 | Exploit Public-Facing App (Initial Access) |
-| attack_type=Bot | T1059 | Command and Scripting Interpreter (Execution) |
-| attack_type=Infiltration | T1071 | App Layer Protocol (C&C) |
-| rule=syn_scan | T1046 | Network Service Discovery |
-| rule=malicious_ja3 | T1071, T1573 | Encrypted Channel |
-| rule=sql_injection_pattern | T1190 | Exploit Public-Facing App |
+| attack_type=DoS Hulk | T1498 | Network Denial of Service (Impact) |
+| attack_type=PortScan | T1046 | Network Service Scanning (Discovery) |
+| attack_type=SSH-Patator | T1110.001 | Password Guessing (Credential Access) |
+| attack_type=Web Attack – Sql Injection | T1190 | Exploit Public-Facing Application (Initial Access) |
+| attack_type=Bot | T1071 | Application Layer Protocol (Command and Control) |
+| attack_type=Infiltration | T1041, T1071 | Exfiltration Over C2 Channel, Application Layer Protocol |
+| rule=syn_scan | T1046 | Network Service Scanning |
+| rule=malicious_ja3 | T1071, T1573 | Application Layer Protocol, Encrypted Channel |
+| rule=payload:sql_injection | T1190 | Exploit Public-Facing Application |
 
-Stored as JSON array: `[{"id": "T1498", "name": "Network DoS", "tactic": "Impact"}]`
+Full tables: [MITRE ATT&CK Mapping](MITRE-ATT&CK-Mapping.md). Stored as JSON array: `[{"id": "T1498", "name": "Network Denial of Service", "tactic": "Impact"}]`
 
 ---
 
@@ -64,7 +79,7 @@ Auto-groups N alerts from the same IP within a time window into a new Incident r
 | `CORRELATION_WINDOW_SECS` | 300 | Time window |
 | `CORRELATION_THRESHOLD` | 5 | Alert count to trigger incident creation |
 
-Incident title auto-generated: `"N attacks detected from {src_ip}"`.
+Incident title auto-generated: `"Correlated attack from {src_ip}"`; further alerts from that IP join the open incident. Correlation runs on the `/api/predict` path.
 
 ---
 
@@ -72,13 +87,13 @@ Incident title auto-generated: `"N attacks detected from {src_ip}"`.
 
 File: `src/enrichment/confidence_decay.py`
 
-Reduces ensemble score for repeat alerts from the same IP using exponential decay:
+Reduces the ensemble score for repeat alerts from the same IP using geometric decay:
 
 ```
-decayed_score = score × exp(-λ × alert_count_in_window)
+decayed_score = score × CONFIDENCE_DECAY_FACTOR ** repeats_in_window     (default factor 0.9, window 300 s)
 ```
 
-Prevents a single noisy IP from generating perpetual high-severity alerts.
+Prevents a single noisy IP from generating perpetual high-severity alerts. Applied on the `/api/predict` path only.
 
 ---
 
@@ -89,10 +104,10 @@ File: `src/enrichment/ip_lists.py`
 | List | Variable | Effect |
 |------|----------|--------|
 | Allowlist | `IP_ALLOWLIST` | Skip detection entirely for these IPs/CIDRs |
-| Blocklist | `IP_BLOCKLIST` | Auto-escalate to CRITICAL severity |
-| Trusted outbound | `TRUSTED_OUTBOUND` | Per-device → domain suffix map; skip detection for matched pairs |
+| Blocklist | `IP_BLOCKLIST` | Auto-escalate to CRITICAL severity (`/api/predict` returns score 1.0, `attack_type: Blocklisted`, no alert row) |
+| Trusted outbound | `TRUSTED_OUTBOUND` | Per-device → domain suffix map; skip detection for matched pairs (capture pipeline only) |
 
-`TRUSTED_OUTBOUND` format (JSON): `{"[INTERNAL_IP]": ["nas-provider.com", "dropbox.com"]}`
+`TRUSTED_OUTBOUND` format (JSON): `{"192.168.1.20": ["nas-provider.com", "dropbox.com"]}`
 DNS reverse lookup with 1-hour TTL cache.
 
 ---
@@ -103,16 +118,19 @@ File: `src/enrichment/suppression.py`
 
 Suppress alerts during scheduled maintenance windows:
 
+`POST /api/suppression-rules` body (the server derives `expires_at` from `duration_minutes`, default 120, max 10080):
+
 ```json
 {
-  "src_ip": "[INTERNAL_IP]",
+  "src_ip": "192.168.1.20",
   "attack_type": null,
-  "expires_at": "2025-04-01T06:00:00Z",
-  "reason": "Scheduled vulnerability scan"
+  "min_severity": null,
+  "reason": "Scheduled vulnerability scan",
+  "duration_minutes": 240
 }
 ```
 
-Expired rules auto-deleted by background cleanup task (every 300s).
+Expired rules auto-deleted by background cleanup task (every 300s). Suppression is applied on the `/api/predict` path only.
 
 ---
 
@@ -124,13 +142,14 @@ Async delivery (non-blocking). Failure does not prevent alert persistence.
 
 | Channel | Variable | Format |
 |---------|----------|--------|
-| Webhook | `WEBHOOK_URLS` | JSON POST with full alert |
-| Slack | `SLACK_WEBHOOK_URL` | Attachment with color-coded severity |
-| Telegram | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` | Formatted message |
+| Webhook / Slack | `WEBHOOK_URLS` (comma-separated) | JSON POST with a summary: `text`, `src_ip`, `dst_ip`, `severity`, `attack_type`, `ensemble_score`, `timestamp` |
+| Telegram | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` | Formatted MarkdownV2 message |
+
+There is no separate Slack variable: a Slack incoming-webhook URL goes in `WEBHOOK_URLS`. Notifications are dispatched from `/api/predict` and by the Guardian (circuit-breaker notice); the capture pipeline does not call them.
 
 Minimum severity filter: `NOTIFY_MIN_SEVERITY` (default: `high`). Alerts below this level are not dispatched.
 
-The optional Guardian module (`src/guardian/`) extends the Telegram channel with an inline **Confirm**/**Undo** keyboard on every auto-block it creates, and receives button presses via `getUpdates` long-polling (not a webhook). See [Architecture and Data Flow](Architecture-and-Data-Flow#guardian-auto-response-optional) and [Deployment](Deployment#guardian-auto-response-optional).
+The optional Guardian module (`src/guardian/`) extends the Telegram channel with an inline **Confirm**/**Undo** keyboard on every auto-block it creates, and receives button presses via `getUpdates` long-polling (not a webhook). See [Architecture and Data Flow](Architecture-and-Data-Flow.md#guardian-auto-response-optional) and [Deployment](Deployment.md#guardian-auto-response-optional).
 
 ---
 
@@ -141,10 +160,10 @@ File: `src/enrichment/adaptive_weights.py`
 When `ADAPTIVE_WEIGHTS_ENABLED=true`, analyst feedback (acknowledged TP/FP) drives weight retuning:
 
 ```
-weight_engine ∝ TP_rate_engine / (TP_rate_engine + FP_rate_engine)
+weight_engine ∝ (TP + 1) / (TP + FP + 2)
 ```
 
-Requires `ADAPTIVE_MIN_SAMPLES` (default 100) acknowledged alerts before activating. Weights are recomputed on `GET /api/adaptive-weights`; must be manually applied to env vars.
+where TP / FP are each engine's share of the engine-score total over acknowledged alerts; an alert counts as a false positive when its notes contain "false positive" (case-insensitive). The result is normalised to sum to 1.0 over supervised / isolation_forest / lstm / rules. Requires `ADAPTIVE_WEIGHTS_ENABLED=true` and `ADAPTIVE_MIN_SAMPLES` (default 100) acknowledged alerts. Weights are recomputed on `GET /api/adaptive-weights`; they must be applied manually through the `WEIGHT_*` variables.
 
 ---
 
@@ -175,7 +194,7 @@ index = security
 sourcetype = cnds:alert
 ```
 
-CNDS sends JSON to Splunk HEC via `WEBHOOK_URLS`. The `savedsearches.conf` includes pre-built correlation searches for each attack class.
+`WEBHOOK_URLS` posts an unauthenticated JSON summary (see [SIEM Integration](SIEM-Integration.md) for the limits: no `Authorization` header, no HEC `event` wrapper), so a direct push to HEC needs a relay. `savedsearches.conf` includes pre-built searches.
 
 ### Elastic / OpenSearch
 
@@ -192,15 +211,16 @@ logstash_cnds.conf:
 
 File: `siem/syslog/forwarder.py`
 
-CEF (Common Event Format) over UDP/TCP to port 514. Compatible with QRadar, ArcSight, and any CEF-aware SIEM.
+CEF (Common Event Format) over UDP (default) or TCP; the port is configurable (514 by default). Compatible with QRadar, ArcSight, and any CEF-aware SIEM.
 
 ```bash
-# Start CEF forwarder
-python siem/syslog/forwarder.py --host [INTERNAL_IP] --port 514 --proto udp
+# Start CEF forwarder (polls GET /api/alerts)
+python siem/syslog/forwarder.py --syslog-host 192.168.1.20 --syslog-port 514 --syslog-proto udp
 ```
 
-CEF Header format:
+CEF line produced by `alert_to_cef()`:
 ```
-CEF:0|CNDS|NetworkIDS|1.0|{attack_type}|{attack_type} detected|{severity_int}|
-src={src_ip} dst={dst_ip} cs1={mitre_id} cs1Label=MITRE_Technique
+CEF:0|CNDS|CognitiveNDS|1.0|{attack_type}|{attack_type}|{severity_int}|
+src={src_ip} dst={dst_ip} spt={src_port} dpt={dst_port} cn1={score} cn1Label=EnsembleScore
+cs1={rules} cs1Label=TriggeredRules cs2={ja3} cs2Label=JA3Hash cs3={mitre_ids} cs3Label=MITRETechniques externalId={id}
 ```

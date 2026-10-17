@@ -19,11 +19,13 @@
         │                          ↳ falls back to Random Forest if no checkpoint
         ├─► [Isolation Forest]      Novelty score  (18 host features)
         ├─► [LSTM Autoencoder]      Sequence score (18 host features)
-        └─► [Rules Engine]          Threshold + pattern + JA3 rules
+        ├─► [Baseline Engine]       Live-trained IF + LSTM from the unsupervised pipeline
+        ├─► [Rules Engine]          Threshold + pattern + JA3 rules
+        └─► [Threat Intelligence]   AbuseIPDB / JA3 / MISP lookups (+0.30 boost)
                 │
                 ▼
         [Ensemble Scorer]
-         weighted confidence fusion
+         weighted confidence fusion + CRITICAL_RULES override
                 │
         ┌───────┴────────┐
         │   Alert fired  │  → MITRE ATT&CK mapping
@@ -36,12 +38,14 @@
 
 ## Key Design Decisions
 
-- **Single capture loop** — one Scapy sniff loop feeds all four feature extractors, avoiding duplicate packet processing.
+- **Single capture loop** — one Scapy sniff loop feeds all the feature extractors (flow, host, payload, JA3), avoiding duplicate packet processing.
 - **Async worker queue** — packets are dispatched to a configurable number of worker threads (`PACKET_WORKERS`, default 4) via a bounded queue (`PACKET_QUEUE_SIZE`, default 20,000).
 - **Flow-based detection** — the dispatcher tracks bidirectional flows. When a flow expires (`FLOW_TIMEOUT` seconds of inactivity), all accumulated features are sent to the engines.
 - **Graceful degradation** — any engine can be missing (no model file). Its weight is redistributed proportionally across the remaining active engines.
+- **Two alert paths** — the capture pipeline (`pipeline.py`) and `POST /api/predict` score independently; suppression, decay, IP lists, correlation, WebSocket broadcast and webhook/Telegram notification run only on the `/api/predict` path (see [Alert Enrichment](Alert-Enrichment.md)).
 - **Dedicated DB writer** — alert persistence uses a separate writer thread with a bounded queue so packet workers are never blocked on I/O.
-- **Guardian is off-hot-path by design** — the optional auto-response module (`src/guardian/`) only polls the alerts table it already wrote to; it never hooks into `pipeline.py` or the capture worker threads.
+- **Guardian is off-hot-path by design** — the optional auto-response module (`src/guardian/`) only polls the alerts table it already wrote to; it never hooks into `pipeline.py` or the capture worker threads. It runs inside the API process (FastAPI lifespan).
+- **MCP server and triage agent are out of process** — `src/mcp_server/` (read-only, stdio) and `src/triage/` (`python -m src.triage`, writes only `triage_annotations`) are separate processes that read the same database; neither can block or acknowledge.
 
 ## Component Map
 
@@ -67,7 +71,8 @@ src/
 │   ├── ft_transformer_engine.py  # FT-Transformer engine (MLflow → local fallback)
 │   ├── isolation_forest.py   # Isolation Forest wrapper
 │   ├── lstm_autoencoder.py   # LSTM Autoencoder wrapper
-│   ├── lstm_model.py        # LSTM Autoencoder architecture (nn.Module)
+│   ├── baseline_engine.py    # Live-trained IF + LSTM baseline engine
+│   ├── lstm_model.py         # LSTM Autoencoder architecture (nn.Module)
 │   └── rules.py              # Rule-based engine (incl. JA3 rules)
 ├── ensemble/
 │   └── scorer.py             # Weighted fusion → EnsembleResult
@@ -80,19 +85,24 @@ src/
 │   ├── notifications.py      # Webhook / Slack / Telegram
 │   ├── confidence_decay.py   # Exponential score decay for repeat alerts
 │   ├── ip_lists.py           # IP allowlist / blocklist
+│   ├── threat_intel.py       # AbuseIPDB / JA3 / MISP feeds
 │   └── dns_logger.py         # DNS query logging
+├── unsupervised/             # Baseline collector, composite trigger, window trainer, drift
+├── mcp_server/               # Read-only MCP server (opt-in, separate process)
+├── triage/                   # Advisory triage agent (opt-in, separate process)
+├── timeutils.py              # utcnow(): naive-UTC helper
 ├── guardian/                  # Auto-response module (opt-in, off by default)
 │   ├── backends.py           # MitigationBackend protocol + AdGuardBackend
 │   ├── engine.py             # guardian_loop / guardian_expiry_loop background tasks
 │   └── telegram_listener.py  # Inline Confirm/Undo buttons (getUpdates long-poll)
 ├── api/                      # FastAPI application
 │   ├── main.py               # App factory, startup hooks, middleware
-│   ├── models.py             # SQLAlchemy ORM (Alert, Incident, etc.)
+│   ├── models.py             # SQLAlchemy ORM (Alert, Incident, SuppressionRule, MitigationAction, TriageAnnotation, User)
 │   ├── schemas.py            # Pydantic request/response models
 │   ├── database.py           # Async session + Alembic migration
 │   ├── auth.py               # JWT + RBAC
-│   ├── metrics.py            # Monitoring Service + OpenTelemetry
+│   ├── metrics.py            # Prometheus + OpenTelemetry
 │   ├── rate_limit.py         # Per-IP rate limiting
-│   └── routers/              # Route modules (predict, alerts, auth, ws)
-└── ML Tracking_registry.py        # Unified ML Tracking model registry
+│   └── routers/              # Route modules (predict, alerts, auth, baseline, websocket)
+└── mlflow_registry.py        # Unified MLflow model registry
 ```

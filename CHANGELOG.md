@@ -15,6 +15,15 @@ All notable changes to this project will be documented in this file.
 - **`get_alert` returns `agent_triage`** — the latest annotation, labelled advisory. The runner reads alerts with `include_triage=False` so a re-triage is not anchored on the previous model opinion.
 - **`scripts/eval_triage.py`** — agreement with analyst labels (`[tp]`/`[fp]` at the start of acknowledgement notes): coverage, deferral rate, precision/recall of `likely_malicious`, guard hit rate, mean cost and latency.
 - **`tests/test_triage.py`** — schema, guards, prompt wrapping, least-privilege CLI argv, CLI output parsing, runner selection/idempotence, failure recording, daily budget, MCP exposure, and an AST check that no triage module imports the Guardian, creates mitigation rows or assigns alert workflow fields.
+- **Date-range filters on `GET /api/alerts`** (#5, [ADR 0001](docs/adr/0001-date-range-filter-get-api-alerts.md)) — optional `start` / `end` (inclusive ISO 8601; naive values are read as UTC; `start` after `end` returns 422) and `hours` (last N hours). All filters combine with `severity`, `acknowledged`, `src_ip` and with each other (AND). Backward compatible.
+
+### Changed
+- **`hours` is bounded on `GET /api/alerts` and `GET /api/alerts/export`** (#16, [ADR 0002](docs/adr/0002-bound-hours-get-api-alerts-api-alerts.md)) — `1 <= hours <= 87600` (10 years, `MAX_HOURS` in `src/api/routers/alerts.py`). Larger values now return 422 instead of an `OverflowError` 500.
+- **Jenkinsfile** — images are pushed to the registry only from `master` (or the legacy single-branch job); other branches build and test only. A new advisory "Claude PR review" stage posts a review on the Gitea PR and never fails the build.
+
+### Fixed
+- **Payload and JA3 attribution** — payload pattern hits and the TLS ClientHello JA3 fingerprint are now attached to their own flow instead of whichever flow from the same host expired next; `payload_matches`, ports and protocol are persisted on alerts written by the capture pipeline.
+- **`sql_injection` and `command_injection` payload regexes** no longer match binary noise.
 
 ## [1.3.0] - 2026-09-14
 
@@ -100,23 +109,23 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - **Bundled lite supervised model** — `models/rf_lite_model.joblib` (1.6MB) committed to the repo; trained on 50k stratified sample of CIC-UNSW-NB15 (91% accuracy, 2.4% FP rate at threshold 0.90). Users get functional intrusion detection on `git clone` with no setup required.
-- **3-tier model load chain** — `SupervisedEngine` now tries: (1) ML Tracking registry, (2) full local `rf_model.joblib`, (3) bundled `rf_lite_model.joblib`.
+- **3-tier model load chain** — `SupervisedEngine` now tries: (1) MLflow registry, (2) full local `rf_model.joblib`, (3) bundled `rf_lite_model.joblib`.
 - **`--lite` flag in `train_rf.py`** — generates the bundled lite model in ~0.3s (50k sample, 25 estimators, max_depth=10, no SMOTE).
 - **`RF_LITE_MODEL_PATH` config** — env var `RF_LITE_MODEL_FILE` overrides the lite model path.
 
 ## [1.0.8] - 2026-04-06
 
 ### Added
-- **ML Tracking artifact store** — model artifacts registered to S3-compatible storage on `[BACKUP_SERVER_IP]:9000`; model `cnds-supervised` available in registry at `[MAIN_NODE_IP]:5050`.
-- **Proxy bypass in ML Tracking init** — `ML Tracking_registry.init()` and `train_rf.py` unset `HTTP_PROXY`/`HTTPS_PROXY` so boto3 reaches the S3-compatible storage LAN endpoint directly.
-- **`.env.example`** — documents `ML Tracking_TRACKING_URI`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `ML Tracking_S3_ENDPOINT_URL` for homelab setup.
+- **MLflow artifact store** — model artifacts registered to S3-compatible storage on `your-minio-host:9000`; model `cnds-supervised` available in registry at `your-mlflow-host:5050`.
+- **Proxy bypass in MLflow init** — `mlflow_registry.init()` and `train_rf.py` unset `HTTP_PROXY`/`HTTPS_PROXY` so boto3 reaches the S3-compatible storage LAN endpoint directly.
+- **`.env.example`** — documents `MLFLOW_TRACKING_URI`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `MLFLOW_S3_ENDPOINT_URL` for homelab setup.
 
 ## [1.0.7] - 2026-04-06
 
 ### Changed
 - **Full Pipeline in `train_rf.py`** — training now wraps preprocessing (clip → log1p on 48 skewed features → StandardScaler) + RF into a single sklearn `Pipeline`; no separate scaler needed at inference time.
 - **Pipeline-aware `SupervisedEngine`** — `_get_classifier()`, `_get_n_features()`, `_get_classes()` helpers unwrap `Pipeline` objects; supports both Pipeline and plain estimator formats transparently.
-- **`ML Tracking_TRACKING_URI` default** — points to homelab server (`[MAIN_NODE_IP]:5050`); set to empty to disable.
+- **`MLFLOW_TRACKING_URI` default** — points to homelab server (`your-mlflow-host:5050`); set to empty to disable.
 
 ## [1.0.6] - 2026-04-06
 
@@ -132,7 +141,7 @@ All notable changes to this project will be documented in this file.
 ## [1.0.5] - 2026-04-06
 
 ### Added
-- **Extended Monitoring Service metrics** — `cnds_alerts_suppressed_total` counter (labels: `reason=dedup|suppression_rule`) and `cnds_ensemble_score` histogram (fine-grained buckets, label: `is_anomaly`).
+- **Extended Prometheus metrics** — `cnds_alerts_suppressed_total` counter (labels: `reason=dedup|suppression_rule`) and `cnds_ensemble_score` histogram (fine-grained buckets, label: `is_anomaly`).
 - **Engine label on alert counter** — `cnds_alerts_total` now includes `engine` label (primary engine by score contribution).
 - **`observe_ensemble_score()`** — called on every `/api/predict` request regardless of whether an alert fires.
 - **`inc_suppressed()`** — incremented on both dedup hits and suppression rule matches.
@@ -143,7 +152,7 @@ All notable changes to this project will be documented in this file.
 ### Changed
 
 - **Pipeline extraction** — detection pipeline callback (`on_flow_complete`, alert persistence, dedup, trusted-outbound filtering) extracted from `main.py` into `src/pipeline.py` for cleaner separation of concerns
-- **CIDR support for IP lists** — `IP_ALLOWLIST` and `IP_BLOCKLIST` now accept CIDR ranges (e.g. `10.0.0.0/8,[CLIENT_IP]`) in addition to individual IPs
+- **CIDR support for IP lists** — `IP_ALLOWLIST` and `IP_BLOCKLIST` now accept CIDR ranges (e.g. `10.0.0.0/8,192.168.1.50`) in addition to individual IPs
 - **Suppression rule caching** — suppression rules are now cached in memory with a 10-second TTL, avoiding a DB query per alert; cache is invalidated on rule create/delete
 - **Payload analyzer simplification** — removed thread-per-regex pattern matching; uses direct `re.search()` on bounded 4KB input instead (pre-screen regex still filters benign payloads)
 - **WebSocket connection limit** — `/ws/alerts` now rejects connections beyond 100 concurrent clients (close code 4029)

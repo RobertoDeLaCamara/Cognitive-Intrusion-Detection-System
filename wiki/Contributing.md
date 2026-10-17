@@ -1,6 +1,6 @@
 # Contributing
 
-See also: [CONTRIBUTING.md](https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System/blob/main/CONTRIBUTING.md) in the repository root.
+See also: [CONTRIBUTING.md](https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System/blob/master/CONTRIBUTING.md) in the repository root.
 
 ## Development Setup
 
@@ -11,7 +11,7 @@ See also: [CONTRIBUTING.md](https://github.com/RobertoDeLaCamara/Cognitive-Intru
    pip install -r requirements.txt
    cp .env.example .env
    ```
-3. Start infrastructure (optional): `docker-compose up -d`
+3. Start infrastructure (optional): `docker-compose up -d` (set `POSTGRES_PASSWORD` in `.env` first — compose refuses to start without it)
 
 ## Workflow
 

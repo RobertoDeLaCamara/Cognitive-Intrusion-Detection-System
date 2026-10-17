@@ -286,3 +286,23 @@ async def test_cleanup_removes_multiple_expired(db):
 
     deleted = await suppression_mod.cleanup_expired(db)
     assert deleted == 3
+
+
+# ── API schema: a rule needs at least one condition (cnds#2) ────────────────
+
+def test_schema_rejects_rule_without_condition():
+    from pydantic import ValidationError
+    from src.api.schemas import SuppressionRuleCreate
+
+    with pytest.raises(ValidationError, match="at least one condition"):
+        SuppressionRuleCreate(reason="no filters", duration_minutes=10)
+
+
+@pytest.mark.parametrize("field, value", [
+    ("src_ip", "10.0.0.1"), ("dst_ip", "10.0.0.2"),
+    ("attack_type", "DDoS"), ("min_severity", "medium"),
+])
+def test_schema_accepts_each_single_condition(field, value):
+    from src.api.schemas import SuppressionRuleCreate
+
+    assert getattr(SuppressionRuleCreate(**{field: value}), field) == value

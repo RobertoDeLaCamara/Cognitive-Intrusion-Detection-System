@@ -592,3 +592,33 @@ async def test_export_csv_neutralises_formulas_in_text_fields(client, test_sessi
     # the join is "@rule;ok": the cell as a whole starts with '@', so it is quoted
     assert rows[0]["triggered_rules"] == "'@rule;ok"
     assert rows[0]["src_ip"] == "10.0.0.9"
+
+# ── Suppression rules: a rule needs at least one condition (cnds#2) ───────────
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [
+    {},
+    {"reason": "oops"},
+    {"duration_minutes": 60},
+    {"src_ip": None, "dst_ip": None, "attack_type": None, "min_severity": None},
+    {"src_ip": "", "attack_type": "   "},
+])
+async def test_suppression_rule_without_condition_is_rejected(client, body):
+    resp = await client.post("/api/suppression-rules", json=body)
+    assert resp.status_code == 422
+    assert "at least one condition" in resp.text
+    # nothing was created
+    assert (await client.get("/api/suppression-rules")).json() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [
+    {"src_ip": "10.1.1.1"},
+    {"dst_ip": "10.2.2.2"},
+    {"attack_type": "Port Scan"},
+    {"min_severity": "low"},
+    {"src_ip": "10.1.1.1", "attack_type": "Port Scan", "reason": "known scanner"},
+])
+async def test_suppression_rule_with_any_single_condition_is_accepted(client, body):
+    resp = await client.post("/api/suppression-rules", json=body)
+    assert resp.status_code == 201, resp.text

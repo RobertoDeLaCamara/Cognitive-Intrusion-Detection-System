@@ -14,6 +14,10 @@ os.environ.setdefault("MLFLOW_TRACKING_URI", "")
 # instantiate it explicitly via test_ft_transformer_engine.py.
 os.environ.setdefault("FT_MODEL_FILE", "__disabled_in_tests__")
 
+# src.api.main refuses to import without API_KEY/JWT_SECRET unless
+# AUTH_DISABLED=true (cnds#20). Opt in so existing tests can import the app.
+os.environ.setdefault("AUTH_DISABLED", "true")
+
 
 def pytest_collection_modifyitems(config, items):
     """Move tests that swap real torch for a MagicMock to the END of the run.

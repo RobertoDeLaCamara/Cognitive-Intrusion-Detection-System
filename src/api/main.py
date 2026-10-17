@@ -15,12 +15,32 @@ from .routers.auth import router as auth_router
 from .routers.baseline import router as baseline_router
 from .metrics import setup_prometheus, setup_otel
 from .rate_limit import RateLimitMiddleware
-from ..config import API_KEY, CORS_ORIGINS, RATE_LIMIT_REQUESTS, GUARDIAN_ENABLED, TELEGRAM_BOT_TOKEN
+from ..config import API_KEY, JWT_SECRET, AUTH_DISABLED, CORS_ORIGINS, RATE_LIMIT_REQUESTS, GUARDIAN_ENABLED, TELEGRAM_BOT_TOKEN
 from ..engines.registry import supervised, iforest, lstm
 
 from ..config import setup_logging
 setup_logging()
 logger = logging.getLogger(__name__)
+
+
+def _enforce_auth_configured(api_key: str, jwt_secret: str, auth_disabled: bool) -> None:
+    """Fail closed: refuse to start unless an auth mode is configured."""
+    if api_key or jwt_secret:
+        return
+    if auth_disabled:
+        logger.warning(
+            "Authentication is disabled (AUTH_DISABLED=true): all API endpoints are open."
+        )
+        return
+    msg = (
+        "Refusing to start: no authentication configured. Set API_KEY or JWT_SECRET, "
+        "or set AUTH_DISABLED=true to run the API without authentication (lab/local only)."
+    )
+    logger.critical(msg)
+    raise SystemExit(msg)
+
+
+_enforce_auth_configured(API_KEY, JWT_SECRET, AUTH_DISABLED)
 
 
 @asynccontextmanager

@@ -1,10 +1,32 @@
 # Changelog
 
+> This wiki page is a manually maintained excerpt — see the repository root [`CHANGELOG.md`](https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System/blob/master/CHANGELOG.md) for the complete, continuously updated history. Releases 1.1.0, 1.1.1, 1.0.5–1.0.9 (as numbered in the root file) are not mirrored here.
+
 ## [Unreleased]
 
+### Added
+- Triage agent (`src/triage/`, `python -m src.triage`) — out-of-process advisory verdicts written only to the append-only `triage_annotations` table (migration `c3d8e1f4a7b2`); `scripts/eval_triage.py`
+- `start` / `end` / `hours` date-range filters on `GET /api/alerts` (#5)
+
+### Changed
+- `hours` is bounded to 1–87600 (10 years) on `GET /api/alerts` and `GET /api/alerts/export`; larger values return 422 instead of 500 (#16)
+- Jenkinsfile pushes images only from `master`; PR builds get an advisory Claude review stage
+
 ### Fixed
-- `/api/predict` alert persistence broken against Postgres — same tz-aware-vs-naive `DateTime` root cause as the guardian bug below
-- Timezone bug turned out to be systemic, not guardian-only — every async path touching a `DateTime` column was affected (alerts, predict, correlation, suppression). Fixed with a single shared `src/timeutils.utcnow()` helper plus a regression test that asserts every model's `DateTime` defaults stay naive
+- Payload-pattern hits and JA3 fingerprints are attributed to their own flow; `payload_matches`, ports and protocol are persisted on capture-pipeline alerts; `sql_injection` / `command_injection` regexes no longer match binary noise
+
+## [1.3.0] - 2026-09-14
+
+### Added
+- Read-only MCP server (`src/mcp_server/`, nine tools, enforced read-only at the DB engine, no enforcement tools)
+
+## [1.2.1] - 2026-07-05
+
+### Security
+- Removed the insecure default `POSTGRES_PASSWORD` fallback; `docker-compose.yml` now refuses to start without it
+
+### Fixed
+- `/api/predict` alert persistence against Postgres and the wider timezone-aware vs naive `DateTime` bug, fixed with the shared `src/timeutils.utcnow()` helper and a regression test
 
 ## [1.2.0] - 2026-07-04
 
@@ -20,9 +42,7 @@
 - Timezone-aware vs naive `DateTime` bug in the new guardian code (asyncpg rejects it; SQLite in tests does not)
 - Dashboard `ZeroDivisionError` when there are zero alerts (`dict.get(key, default)` only applies `default` when the key is absent, not when it's `0`)
 
-> This wiki page is a manually maintained excerpt — see the repository root [`CHANGELOG.md`](https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System/blob/master/CHANGELOG.md) for the complete, continuously updated history (1.1.2–1.1.1 and earlier are not mirrored here).
-
-## [1.0.5] - 2026-04-19
+## 2026-04-19 — hardening release (no version number; not recorded in the root `CHANGELOG.md`, whose `[1.0.5]` is the 2026-04-06 Prometheus-metrics release)
 
 ### Security
 - `GET /api/alerts/export` now requires `admin` or `analyst` role in JWT-only deployments (was unauthenticated)
@@ -108,5 +128,5 @@
 
 ### Planned
 - Model drift detection — alert when live traffic features diverge from training data
-- Feedback-driven retraining — analyst TP/FP labels → automated retraining via ML Tracking
+- Feedback-driven retraining — analyst TP/FP labels → automated retraining via MLflow
 - ONNX Runtime for LSTM — 2-5x inference speedup over raw PyTorch

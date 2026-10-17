@@ -1,6 +1,6 @@
 # 0002. Bound `hours` on GET /api/alerts and /api/alerts/export
 
-- Status: **Proposed**
+- Status: **Accepted** — implemented in `f86a55f` (merged in #19).
 - Date: 2026-10-14
 - Issue: cnds#16
 

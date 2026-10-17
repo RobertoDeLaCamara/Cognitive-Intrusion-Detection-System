@@ -38,7 +38,7 @@ pytest tests/ -v
 pytest tests/ --cov=src --cov-report=term-missing
 ```
 
-For integration tests, ensure Docker Compose services are running.
+The suite runs against an in-memory SQLite database (`tests/conftest.py`) and needs no running services. Tests that need `torch` or the optional `mcp` SDK skip themselves when it is not installed.
 
 All new code should include tests. Aim to maintain or improve coverage.
 
@@ -46,7 +46,7 @@ All new code should include tests. Aim to maintain or improve coverage.
 
 - **Full capture + API:** `sudo venv/bin/python main.py --iface eth0 --api` (root required for raw packet sockets)
 - **API only, no capture:** `uvicorn src.api.main:app --host 0.0.0.0 --port 8000`
-- **Dashboard:** See the `dashboard/` directory
+- **Dashboard:** `docker-compose --profile dashboard up -d` (port 8501), or `pip install -r requirements-dashboard.txt && streamlit run dashboard/app.py`
 - **Health check:** `GET /health`
 
 ## Code Style

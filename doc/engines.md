@@ -2,15 +2,17 @@
 
 ## Engine Overview
 
-CNDS uses four complementary detection engines. Each engine observes a different signal, operates on a different feature representation, and detects a different category of threats. Their scores are fused by the ensemble scorer.
+CNDS uses five complementary detection engines (plus a threat-intelligence boost). Each engine observes a different signal, operates on a different feature representation, and detects a different category of threats. Their scores are fused by the ensemble scorer.
 
 | Engine | Default Weight | Features | What it detects |
 |---|---|---|---|
-| Supervised (FT-Transformer or RF fallback) | 35% | 76 flow features | Named attack classes (10 types) |
-| Isolation Forest | 25% | 18 host features | Volume/behavioral anomalies |
-| LSTM Autoencoder | 15% | Temporal host sequences | Slow/drift behavioral changes |
-| Rules Engine | 5% | All signals | High-confidence threshold patterns |
-| Baseline (unsupervised live pipeline) | 20% | 18 host features | Adaptive behavioral anomalies |
+| Supervised (FT-Transformer or RF fallback) | 30% | 76 flow features | Named attack classes (10 types) |
+| Isolation Forest | 20% | 18 host features | Volume/behavioral anomalies |
+| LSTM Autoencoder | 10% | Temporal host sequences | Slow/drift behavioral changes |
+| Rules Engine | 25% | All signals | High-confidence threshold and signature patterns |
+| Baseline (unsupervised live pipeline) | 15% | 18 host features | Adaptive behavioral anomalies |
+
+(Defaults from `src/config.py`. The shipped `.env.example` sets 35/25/15/5/20, and docker-compose loads it, so containers use those values unless `.env` overrides them.)
 
 ---
 
@@ -100,8 +102,8 @@ python scripts/train_rf.py --lite
 # Train full production model (447k samples, ~124MB, gitignored)
 python scripts/train_rf.py
 
-# Train and register to ML Tracking
-python scripts/train_rf.py --ML Tracking-uri http://[MAIN_NODE_IP]:5050
+# Train and register to MLflow
+python scripts/train_rf.py --mlflow-uri http://your-mlflow-host:5050
 ```
 
 ### Extending
@@ -259,20 +261,20 @@ ja3_hash in malicious_ja3_set
 
 ### Weight Configuration
 
-Default weights (sum to 1.0):
+Default weights in `src/config.py` (sum to 1.0):
 ```
-WEIGHT_SUPERVISED = 0.35
-WEIGHT_IFOREST    = 0.25
-WEIGHT_LSTM       = 0.15
-WEIGHT_RULES      = 0.05
-WEIGHT_BASELINE   = 0.20
+WEIGHT_SUPERVISED = 0.30
+WEIGHT_IFOREST    = 0.20
+WEIGHT_LSTM       = 0.10
+WEIGHT_RULES      = 0.25
+WEIGHT_BASELINE   = 0.15
 ```
 
 Override per attack type with `ATTACK_TYPE_WEIGHTS` JSON:
 ```json
 {
-  "PortScan": {"rules": 0.40, "supervised": 0.40, "iforest": 0.20, "lstm": 0.00},
-  "Bot":      {"lstm": 0.50, "supervised": 0.30, "iforest": 0.20, "rules": 0.00}
+  "PortScan": {"rules": 0.40, "supervised": 0.40, "isolation_forest": 0.20, "lstm": 0.00},
+  "Bot":      {"lstm": 0.50, "supervised": 0.30, "isolation_forest": 0.20, "rules": 0.00}
 }
 ```
 
@@ -280,10 +282,10 @@ Override per attack type with `ATTACK_TYPE_WEIGHTS` JSON:
 When an engine is unavailable (model missing), its weight is distributed proportionally to the remaining engines:
 
 ```
-Example: LSTM unavailable (weight 0.15)
-Before: supervised=0.35, iforest=0.25, lstm=0.15, rules=0.05, baseline=0.20
-After:  supervised≈0.41, iforest≈0.29, lstm=0.00, rules≈0.06, baseline≈0.24
-        (each remaining engine scales by 1/(1-0.15))
+Example: LSTM unavailable (weight 0.10)
+Before: supervised=0.30, iforest=0.20, lstm=0.10, rules=0.25, baseline=0.15
+After:  supervised≈0.33, iforest≈0.22, lstm=0.00, rules≈0.28, baseline≈0.17
+        (each remaining engine scales by 1/(1-0.10))
 ```
 
 ### Confidence Calibration
@@ -326,7 +328,7 @@ The rules engine is always available and provides a minimum detection floor. In 
 | LSTM Autoencoder | ~5 ms | ~100 MB (model) | High (GPU optional) | Low (sequence context) |
 | Rules Engine | ~0.01 ms | Negligible | Very Low | Very Low (threshold-based) |
 
-Total pipeline latency (all 4 engines): typically 5–15 ms per packet batch on modern hardware.
+Total pipeline latency (all engines): typically 5–15 ms per packet batch on modern hardware.
 
 ---
 
@@ -369,11 +371,11 @@ Training code is expected in the `scripts/` or `models/` directory. The config f
 }
 ```
 
-### ML Tracking Integration
-When `ML Tracking_TRACKING_URI` is set, models can be loaded from the registry:
+### MLflow Integration
+When `MLFLOW_TRACKING_URI` is set, models can be loaded from the registry:
 ```bash
 # Register a new model version
-python src/ML Tracking_registry.py --register models/rf_model_v2.joblib --name cnds-rf
+python src/mlflow_registry.py --register models/rf_model_v2.joblib --name cnds-rf
 ```
 
-The `src/ML Tracking_registry.py` module provides a unified interface for loading from registry or local path.
+The `src/mlflow_registry.py` module provides a unified interface for loading from registry or local path.

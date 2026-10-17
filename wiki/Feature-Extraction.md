@@ -1,6 +1,6 @@
 # Feature Extraction
 
-CNDS extracts four categories of features from captured traffic. All extractors run in the dispatcher's flow-completion callback.
+CNDS extracts four categories of features from captured traffic. The dispatcher feeds every packet to the extractors and, when a flow expires, hands the finished flow, host and payload features to the pipeline callback.
 
 ## Flow Features (76 features)
 
@@ -26,13 +26,9 @@ Flow expiry uses a min-heap for O(k) performance (k = expired flows) instead of 
 
 Per-IP behavioural features computed over a sliding window of `HOST_WINDOW_SIZE` packets (default 100):
 
-- Packet rate, byte rate
-- Unique destination IPs and ports
-- Port entropy, protocol distribution
-- Average packet size, size variance
-- TCP/UDP/ICMP ratios
-- SYN/ACK/RST flag ratios
-- Payload entropy
+The 18 features, in order: `packets_per_sec`, `bytes_per_sec`, `avg_packet_size`, `packet_size_var`, `total_packets`, `total_bytes`, `iat_mean`, `iat_std`, `burst_rate`, `session_duration`, `tcp_ratio`, `udp_ratio`, `icmp_ratio`, `unique_ports`, `uncommon_port_ratio`, `avg_payload_entropy`, `avg_payload_size`, `payload_size_var`.
+
+Features are returned once an IP has seen at least 3 packets.
 
 Eviction targets the IP with the oldest last-seen timestamp (preserving low-and-slow attack patterns). Bounded by `MAX_TRACKED_IPS`.
 
@@ -42,10 +38,10 @@ Eviction targets the IP with the oldest last-seen timestamp (preserving low-and-
 
 Regex-based pattern matching on raw payload bytes, plus 10 numeric features:
 
-- Pattern matches: SQLi, XSS, LFI, command injection, etc.
-- Numeric features: payload size, entropy, printable ratio, null byte ratio, etc.
+- Pattern matches (6 signatures): `sql_injection`, `xss`, `command_injection`, `path_traversal`, `log4j`, `shellshock`. They surface as `payload:<name>` rules.
+- Numeric features (10): `has_sqli`, `has_xss`, `has_cmdi`, `has_traversal`, `has_log4j`, `has_shellshock`, `pattern_match_count`, `max_payload_entropy`, `mean_payload_length`, `suspicious_char_ratio`.
 
-A cheap regex pre-screen runs before spawning per-pattern timeout threads, reducing thread churn on benign traffic. Payload samples are bounded by `MAX_PAYLOAD_SAMPLES` (default 50) and `PAYLOAD_SAMPLE_BYTES` (default 4096) per sample.
+Matching is applied directly to the first 4 KB of each packet after a cheap combined pre-screen regex (there are no per-pattern timeout threads). Hits are attributed to the flow they came from. Payload samples are bounded by `MAX_PAYLOAD_SAMPLES` (default 50) and `PAYLOAD_SAMPLE_BYTES` (default 4096) per sample.
 
 UDP payloads are captured alongside TCP, enabling payload feature extraction for DNS tunneling and UDP-based attacks.
 

@@ -20,13 +20,13 @@ The sandbox consists of two components:
 The digital twin models a typical home/small-office network:
 
 ```
-[INTERNAL_SUBNET]
+192.168.1.0/24
 │
-├── [INTERNAL_IP]    ROUTER      — Default gateway
-├── [INTERNAL_IP]   NAS         — NAS (SMB, NFS, HTTP)
-├── [GIT_SERVER_IP]   GIT_SERVER       — Self-hosted Git server (HTTP/HTTPS)
-├── [REGISTRY_IP]   REGISTRY    — Private Docker registry (HTTPS :5000)
-└── [CLIENT_IP]  CLIENT      — Developer workstation
+├── 192.168.1.1    ROUTER      — Default gateway
+├── 192.168.1.60   NAS         — NAS (SMB, NFS, HTTP)
+├── 192.168.1.62   GITEA       — Self-hosted Git server (HTTP/HTTPS)
+├── 192.168.1.86   REGISTRY    — Private Docker registry (HTTPS :5000)
+└── 192.168.1.100  CLIENT      — Developer workstation
 ```
 
 These IPs are representative of a real lab environment and match the `TRUSTED_OUTBOUND` device profiles in `.env.example`. Each device has realistic traffic patterns modeled in the generator.
@@ -46,7 +46,7 @@ Models day-to-day device activity:
 | Traffic Type | Source | Destination | Protocol |
 |---|---|---|---|
 | HTTP/HTTPS web browsing | CLIENT | External IPs | TCP 80/443 |
-| Git push/pull | CLIENT | GIT_SERVER :3000 | TCP |
+| Git push/pull | CLIENT | GITEA :80 | TCP |
 | Docker pull | CLIENT | REGISTRY :5000 | TCP/HTTPS |
 | NAS file access | CLIENT | NAS :445 | SMB/TCP |
 | DNS lookups | CLIENT | ROUTER :53 | UDP |
@@ -56,34 +56,40 @@ Packet sizes, inter-arrival times, and flow durations are randomized within real
 
 #### Attack Scenarios
 
-| Scenario | Attack Type | Source | Target |
+The scenarios are defined in `SCENARIOS` in `demo/generate_traffic.py`. All attacks come from the simulated external host `10.0.0.1`.
+
+| Scenario | What it models | Target | Expected rule(s) |
 |---|---|---|---|
-| `icmp_flood` | ICMP Flood | External `10.0.0.1` | ROUTER |
-| `syn_scan` | TCP SYN Scan | External `10.0.0.2` | CLIENT (all ports) |
-| `port_scan` | Full Port Scan | External `10.0.0.3` | All local IPs |
-| `brute_force` | SSH Brute Force | External `10.0.0.4` | CLIENT :22 |
-| `large_payload_exfil` | Data Exfiltration | CLIENT | External :8080 |
-| `web_attacks` | SQLi + XSS | External `10.0.0.5` | GIT_SERVER :3000 |
+| `normal_traffic` | Baseline day-to-day activity (expect 0 alerts) | — | — |
+| `icmp_flood` | ICMP flood | NAS | `icmp_flood` |
+| `nas_sqli` | SQL injection against the DSM login (:5000) | NAS | `payload:sql_injection` |
+| `nas_credential_stuffing` | Repeated SQLi-style login attempts (:5000) | NAS | `payload:sql_injection` |
+| `gitea_web_attack` | XSS + path traversal (:80) | GITEA | `payload:xss`, `payload:path_traversal` |
+| `command_injection` | Command injection via the webhook API | GITEA | `payload:command_injection` |
+| `shellshock` | Shellshock in the HTTP User-Agent (:5000) | NAS | `payload:shellshock` |
+| `exfiltration` | Large upload NAS → external | external host | `large_payload`, `asymmetric_upload` |
+| `log4shell` | Log4Shell probe | GITEA | `payload:log4j` |
 
 ### PCAP structure
 
-Each scenario produces one or more PCAP files:
+One PCAP per scenario, written to `demo/traffic/` (gitignored):
 ```
 demo/traffic/
 ├── normal_traffic.pcap
 ├── icmp_flood.pcap
-├── syn_scan.pcap
-├── port_scan.pcap
-├── brute_force.pcap
-├── large_payload_exfil.pcap
-└── web_attacks.pcap
+├── nas_sqli.pcap
+├── nas_credential_stuffing.pcap
+├── gitea_web_attack.pcap
+├── command_injection.pcap
+├── shellshock.pcap
+├── exfiltration.pcap
+└── log4shell.pcap
 ```
 
 ### Generating PCAPs manually
 
 ```bash
-cd demo
-python generate_traffic.py
+python demo/generate_traffic.py
 # → Creates demo/traffic/*.pcap
 ```
 
@@ -104,73 +110,47 @@ PCAPs can be inspected with Wireshark, analyzed with CICFlowMeter, or fed into a
 ### Running the demo
 
 ```bash
-cd demo
-python run_demo.py
+python demo/run_demo.py                          # generate PCAPs, then replay all scenarios
+python demo/run_demo.py --no-generate            # reuse existing PCAPs
+python demo/run_demo.py --scenario nas_sqli      # one scenario
 ```
 
 No root access required. No network interface binding. No database needed (results printed to stdout).
 
-**Example output:**
+**Example output** (abridged; a real run on a checkout with the bundled models, without `torch`, ANSI colours stripped; scores and which scenarios fire depend on the models present):
 
 ```
-=== CNDS Local Network Digital Twin Demo ===
-Generating synthetic traffic...
-  ✓ normal_traffic.pcap       (450 packets)
-  ✓ icmp_flood.pcap           (2,100 packets)
-  ✓ syn_scan.pcap             (1,800 packets)
-  ✓ brute_force.pcap          (340 packets)
-  ✓ large_payload_exfil.pcap  (85 packets)
-  ✓ web_attacks.pcap          (120 packets)
+Detection engines:
+  ✓  rules engine
+  ✓  supervised (RF)
+  ✓  isolation forest
+  ✗  lstm autoencoder       (requires models/lstm_autoencoder.pt)
 
-Replaying traffic through detection pipeline...
+  nas_sqli
+  SQL injection on NAS DSM login :5000 (rule: sql_injection)
 
---- Scenario: ICMP Flood ---
-[CRITICAL] DoS attack from 10.0.0.1 → [INTERNAL_IP]
-  Engines: supervised=0.88 | iforest=0.91 | lstm=N/A | rules=1.00
-  Ensemble: 0.91 | MITRE: T1498
+    ALERT  src=10.0.0.1  dst=192.168.1.60  score=1.00  CRITICAL  rules=['payload:sql_injection']  mitre=['T1190']
+  → 1 alert(s) in 0.01s
 
---- Scenario: SYN Scan ---
-[HIGH] PortScan from 10.0.0.2 → [CLIENT_IP]
-  Engines: supervised=0.84 | iforest=0.87 | lstm=0.71 | rules=1.00
-  Ensemble: 0.85 | MITRE: T1046
+  DEMO COMPLETE   12 alert(s) across 9 scenario(s)
 
---- Scenario: Brute Force ---
-[MEDIUM] SSH-Patator from 10.0.0.4 → [CLIENT_IP]:22
-  Engines: supervised=0.79 | iforest=0.65 | lstm=0.72 | rules=0.00
-  Ensemble: 0.69 | MITRE: T1110
-
---- Scenario: Data Exfiltration ---
-[HIGH] Anomaly from [CLIENT_IP] → 10.0.0.99:8080
-  Engines: supervised=0.21 | iforest=0.73 | lstm=0.84 | rules=0.00
-  Ensemble: 0.61 | MITRE: T1048
-
---- Scenario: Web Attacks ---
-[HIGH] Web Attack – SQL Injection from 10.0.0.5 → [GIT_SERVER_IP]:3000
-  Engines: supervised=0.83 | iforest=0.54 | lstm=0.45 | rules=1.00
-  Ensemble: 0.76 | MITRE: T1190
-[MEDIUM] Web Attack – XSS from 10.0.0.5 → [GIT_SERVER_IP]:3000
-  Engines: supervised=0.71 | iforest=0.49 | lstm=0.42 | rules=1.00
-  Ensemble: 0.68 | MITRE: T1059.007
-
-=== DEMO SUMMARY ===
-Scenarios tested:  6
-Detections fired:  6 / 6  (100%)
-False positives:   0 (from normal_traffic.pcap)
-MITRE techniques:  T1498, T1046, T1110, T1048, T1190, T1059.007
-Engines available: supervised ✓ | iforest ✓ | lstm ✓ | rules ✓
+  Scenario                      Alerts  Result
+  normal_traffic                     0  ✓ No false positives
+  icmp_flood                         0  ✗ Missed (ML models needed?)
+  nas_sqli                           1  ✓ Detected
+  nas_credential_stuffing            6  ✓ Detected
+  gitea_web_attack                   2  ✓ Detected
+  command_injection                  1  ✓ Detected
+  shellshock                         1  ✓ Detected
+  exfiltration                       0  ✗ Missed (ML models needed?)
+  log4shell                          1  ✓ Detected
 ```
+
+The payload-signature scenarios fire because their rules are in `CRITICAL_RULES`. `icmp_flood` and `exfiltration` trigger only non-critical rules, whose 25 % rule weight is diluted by the other engines, so they stay below `ENSEMBLE_THRESHOLD` in this setup.
 
 ### Demo behavior without ML models
 
-If `rf_model.joblib`, `isolation_forest.joblib`, or `lstm_autoencoder.pt` are absent, the demo degrades gracefully:
-
-- Missing engines show `N/A` in engine scores.
-- Available weights are redistributed to the remaining engines.
-- The rules engine always runs (no model files required).
-- ICMP flood, SYN scan, large payload, web injection attacks are still detected via rules.
-- A warning is printed: `[WARNING] LSTM unavailable — weight redistributed`.
-
-This makes the demo fully functional for demonstrating rule-based detection even in a fresh checkout.
+If a model file is absent, `run_demo.py` lists the engine as unavailable in its header and the ensemble redistributes the remaining weights. The rules engine always runs, and the `CRITICAL_RULES` signature scenarios (`nas_sqli`, `nas_credential_stuffing`, `gitea_web_attack`, `command_injection`, `shellshock`, `log4shell`) are still detected without any ML model. The `icmp_flood` and `exfiltration` scenarios depend on the blended score and are not guaranteed to alert.
 
 ---
 
@@ -179,35 +159,31 @@ This makes the demo fully functional for demonstrating rule-based detection even
 For more controlled evaluation, the replay script processes arbitrary PCAP files:
 
 ```bash
-python scripts/pcap_replay.py \
-    --pcap /path/to/capture.pcap \
+python scripts/pcap_replay.py demo/traffic/nas_sqli.pcap [more.pcap ...] \
     --output results.json \
-    --interface-override eth0   # treat packets as if captured on this interface
+    [--labels labels.csv] [--threshold 0.5]
 ```
 
-**Output format:**
+**Output format** (`results.json`):
 ```json
 {
-  "pcap": "capture.pcap",
-  "total_packets": 8523,
-  "alerts": [
-    {
-      "timestamp": "...",
-      "src_ip": "[CLIENT_IP]",
-      "attack_type": "PortScan",
-      "severity": "high",
-      "ensemble_score": 0.83,
-      "engine_scores": {...},
-      "mitre_techniques": [...]
+  "files": {
+    "demo/traffic/nas_sqli.pcap": {
+      "metrics": {"total_flows": 1, "tp": 0, "fp": 0, "tn": 0, "fn": 0, "precision": 0.0, "recall": 0.0, "f1": 0.0, "accuracy": 0.0},
+      "predictions": [
+        {"flow_key": "10.0.0.1-192.168.1.60-55000-5000-6", "src_ip": "10.0.0.1", "dst_ip": "192.168.1.60",
+         "ensemble_score": 1.0, "is_anomaly": true, "attack_type": "BENIGN",
+         "active_engines": ["supervised", "isolation_forest", "rules"],
+         "triggered_rules": ["payload:sql_injection"]}
+      ]
     }
-  ],
-  "summary": {
-    "alert_count": 12,
-    "by_severity": {"low": 3, "medium": 5, "high": 3, "critical": 1},
-    "processing_time_ms": 842
-  }
+  },
+  "aggregate": {"total_flows": 1, "tp": 0, "fp": 0, "tn": 0, "fn": 0, "precision": 0.0, "recall": 0.0, "f1": 0.0, "accuracy": 0.0},
+  "engines": {"supervised": true, "isolation_forest": true, "lstm": false, "rules": true}
 }
 ```
+
+Confusion-matrix metrics are non-zero only when `--labels` is supplied.
 
 This is the primary tool for **offline PCAP evaluation** against real-world capture files, penetration test captures, or CTF challenge traffic.
 
@@ -244,37 +220,31 @@ In `demo/generate_traffic.py`, add a new IP to the device constants:
 
 ```python
 # ── Device IPs ────────────────────────────────────────────────────────────────
-ROUTER   = "[INTERNAL_IP]"
-NAS      = "[INTERNAL_IP]"
-GIT_SERVER    = "[GIT_SERVER_IP]"
-REGISTRY = "[REGISTRY_IP]"
-CLIENT   = "[CLIENT_IP]"
-NEW_IOT  = "[INTERNAL_IP]"  # Add your device
+ROUTER   = "192.168.1.1"
+NAS      = "192.168.1.60"
+GITEA    = "192.168.1.62"
+REGISTRY = "192.168.1.86"
+CLIENT   = "192.168.1.100"
+NEW_IOT  = "192.168.1.101"  # Add your device
 ```
 
-Then add traffic generation logic for the device in the `generate_normal_traffic()` function using Scapy packet constructors.
+Then add traffic generation logic for the device in `make_normal_traffic()` using Scapy packet constructors.
 
 ### Adding a new attack scenario
 
-1. Add a new function to `generate_traffic.py`:
+1. Add a function to `demo/generate_traffic.py` that returns a list of Scapy packets:
 ```python
-def generate_dns_amplification():
-    """Generate DNS amplification attack traffic."""
-    pkts = []
-    for i in range(1000):
-        # UDP DNS query spoofed to victim IP
-        pkt = IP(src="10.0.0.1", dst=ROUTER) / UDP(dport=53) / Raw(b"\x00" * 512)
-        pkts.append(pkt)
-    wrpcap("demo/traffic/dns_amplification.pcap", pkts)
+def make_dns_amplification():
+    """DNS amplification attack traffic."""
+    return [IP(src=ATTACKER, dst=ROUTER) / UDP(dport=53) / Raw(b"\x00" * 512) for _ in range(1000)]
 ```
 
-2. Add the scenario to `run_demo.py`'s scenario list:
+2. Register it in `SCENARIOS` in the same file (name, function, description); `generate_all()` writes `demo/traffic/<name>.pcap` and `run_demo.py` picks it up:
 ```python
 SCENARIOS = [
-    ("normal_traffic", "Baseline — no attacks"),
-    ("icmp_flood", "ICMP Flood DoS"),
+    ("normal_traffic", make_normal_traffic, "Baseline — normal NAS/Gitea/router activity"),
     ...
-    ("dns_amplification", "DNS Amplification DoS"),  # new
+    ("dns_amplification", make_dns_amplification, "DNS amplification DoS"),  # new
 ]
 ```
 
@@ -300,12 +270,14 @@ The demo will report false positives from real traffic that the synthetic genera
 
 The demo and replay scripts can be incorporated into a CI/CD pipeline to gate model deployment:
 
-```yaml
-# .github/workflows/model-validation.yml (example)
-- name: Run detection regression tests
-  run: |
-    python demo/run_demo.py --output ci_results.json --exit-code-on-regression
-    # fails if any previously-detected attack is no longer detected
+```bash
+# run_demo.py always exits 0 and has no regression option, so gate on the
+# PCAP replay output instead.
+python scripts/pcap_replay.py demo/traffic/nas_sqli.pcap --output ci_results.json
+python - <<'PYEOF'
+import json
+d = json.load(open("ci_results.json"))
+preds = [p for f in d["files"].values() for p in f["predictions"]]
+assert any(p["is_anomaly"] for p in preds), "nas_sqli no longer detected"
+PYEOF
 ```
-
-The `--exit-code-on-regression` flag (if implemented) returns a non-zero exit code when detection rates fall below the baseline, blocking deployment of a degraded model.

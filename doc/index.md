@@ -12,11 +12,11 @@
 
 | File | Audience | Description |
 |---|---|---|
-| [concepts.md](concepts.md) | All audiences | MITRE ATT&CK, JA3, flows, ML algorithms, SIEM, JWT, Monitoring Service, attack types |
+| [concepts.md](concepts.md) | All audiences | MITRE ATT&CK, JA3, flows, ML algorithms, SIEM, JWT, Prometheus, attack types |
 | [product.md](product.md) | Executives, PM, sales | Commercial purpose, value proposition, competitive positioning |
 | [architecture.md](architecture.md) | Engineers, architects | System design, data flow, component responsibilities |
 | [engines.md](engines.md) | ML engineers, security engineers | Detection engine overview, model specs, tuning |
-| [ml-models.md](ml-models.md) | ML engineers, data scientists | Deep dive: feature engineering, training, retraining, calibration, ML Tracking |
+| [ml-models.md](ml-models.md) | ML engineers, data scientists | Deep dive: feature engineering, training, retraining, calibration, MLflow |
 | [api-reference.md](api-reference.md) | Integrators, developers | Complete REST + WebSocket API reference |
 | [mcp-server.md](mcp-server.md) | SOC analysts, integrators | Read-only MCP server: conversational alert triage from Claude Code / Desktop, tool catalogue, security model |
 | [use-cases.md](use-cases.md) | SOC analysts, security architects | Operational use cases, attack scenarios, analyst workflows |

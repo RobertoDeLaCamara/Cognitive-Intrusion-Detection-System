@@ -9,7 +9,7 @@ This document explains the security, networking, and machine learning concepts r
 1. [Network Intrusion Detection Systems (IDS)](#1-network-intrusion-detection-systems-ids)
 2. [MITRE ATT&CK Framework](#2-mitre-attck-framework)
 3. [Network Flows and the 5-Tuple](#3-network-flows-and-the-5-tuple)
-4. [CICFlowMeter and the CIC-IDS2017 Dataset](#4-cicflowmeter-and-the-cic-ids2017-dataset)
+4. [CICFlowMeter and the Training Dataset](#4-cicflowmeter-and-the-training-dataset)
 5. [JA3 TLS Fingerprinting](#5-ja3-tls-fingerprinting)
 6. [Supervised engine — FT-Transformer (preferred) and Random Forest (fallback)](#6-the-supervised-engine--ft-transformer-preferred-and-random-forest-fallback)
 7. [Isolation Forest](#7-isolation-forest)
@@ -20,11 +20,11 @@ This document explains the security, networking, and machine learning concepts r
 12. [SIEM Systems](#12-siem-systems)
 13. [CEF — Common Event Format](#13-cef--common-event-format)
 14. [JWT and RBAC](#14-jwt-and-rbac)
-15. [Monitoring Service and OpenTelemetry](#15-Monitoring Service-and-opentelemetry)
+15. [Prometheus and OpenTelemetry](#15-prometheus-and-opentelemetry)
 16. [TCP Flags](#16-tcp-flags)
 17. [Scapy](#17-scapy)
 18. [Alembic and Database Migrations](#18-alembic-and-database-migrations)
-19. [ML Tracking](#19-ML Tracking)
+19. [MLflow](#19-mlflow)
 20. [Glossary of Attack Types](#20-glossary-of-attack-types)
 
 ---
@@ -136,8 +136,8 @@ All packets matching a given 5-tuple, from first packet to last, constitute one 
 
 **Example:**
 ```
-[CLIENT_IP]:54321 → 10.0.0.5:443 TCP  ← one flow
-10.0.0.5:443 → [CLIENT_IP]:54321 TCP  ← same flow, backward direction
+192.168.1.50:54321 → 10.0.0.5:443 TCP  ← one flow
+10.0.0.5:443 → 192.168.1.50:54321 TCP  ← same flow, backward direction
 ```
 
 ### Why flows matter for ML
@@ -595,7 +595,7 @@ A CEF message is a single syslog line:
 
 **Example from CNDS:**
 ```
-<134>Mar 29 14:22:01 cnds CEF:0|CNDS|Cognitive Network Defense System|1.0.3|PortScan|Network Service Scanning Detected|7|src=[CLIENT_IP] dst=10.0.0.5 proto=TCP cs1=T1046 cs1Label=MITRETechnique cn1=0.85 cn1Label=EnsembleScore
+<134>Mar 29 14:22:01 cnds CEF:0|CNDS|Cognitive Network Defense System|1.0.3|PortScan|Network Service Scanning Detected|7|src=192.168.1.50 dst=10.0.0.5 proto=TCP cs1=T1046 cs1Label=MITRETechnique cn1=0.85 cn1Label=EnsembleScore
 ```
 
 **Fields:**
@@ -652,11 +652,11 @@ Role is embedded in the JWT payload. FastAPI dependency functions check the role
 
 ---
 
-## 15. Monitoring Service and OpenTelemetry
+## 15. Prometheus and OpenTelemetry
 
-### Monitoring Service
+### Prometheus
 
-Monitoring Service is an open-source monitoring and alerting toolkit. It works on a **pull model**: Monitoring Service scrapes an HTTP endpoint (`/metrics`) at a configured interval and stores the time-series data in its own database.
+Prometheus is an open-source monitoring and alerting toolkit. It works on a **pull model**: Prometheus scrapes an HTTP endpoint (`/metrics`) at a configured interval and stores the time-series data in its own database.
 
 Metrics are exposed in a simple text format:
 
@@ -672,7 +672,7 @@ Three metric types:
 - **Gauge:** A value that can go up or down (current active flows, queue size).
 - **Histogram:** Distribution of values (request latency, ensemble score distribution).
 
-CNDS exposes a Monitoring Service endpoint at `/metrics` (when `Monitoring Service_ENABLED=true`). Monitoring Service scrapes it and Visualization Service visualizes it.
+CNDS exposes a Prometheus endpoint at `/metrics` (when `PROMETHEUS_ENABLED=true`). Prometheus scrapes it and Grafana visualizes it.
 
 ### OpenTelemetry (OTel)
 
@@ -729,7 +729,7 @@ Scapy's packet model is a stack of **layers**, each representing a protocol:
 ```python
 from scapy.all import IP, TCP, Raw
 
-pkt = IP(src="[INTERNAL_IP]", dst="10.0.0.5") / TCP(sport=54321, dport=443, flags="S") / Raw(b"payload")
+pkt = IP(src="192.168.1.20", dst="10.0.0.5") / TCP(sport=54321, dport=443, flags="S") / Raw(b"payload")
 ```
 
 Each layer (`/`) stacks on top of the previous, and Scapy automatically fills in fields like checksums and lengths.
@@ -792,11 +792,11 @@ Alembic runs automatically at CNDS startup (in `src/api/database.py`), so fresh 
 
 ---
 
-## 19. ML Tracking
+## 19. MLflow
 
 ### What it is
 
-ML Tracking is an open-source platform for managing the machine learning lifecycle. It has four main components:
+MLflow is an open-source platform for managing the machine learning lifecycle. It has four main components:
 
 - **Tracking:** Log parameters, metrics, artifacts, and code version for every training run.
 - **Projects:** Package ML code for reproducible execution.
@@ -807,28 +807,28 @@ ML Tracking is an open-source platform for managing the machine learning lifecyc
 
 CNDS uses three ML models — the supervised classifier (FT-Transformer or Random Forest fallback), Isolation Forest, and LSTM Autoencoder. Without version control, you end up with files named `rf_model_v2_final_REAL.joblib` and no reliable way to know which version is in production, what metrics it achieved, or how to roll back if a new model regresses.
 
-ML Tracking solves this:
+MLflow solves this:
 - Every training run logs its hyperparameters, training metrics (accuracy, F1, threshold), and the model artifact.
 - The Registry provides a promotion workflow: train → register → test in Staging → promote to Production.
-- CNDS's engine loaders check ML Tracking first (`load_latest("supervised")`) and fall back to local files if ML Tracking is not configured.
+- CNDS's engine loaders check MLflow first (`load_latest("supervised")`) and fall back to local files if MLflow is not configured.
 
 ### Model lifecycle in CNDS
 
 ```
 Training run
     │ joblib.dump() / torch.save()
-    │ ML Tracking_registry.log_model()
+    │ mlflow_registry.log_model()
     ▼
-ML Tracking Registry
+MLflow Registry
     │ Stage: "None"  ← just registered
     │
     │ (validate with pcap_replay.py)
-    │ ML Tracking models transition
+    │ MLflow models transition
     ▼
     │ Stage: "Staging"  ← under test
     │
     │ (A/B comparison, analyst review)
-    │ ML Tracking models transition
+    │ MLflow models transition
     ▼
     │ Stage: "Production"  ← CNDS loads this on restart
     │
@@ -837,7 +837,7 @@ ML Tracking Registry
     │ Stage: "Archived"
 ```
 
-When `ML Tracking_TRACKING_URI` is empty, the entire registry layer is skipped silently and models are loaded from local files — useful for development and air-gapped environments.
+When `MLFLOW_TRACKING_URI` is empty, the entire registry layer is skipped silently and models are loaded from local files — useful for development and air-gapped environments.
 
 ---
 

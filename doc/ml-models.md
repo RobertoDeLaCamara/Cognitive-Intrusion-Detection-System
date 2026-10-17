@@ -19,7 +19,7 @@ Este documento cubre en detalle los modelos de machine learning del sistema — 
 6. [Rules Engine (Heurístico)](#6-rules-engine-heurístico)
 7. [Ensemble Scorer: Fusión y Calibración](#7-ensemble-scorer-fusión-y-calibración)
 8. [Pesos Adaptativos (Feedback Loop)](#8-pesos-adaptativos-feedback-loop)
-9. [Integración con ML Tracking](#9-integración-con-ML Tracking)
+9. [Integración con MLflow](#9-integración-con-mlflow)
 10. [Procedimientos de Entrenamiento](#10-procedimientos-de-entrenamiento)
 11. [Procedimientos de Reentrenamiento](#11-procedimientos-de-reentrenamiento)
 12. [Evaluación de Modelos](#12-evaluación-de-modelos)
@@ -518,8 +518,8 @@ def predict(self, flow_features, payload_features=None):
 
 ```python
 def _load(self):
-    # 1. Intentar desde ML Tracking registry (si ML Tracking_TRACKING_URI configurado)
-    model = ML Tracking_registry.load_latest("supervised")
+    # 1. Intentar desde MLflow registry (si MLFLOW_TRACKING_URI configurado)
+    model = mlflow_registry.load_latest("supervised")
     if model is not None:
         self._model = model
         return
@@ -742,11 +742,11 @@ El Rules Engine no tiene parámetros aprendidos pero sí **umbrales configurable
 
 ```python
 _BASE_WEIGHTS = {
-    "supervised":       WEIGHT_SUPERVISED,    # 0.35 (default)
-    "isolation_forest": WEIGHT_IFOREST,       # 0.25
-    "lstm":             WEIGHT_LSTM,          # 0.15
-    "rules":            WEIGHT_RULES,         # 0.05
-    "baseline":         WEIGHT_BASELINE,      # 0.20
+    "supervised":       WEIGHT_SUPERVISED,    # 0.30 (config.py default; .env.example: 0.35)
+    "isolation_forest": WEIGHT_IFOREST,       # 0.20 (.env.example: 0.25)
+    "lstm":             WEIGHT_LSTM,          # 0.10 (.env.example: 0.15)
+    "rules":            WEIGHT_RULES,         # 0.25 (.env.example: 0.05)
+    "baseline":         WEIGHT_BASELINE,      # 0.15 (.env.example: 0.20)
 }
 ```
 
@@ -763,9 +763,9 @@ weights = {e: base_weights.get(e, 0.0) / total_base for e in available}
 
 **Ejemplo — motor supervisado no disponible:**
 ```
-Antes:  supervised=0.35, iforest=0.25, lstm=0.15, rules=0.05, baseline=0.20
-total_disponible = 0.25 + 0.15 + 0.05 + 0.20 = 0.65
-Después: iforest=0.25/0.65≈0.38, lstm=0.15/0.65≈0.23, rules=0.05/0.65≈0.08, baseline=0.20/0.65≈0.31
+Antes:  supervised=0.30, iforest=0.20, lstm=0.10, rules=0.25, baseline=0.15
+total_disponible = 0.20 + 0.10 + 0.25 + 0.15 = 0.70
+Después: iforest=0.20/0.70≈0.29, lstm=0.10/0.70≈0.14, rules=0.25/0.70≈0.36, baseline=0.15/0.70≈0.21
 ```
 
 ### Pesos por tipo de ataque (`ATTACK_TYPE_WEIGHTS`)
@@ -881,18 +881,18 @@ weights = {e: w / total for e, w in weights.items()}
 
 ---
 
-## 9. Integración con ML Tracking
+## 9. Integración con MLflow
 
-**Archivo:** `src/ML Tracking_registry.py`
+**Archivo:** `src/mlflow_registry.py`
 
 ### Configuración
 
 ```bash
-ML Tracking_TRACKING_URI=http://ML Tracking-server:5000   # Servidor ML Tracking
-ML Tracking_REGISTRY_NAME=cnds                        # Prefijo de modelo en registry
+MLFLOW_TRACKING_URI=http://mlflow-server:5000   # Servidor MLflow
+MLFLOW_REGISTRY_NAME=cnds                        # Prefijo de modelo en registry
 ```
 
-Cuando `ML Tracking_TRACKING_URI` está vacío, toda la funcionalidad ML Tracking se deshabilita silenciosamente y los motores cargan desde archivos locales.
+Cuando `MLFLOW_TRACKING_URI` está vacío, toda la funcionalidad MLflow se deshabilita silenciosamente y los motores cargan desde archivos locales.
 
 ### Registro de modelos
 
@@ -900,14 +900,14 @@ Todos los modelos ML son registrados bajo nombres con prefijo `cnds-`:
 
 | Motor | Registry name | Función de carga |
 |---|---|---|
-| Random Forest | `cnds-supervised` | `ML Tracking.sklearn.load_model()` |
-| Isolation Forest | `cnds-isolation_forest` | `ML Tracking.sklearn.load_model()` |
-| LSTM Autoencoder | `cnds-lstm` | `ML Tracking.pytorch.load_model()` |
+| Random Forest | `cnds-supervised` | `mlflow.sklearn.load_model()` |
+| Isolation Forest | `cnds-isolation_forest` | `mlflow.sklearn.load_model()` |
+| LSTM Autoencoder | `cnds-lstm` | `mlflow.pytorch.load_model()` |
 
 ### Registrar un modelo entrenado
 
 ```python
-from src.ML Tracking_registry import log_model, log_pytorch_model
+from src.mlflow_registry import log_model, log_pytorch_model
 
 # Random Forest / Isolation Forest (scikit-learn)
 log_model(
@@ -936,16 +936,16 @@ log_pytorch_model(
 
 ### Ciclo de vida de versiones
 
-ML Tracking maneja múltiples versiones por modelo. La función `load_latest()` carga por defecto el stage `"Production"`:
+MLflow maneja múltiples versiones por modelo. La función `load_latest()` carga por defecto el stage `"Production"`:
 
 ```python
-model_uri = f"models:/{ML Tracking_REGISTRY_NAME}-{model_name}/Production"
+model_uri = f"models:/{MLFLOW_REGISTRY_NAME}-{model_name}/Production"
 ```
 
 **Proceso para promover una nueva versión:**
 1. Entrenar el nuevo modelo.
 2. Registrarlo con `log_model()` (crea version N en stage "None").
-3. En ML Tracking UI o CLI: transicionar versión N a "Staging".
+3. En MLflow UI o CLI: transicionar versión N a "Staging".
 4. Validar con `pcap_replay.py` en tráfico de referencia.
 5. Transicionar a "Production". CNDS cargará el nuevo modelo en el próximo restart.
 6. Archivar la versión anterior.
@@ -1320,12 +1320,12 @@ with open('models/lstm_config.json', 'w') as f:
 # Reemplazar lstm_autoencoder.pt y lstm_config.json
 ```
 
-### 11.4 Versionado con ML Tracking (proceso recomendado para producción)
+### 11.4 Versionado con MLflow (proceso recomendado para producción)
 
 ```bash
 # Después de entrenar un nuevo modelo:
 python -c "
-from src.ML Tracking_registry import log_model
+from src.mlflow_registry import log_model
 
 # Cargar modelo nuevo
 from joblib import load
@@ -1341,7 +1341,7 @@ uri = log_model(
 print('Registered:', uri)
 "
 
-# En ML Tracking UI: transicionar de None → Staging → (validar) → Production
+# En MLflow UI: transicionar de None → Staging → (validar) → Production
 # CNDS cargará automáticamente la nueva versión Production al reiniciar
 ```
 
@@ -1429,11 +1429,11 @@ Todos los parámetros configurables vía `.env`, con sus valores por defecto y s
 
 | Variable | Default | Rango | Efecto al aumentar |
 |---|---|---|---|
-| `WEIGHT_SUPERVISED` | 0.35 | [0, 1] | Más peso al motor supervisado (FT-T o RF fallback) |
-| `WEIGHT_IFOREST` | 0.25 | [0, 1] | Más sensible a anomalías volumétricas |
-| `WEIGHT_LSTM` | 0.15 | [0, 1] | Más sensible a comportamiento temporal |
-| `WEIGHT_RULES` | 0.05 | [0, 1] | Más sensible a patrones de umbral |
-| `WEIGHT_BASELINE` | 0.20 | [0, 1] | Peso del motor baseline (unsupervised pipeline en vivo) |
+| `WEIGHT_SUPERVISED` | 0.30 | [0, 1] | Más peso al motor supervisado (FT-T o RF fallback) |
+| `WEIGHT_IFOREST` | 0.20 | [0, 1] | Más sensible a anomalías volumétricas |
+| `WEIGHT_LSTM` | 0.10 | [0, 1] | Más sensible a comportamiento temporal |
+| `WEIGHT_RULES` | 0.25 | [0, 1] | Más sensible a patrones de umbral |
+| `WEIGHT_BASELINE` | 0.15 | [0, 1] | Peso del motor baseline (unsupervised pipeline en vivo) |
 | `ENSEMBLE_THRESHOLD` | 0.55 | [0, 1] | Bajar → más FPs, más detección; Subir → menos FPs, más FNs |
 | `CALIBRATION_TEMPERATURE` | 1.0 | (0, 10] | Bajar → sharper scores; Subir → softer scores (ensemble) |
 

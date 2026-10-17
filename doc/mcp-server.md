@@ -293,7 +293,7 @@ Do not add a write tool. If enforcement from an agent is ever wanted, the right 
 pytest tests/test_mcp_server.py -v
 ```
 
-102 tests; the SDK is only needed for the protocol-level ones, which skip without it
+103 tests; the SDK is only needed for the protocol-level ones, which skip without it
 (as does one PostgreSQL test without `asyncpg`). Coverage of the module: `sanitize.py`
 100%, `queries.py` 99%, `tools.py` 97%; the remainder is stdio transport plumbing in
 `server.py`.

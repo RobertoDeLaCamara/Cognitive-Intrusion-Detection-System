@@ -13,12 +13,13 @@ git clone https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-Sys
 cd Cognitive-Intrusion-Detection-System
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
+pip install torch --index-url https://download.pytorch.org/whl/cpu   # optional: FT-Transformer, LSTM, baseline
+cp .env.example .env     # read by docker-compose only; for bare runs export the variables, see Configuration
 ```
 
 ## 2. Add Model Files
 
-Model binaries are excluded from git. Copy your trained models into `models/`:
+Model binaries are excluded from git (except the lite Random Forest). Copy your trained models into `models/`:
 
 ```bash
 # Supervised engine — preferred: unified FT-Transformer (76 features, 10 classes)
@@ -29,14 +30,15 @@ cp /path/to/ML-IDS/models/unified/unified_metadata.json      models/unified/
 # OR set MLFLOW_TRACKING_URI to auto-load from the registry:
 #   models:/ml-ids-unified-ft-transformer/<latest>
 
-# Supervised engine — fallback: legacy Random Forest Pipeline (used when no FT-T checkpoint)
+# Supervised engine — fallback: legacy Random Forest Pipeline (used when no FT-T checkpoint).
+# A lite RF (models/rf_lite_model.joblib) is committed, so this step is optional.
 cp /path/to/rf_model.joblib               models/
 
-# Isolation Forest + scaler
+# Isolation Forest + scaler (optional; or generate synthetic ones: python scripts/generate_demo_models.py)
 cp /path/to/isolation_forest.joblib       models/
 cp /path/to/if_scaler.joblib              models/
 
-# LSTM Autoencoder
+# LSTM Autoencoder (optional; needs torch)
 cp /path/to/lstm_autoencoder.pt           models/
 cp /path/to/lstm_config.json              models/   # tracked in git
 ```
@@ -78,12 +80,14 @@ sudo venv/bin/python main.py --duration 60
 ### Docker Compose
 
 ```bash
-docker-compose up -d
+# POSTGRES_PASSWORD must be set in .env first — compose refuses to start without it
+docker-compose up -d                        # postgres + api + detector
 # API:       http://localhost:8000
+docker-compose --profile dashboard up -d    # optional Streamlit dashboard
 # Dashboard: http://localhost:8501
 ```
 
-> **Note:** The default SQLite backend does not support concurrent writers. In Docker Compose, only the API service writes to the DB. For production multi-container setups, use PostgreSQL:
+> **Note:** The compose stack runs a `postgres` service and points both `api` and `detector` at it (they write concurrently, which SQLite cannot do). Outside compose the default is SQLite (`sqlite+aiosqlite:///./cnds.db`); when you run `main.py --api` use PostgreSQL for anything beyond a demo:
 > ```
 > DATABASE_URL=postgresql+asyncpg://user:pass@db:5432/cnds
 > ```

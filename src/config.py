@@ -197,6 +197,8 @@ CORRELATION_THRESHOLD   = int(os.getenv("CORRELATION_THRESHOLD", "5"))  # alerts
 # ── Adaptive weights (Phase 8) ────────────────────────────────────────────────
 ADAPTIVE_WEIGHTS_ENABLED = os.getenv("ADAPTIVE_WEIGHTS_ENABLED", "false").lower() == "true"
 ADAPTIVE_MIN_SAMPLES     = int(os.getenv("ADAPTIVE_MIN_SAMPLES", "100"))
+# Labeled (tp+fp) alerts after which GET /api/feedback-stats reports retrain_ready (cnds#7)
+FEEDBACK_RETRAIN_THRESHOLD = int(os.getenv("FEEDBACK_RETRAIN_THRESHOLD", "500"))
 
 # ── Notifications (Phase 8) ───────────────────────────────────────────────────
 WEBHOOK_URLS       = [u.strip() for u in os.getenv("WEBHOOK_URLS", "").split(",") if u.strip()]

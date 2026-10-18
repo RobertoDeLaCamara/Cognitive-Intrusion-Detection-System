@@ -57,6 +57,7 @@ class Alert(Base):
 
     # Workflow
     acknowledged     = Column(Boolean, default=False)
+    label            = Column(String(10), nullable=True)   # analyst verdict: tp | fp | unknown (cnds#7)
     notes            = Column(Text, nullable=True)
     incident_id      = Column(Integer, ForeignKey("incidents.id"), nullable=True)
 

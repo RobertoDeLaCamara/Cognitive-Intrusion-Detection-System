@@ -38,7 +38,7 @@ async def compute_adaptive_weights(db: AsyncSession) -> Optional[Dict[str, float
     for alert in alerts:
         if not alert.engine_scores:
             continue
-        is_fp = alert.notes and "false positive" in alert.notes.lower()
+        is_fp = alert.label == "fp" or bool(alert.notes and "false positive" in alert.notes.lower())
         scores = alert.engine_scores
         total = sum(scores.get(e, 0.0) for e in engine_names) or 1.0
 

@@ -19,13 +19,14 @@ Tokens carry a `role` claim: `admin`, `analyst` or `viewer`. A route with `requi
 
 | Route | Roles allowed (when `JWT_SECRET` is set) |
 |---|---|
-| `GET /api/alerts/export` | admin, analyst |
+| `GET /api/alerts/export`, `GET /api/feedback-export` | admin, analyst |
 | `POST /api/incidents`, `PATCH /api/incidents/{id}` | admin, analyst |
 | `POST /api/suppression-rules` | admin, analyst |
 | `DELETE /api/suppression-rules/{rule_id}` | admin |
 | `GET /api/baseline/status`, `GET /api/baseline/windows` | admin, analyst, viewer |
 | `POST`/`GET /api/auth/users`, `DELETE /api/auth/users/{user_id}` | admin |
-| `GET /api/alerts`, `GET /api/alerts/{id}`, `GET /api/alerts/trends`, `GET /api/incidents`, `GET /api/stats`, `GET /api/suppression-rules`, `GET /api/adaptive-weights`, `GET /api/dns-log`, `GET /api/engines`, `GET /api/drift-status` | admin, analyst, viewer |
+| `GET /api/alerts`, `GET /api/alerts/{id}`, `GET /api/alerts/trends`, `GET /api/incidents`, `GET /api/stats`, `GET /api/suppression-rules`, `GET /api/adaptive-weights`, `GET /api/dns-log`, `GET /api/engines`, `GET /api/drift-status`, `GET /api/feedback-stats` | admin, analyst, viewer |
+
 
 | `PATCH /api/alerts/{id}`, `POST /api/predict` | admin, analyst |
 
@@ -264,6 +265,14 @@ Registered detection engines: `{"engines": [{"name", "enabled", "class", "weight
 ### `GET /api/drift-status`
 
 Input drift of the supervised model: for each of the 76 flow features, the live mean (tumbling windows of `DRIFT_WINDOW_FLOWS`, default 5000 flows) against the training mean kept in the FT-Transformer scaler, measured in training standard deviations (`shift_std`). A feature is `drifted` at `shift_std >= DRIFT_FEATURE_Z` (default 1.0); the verdict is `warning` at `DRIFT_WARN_FRACTION` (10%) of drifted features and `critical` at `DRIFT_CRIT_FRACTION` (25%). Response: `status` (`ok`, `warming_up`, `no_baseline`, `disabled`), `verdict`, `drifted_features`, `drifted_fraction`, `flows_in_window`, `thresholds` and `features[]` (`name`, `train_mean`, `live_mean`, `shift_std`, `drifted`). When a window closes with a worse verdict, a notice goes out on the webhook/Telegram channels. It reads the capture pipeline's in-process state, so, like `/api/baseline/status`, it is populated only when the API and detector run in one process (`main.py --api`); there is no baseline with the RF fallback.
+
+### Analyst feedback
+
+`PATCH /api/alerts/{id}` accepts `label`: `tp`, `fp` or `unknown`. Labels feed `GET /api/adaptive-weights` (an `fp` label counts like a "false positive" note) and the training export.
+
+`GET /api/feedback-stats` returns `tp_count`, `fp_count`, `unknown_count`, `exportable_rows` (labeled tp/fp alerts that kept their 76 flow features), `next_retrain_threshold` (`FEEDBACK_RETRAIN_THRESHOLD`, default 500 labeled alerts) and `retrain_ready`.
+
+`GET /api/feedback-export` (admin/analyst) returns a CSV: the 76 flow features in `FlowExtractor` order, `label` (1 = tp, 0 = fp), `attack_type` and `alert_id`. Alerts created before this change have no stored features and are skipped. Retraining itself is manual: feed the CSV to your training script.
 
 ---
 

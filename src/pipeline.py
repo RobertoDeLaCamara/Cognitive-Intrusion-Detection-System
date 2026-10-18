@@ -127,7 +127,8 @@ def _write_alert(item) -> None:
     _init_db()
     from datetime import datetime, timezone
     from .api.models import Alert
-    record, scores, result, severity, triggered, ja3_info, payload_matches = item
+    record, scores, result, severity, triggered, ja3_info, payload_matches, *rest = item
+    flow_vec = rest[0] if rest else None
     session = _SessionLocal()
     try:
         from .enrichment.geoip import lookup as geoip_lookup
@@ -151,6 +152,8 @@ def _write_alert(item) -> None:
                 **({"baseline": scores.baseline} if scores.baseline is not None else {}),
             },
             triggered_rules=triggered,
+            # Kept so analyst labels (tp/fp) can be exported as training rows (cnds#7)
+            flow_features=[float(x) for x in flow_vec] if flow_vec is not None else None,
             # Stored so a triggered payload:* rule can be audited (issue #21)
             payload_matches=payload_matches or None,
             src_geo=geoip_lookup(record.src_ip),
@@ -187,10 +190,10 @@ def _start_writer():
     _writer_thread.start()
 
 
-def _persist_alert(record, scores, result, severity, triggered, ja3_info=None, payload_matches=None):
+def _persist_alert(record, scores, result, severity, triggered, ja3_info=None, payload_matches=None, flow_vec=None):
     _start_writer()
     try:
-        _alert_queue.put_nowait((record, scores, result, severity, triggered, ja3_info, payload_matches))
+        _alert_queue.put_nowait((record, scores, result, severity, triggered, ja3_info, payload_matches, flow_vec))
     except queue.Full:
         logger.warning("Alert queue full — dropping alert for %s", record.src_ip)
 
@@ -340,4 +343,4 @@ def on_flow_complete(
             "active_engines": result.active_engines,
             "ja3_hash": ja3_info["hash"] if ja3_info else None,
         })
-        _persist_alert(record, scores, result, severity, triggered, ja3_info, payload_matches)
+        _persist_alert(record, scores, result, severity, triggered, ja3_info, payload_matches, flow_vec=flow_vec)

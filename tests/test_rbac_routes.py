@@ -33,6 +33,7 @@ READ = [
     ("GET", "/api/dns-log", None),
     ("GET", "/api/engines", None),
     ("GET", "/api/drift-status", None),
+    ("GET", "/api/feedback-stats", None),
 ]
 WRITE = [
     ("PATCH", "/api/alerts/1", {"acknowledged": True}),
@@ -41,6 +42,7 @@ WRITE = [
     ("PATCH", "/api/incidents/1", {"status": "investigating"}),
     ("POST", "/api/suppression-rules", {"src_ip": "10.1.1.1"}),
     ("GET", "/api/alerts/export", None),
+    ("GET", "/api/feedback-export", None),
 ]
 ADMIN = [
     ("DELETE", "/api/suppression-rules/1", None),

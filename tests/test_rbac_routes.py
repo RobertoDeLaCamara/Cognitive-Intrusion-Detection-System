@@ -31,6 +31,7 @@ READ = [
     ("GET", "/api/suppression-rules", None),
     ("GET", "/api/adaptive-weights", None),
     ("GET", "/api/dns-log", None),
+    ("GET", "/api/engines", None),
 ]
 WRITE = [
     ("PATCH", "/api/alerts/1", {"acknowledged": True}),

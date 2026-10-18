@@ -29,3 +29,34 @@ assert isinstance(supervised, DetectionEngine), "SupervisedEngine does not imple
 assert isinstance(iforest, DetectionEngine), "IsolationForestEngine does not implement DetectionEngine"
 assert isinstance(lstm, DetectionEngine), "LSTMAutoencoderEngine does not implement DetectionEngine"
 assert isinstance(baseline, DetectionEngine), "BaselineEngine does not implement DetectionEngine"
+
+# Name -> engine, keyed like the ensemble weights (EnsembleScorer._BASE_WEIGHTS) and
+# EngineScores fields. GET /api/engines is built from this; "rules" is listed separately
+# because it has no is_available (it is always on).
+ENGINES = {
+    "supervised": supervised,
+    "isolation_forest": iforest,
+    "lstm": lstm,
+    "baseline": baseline,
+}
+
+
+def describe_engines(adaptive_weights=None) -> list:
+    """One dict per engine: name, enabled, configured weight and (if known) adaptive weight."""
+    base = EnsembleScorer._BASE_WEIGHTS
+    adaptive_weights = adaptive_weights or {}
+    rows = [
+        {
+            "name": name,
+            "enabled": bool(engine.is_available),
+            "class": type(engine).__name__,
+            "weight": base.get(name),
+            "adaptive_weight": adaptive_weights.get(name),
+        }
+        for name, engine in ENGINES.items()
+    ]
+    rows.append({
+        "name": "rules", "enabled": True, "class": type(rules).__name__,
+        "weight": base.get("rules"), "adaptive_weight": adaptive_weights.get("rules"),
+    })
+    return rows

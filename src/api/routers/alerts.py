@@ -212,6 +212,8 @@ async def update_alert(
         raise HTTPException(status_code=404, detail="Alert not found")
     if body.acknowledged is not None:
         alert.acknowledged = body.acknowledged
+    if body.label is not None:
+        alert.label = body.label
     if body.notes is not None:
         alert.notes = body.notes
     if body.incident_id is not None:

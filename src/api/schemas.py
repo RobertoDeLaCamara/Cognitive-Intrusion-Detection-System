@@ -73,6 +73,7 @@ class AlertOut(BaseModel):
     engine_scores: Optional[Dict[str, Any]]
     triggered_rules: Optional[List[str]]
     acknowledged: bool
+    label: Optional[str] = None
     notes: Optional[str]
     incident_id: Optional[int]
     src_geo: Optional[Dict[str, Any]] = None
@@ -85,6 +86,7 @@ class AlertOut(BaseModel):
 
 class AlertUpdate(BaseModel):
     acknowledged: Optional[bool] = None
+    label: Optional[Literal["tp", "fp", "unknown"]] = None
     notes: Optional[str] = None
     incident_id: Optional[int] = None
 

@@ -147,6 +147,16 @@ async def test_suppressed_by_src_ip(db):
 
 
 @pytest.mark.asyncio
+async def test_find_suppressing_rule_returns_the_matching_rule(db):
+    db.add(_rule(src_ip="1.2.3.4"))
+    await db.commit()
+
+    rule = await suppression_mod.find_suppressing_rule(_alert(src_ip="1.2.3.4"), db)
+    assert rule is not None and rule.src_ip == "1.2.3.4"
+    assert await suppression_mod.find_suppressing_rule(_alert(src_ip="9.9.9.9"), db) is None
+
+
+@pytest.mark.asyncio
 async def test_not_suppressed_wrong_src_ip(db):
     db.add(_rule(src_ip="9.9.9.9"))
     await db.commit()

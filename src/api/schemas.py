@@ -50,6 +50,9 @@ class PredictResponse(BaseModel):
     engine_scores: EngineScoresOut
     active_engines: List[str]
     alert_id: Optional[int] = None
+    # Set when a suppression rule dropped the alert (it is not persisted): rule id and its reason.
+    suppressed: bool = False
+    suppression_reason: Optional[str] = None
     src_geo: Optional[Dict[str, Any]] = None
     mitre_techniques: Optional[List[Dict[str, str]]] = None
     ja3_hash: Optional[str] = None

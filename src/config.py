@@ -179,6 +179,9 @@ JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", "60"))
 
 # ── Observability (Phase 7) ───────────────────────────────────────────────────
 PROMETHEUS_ENABLED = os.getenv("PROMETHEUS_ENABLED", "false").lower() == "true"
+# When set, GET /metrics requires "Authorization: Bearer <token>" (Prometheus: `authorization.credentials`).
+# Empty = /metrics is public, as before.
+METRICS_TOKEN = os.getenv("METRICS_TOKEN", "")
 OTEL_EXPORTER_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
 
 # ── Alerts ─────────────────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ Metrics are exposed at /metrics when PROMETHEUS_ENABLED=true.
 OTEL tracing is initialized when OTEL_EXPORTER_OTLP_ENDPOINT is set.
 """
 
+import hmac
 import logging
 import threading
 import time
@@ -11,7 +12,7 @@ from typing import Callable, Optional
 
 from fastapi import FastAPI, Request, Response
 
-from ..config import PROMETHEUS_ENABLED, OTEL_EXPORTER_ENDPOINT
+from ..config import PROMETHEUS_ENABLED, OTEL_EXPORTER_ENDPOINT, METRICS_TOKEN
 
 logger = logging.getLogger(__name__)
 
@@ -288,8 +289,13 @@ def setup_prometheus(app: FastAPI):
         return response
 
     @app.get("/metrics")
-    async def metrics():
+    async def metrics(request: Request):
         from starlette.responses import PlainTextResponse
+        if METRICS_TOKEN:
+            supplied = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+            if not hmac.compare_digest(supplied, METRICS_TOKEN):
+                return Response(status_code=401, content="Invalid metrics token",
+                                headers={"WWW-Authenticate": "Bearer"})
         return PlainTextResponse(
             prom.generate_latest().decode(), media_type=prom.CONTENT_TYPE_LATEST
         )

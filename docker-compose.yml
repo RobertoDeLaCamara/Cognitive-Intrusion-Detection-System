@@ -61,8 +61,17 @@ services:
       context: .
       target: base
     container_name: cnds-detector
-    # Root required for raw packet capture
+    # Raw packet capture needs root, so keep root but drop every capability except the two
+    # it uses and forbid gaining more. (A non-root user does not work: Docker's cap_add does
+    # not make capabilities effective for uid != 0.)
     user: root
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
     command: python main.py
     network_mode: host
     volumes:

@@ -38,7 +38,9 @@ services:
   # ─── AdGuard Home — DNS + Guardian enforcement backend ───────────────────────
 
   adguard:
-    image: adguard/adguardhome:latest
+    # Pinned by digest (was :latest, 2026-10-18). Bump deliberately: docker pull adguard/adguardhome:latest
+    # then docker inspect --format '{{index .RepoDigests 0}}' adguard/adguardhome:latest
+    image: adguard/adguardhome@sha256:aba9e3bf0613be3ba3755e1fc311b126e2c24bec25e18b6483894a88283074f0
     container_name: sandbox-adguard
     volumes:
       - ./sandbox/net/adguard/work:/opt/adguardhome/work
@@ -119,9 +121,16 @@ services:
       ICMP_FLOOD_THRESHOLD: "20"
       PORT_SCAN_THRESHOLD: "10"
       ALERT_COOLDOWN_SECS: "15"
+    # Raw capture needs root, so keep root but drop every capability except the two it uses.
+    # (A non-root user does not work: Docker's cap_add does not make capabilities effective
+    # for uid != 0.)
+    cap_drop:
+      - ALL
     cap_add:
       - NET_ADMIN
       - NET_RAW
+    security_opt:
+      - no-new-privileges:true
     networks:
       homenet:
         ipv4_address: 172.20.0.3

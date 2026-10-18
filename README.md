@@ -548,6 +548,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `THREAT_INTEL_REFRESH_MINUTES` | `60` | How often to refresh threat intel feeds (minutes) |
 | `GUARDIAN_ENABLED` | `false` | Master switch for the auto-response module |
 | `GUARDIAN_MIN_SEVERITY` | `critical` | Minimum alert severity that triggers an auto-block |
+| `GUARDIAN_ALERT_SOURCES` | `detector` | Alert sources the guardian may act on (`detector`, `api`); API-submitted alerts are ignored by default |
 | `GUARDIAN_POLL_INTERVAL_SECS` | `15` | How often the guardian polls the alerts table |
 | `GUARDIAN_BLOCK_MINUTES` | `30` | How long an auto-block lasts before automatic rollback |
 | `GUARDIAN_WHITELIST` | `192.168.1.1,192.168.1.62` | Comma-separated IPs/CIDRs the guardian will never block — do not use a broad LAN range |

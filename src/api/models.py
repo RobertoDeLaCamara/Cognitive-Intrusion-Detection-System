@@ -46,6 +46,10 @@ class Alert(Base):
     engine_scores    = Column(JSON, nullable=True)   # {supervised, iforest, lstm, rules}
     triggered_rules  = Column(JSON, nullable=True)   # list of rule names
 
+    # Where the alert came from: "detector" (capture pipeline) or "api" (POST /api/predict).
+    # The Guardian only acts on sources listed in GUARDIAN_ALERT_SOURCES.
+    source           = Column(String(20), nullable=False, default="detector", server_default="detector")
+
     # Raw features snapshot
     flow_features    = Column(JSON, nullable=True)
     host_features    = Column(JSON, nullable=True)

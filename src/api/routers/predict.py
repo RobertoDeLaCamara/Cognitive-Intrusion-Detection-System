@@ -147,6 +147,7 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
                 )
             _api_dedup[dedup_key] = now
         alert = Alert(
+            source="api",
             timestamp=utcnow(),
             src_ip=body.src_ip,
             dst_ip=body.dst_ip,

@@ -267,6 +267,11 @@ BASELINE_DRIFT_CRIT = float(os.getenv("BASELINE_DRIFT_CRIT", "0.60"))  # critica
 # ── Guardian auto-response (Phase 10) ─────────────────────────────────────────
 GUARDIAN_ENABLED    = os.getenv("GUARDIAN_ENABLED", "false").lower() == "true"
 GUARDIAN_MIN_SEVERITY = os.getenv("GUARDIAN_MIN_SEVERITY", "critical")
+# Alert sources the Guardian may act on: "detector" (capture pipeline) and/or "api" (POST /api/predict).
+# Default is detector-only so a caller of /api/predict cannot make the Guardian block a LAN host.
+GUARDIAN_ALERT_SOURCES = set(filter(None, (
+    s.strip() for s in os.getenv("GUARDIAN_ALERT_SOURCES", "detector").split(",")
+)))
 GUARDIAN_POLL_INTERVAL_SECS = int(os.getenv("GUARDIAN_POLL_INTERVAL_SECS", "15"))
 GUARDIAN_BLOCK_MINUTES      = int(os.getenv("GUARDIAN_BLOCK_MINUTES", "30"))
 # IPs/CIDRs that the guardian will never block, no matter the alert. Defaults

@@ -94,6 +94,7 @@ def _write_alert(item) -> None:
         from .enrichment.geoip import lookup as geoip_lookup
         from .enrichment.mitre import enrich as mitre_enrich
         alert = Alert(
+            source="detector",
             timestamp=datetime.now(timezone.utc),
             src_ip=record.src_ip,
             dst_ip=record.dst_ip,

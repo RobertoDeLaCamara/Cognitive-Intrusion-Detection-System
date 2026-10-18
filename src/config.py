@@ -130,6 +130,9 @@ IF_MODEL_PATH       = os.path.join(MODELS_DIR, os.getenv("IF_MODEL_FILE", "isola
 IF_SCALER_PATH      = os.path.join(MODELS_DIR, os.getenv("IF_SCALER_FILE", "if_scaler.joblib"))
 LSTM_MODEL_PATH     = os.path.join(MODELS_DIR, os.getenv("LSTM_MODEL_FILE", "lstm_autoencoder.pt"))
 LSTM_CONFIG_PATH    = os.path.join(MODELS_DIR, os.getenv("LSTM_CONFIG_FILE", "lstm_config.json"))
+# Integrity check for pickle artifacts (see src/model_integrity.py): auto | enforce | off
+MODEL_INTEGRITY_MODE = os.getenv("MODEL_INTEGRITY_MODE", "auto").lower()
+MODEL_MANIFEST_PATH  = os.getenv("MODEL_MANIFEST_PATH", os.path.join(MODELS_DIR, "MANIFEST.sha256"))
 
 # ── Unified FT-Transformer (supersedes RF when present) ──────────────────────
 FT_MODEL_PATH       = os.path.join(

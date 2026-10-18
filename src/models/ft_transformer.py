@@ -85,7 +85,7 @@ def load_checkpoint(path: str, map_location: str = "cpu") -> Dict[str, Any]:
 
     Expected keys: state_dict, config, n_features, n_classes, feature_names.
     """
-    bundle = torch.load(path, map_location=map_location, weights_only=False)
+    bundle = torch.load(path, map_location=map_location, weights_only=True)
     if "state_dict" not in bundle or "config" not in bundle:
         raise ValueError(
             f"{path}: not a unified FT-Transformer checkpoint "

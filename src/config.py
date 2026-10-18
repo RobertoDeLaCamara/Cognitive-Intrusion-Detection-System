@@ -200,6 +200,11 @@ WEBHOOK_URLS       = [u.strip() for u in os.getenv("WEBHOOK_URLS", "").split(","
 NOTIFY_MIN_SEVERITY = os.getenv("NOTIFY_MIN_SEVERITY", "high")  # minimum severity to notify
 TELEGRAM_BOT_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN", "")       # empty = disabled
 TELEGRAM_CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID", "")
+# Comma-separated Telegram user IDs allowed to press Confirm/Undo. Empty = only TELEGRAM_CHAT_ID
+# itself when that is a private chat (positive ID); a group chat needs this set explicitly.
+TELEGRAM_ALLOWED_USER_IDS = set(filter(None, (
+    s.strip() for s in os.getenv("TELEGRAM_ALLOWED_USER_IDS", "").split(",")
+)))
 
 # ── Triage agent (MCP roadmap phase 2) ────────────────────────────────────────
 # An out-of-process consumer (python -m src.triage) that annotates alerts with

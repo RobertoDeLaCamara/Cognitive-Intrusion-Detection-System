@@ -528,6 +528,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `NOTIFY_MIN_SEVERITY` | `high` | Minimum severity to trigger webhook notification |
 | `TELEGRAM_BOT_TOKEN` | _(empty)_ | Telegram bot token from @BotFather; empty disables |
 | `TELEGRAM_CHAT_ID` | _(empty)_ | Telegram chat/group ID to send alerts to |
+| `TELEGRAM_ALLOWED_USER_IDS` | _(empty)_ | User IDs allowed to press Confirm/Undo; empty = the private chat's own user, required for group chats |
 | `RATE_LIMIT_REQUESTS` | `60` | Max API requests per window per IP |
 | `RATE_LIMIT_WINDOW` | `60` | Rate limit window (seconds) |
 | `DNS_LOGGING_ENABLED` | `false` | Enable DNS query logging from captured traffic |

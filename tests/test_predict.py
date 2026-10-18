@@ -182,6 +182,9 @@ async def test_predict_anomaly_persists_alert(client, db_session):
     assert data["is_anomaly"] is True
     assert data["alert_id"] is not None
     assert "icmp_flood" in data["engine_scores"]["triggered_rules"]
+    # Alerts created through the API must not be eligible for Guardian blocking (cnds#22).
+    row = await db_session.get(Alert, data["alert_id"])
+    assert row.source == "api"
 
 
 @pytest.mark.asyncio

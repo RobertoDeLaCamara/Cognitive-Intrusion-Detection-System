@@ -75,6 +75,7 @@ class AlertOut(BaseModel):
     src_geo: Optional[Dict[str, Any]] = None
     mitre_techniques: Optional[List[Dict[str, str]]] = None
     ja3_hash: Optional[str] = None
+    source: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

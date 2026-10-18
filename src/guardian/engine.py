@@ -27,6 +27,7 @@ from ..enrichment.ip_lists import _matches
 from ..enrichment.notifications import notify_alert
 from ..timeutils import utcnow
 from ..config import (
+    GUARDIAN_ALERT_SOURCES,
     GUARDIAN_MIN_SEVERITY,
     GUARDIAN_POLL_INTERVAL_SECS,
     GUARDIAN_BLOCK_MINUTES,
@@ -50,6 +51,10 @@ _circuit_paused_notified = False
 def _severity_value(severity) -> int:
     raw = severity.value if hasattr(severity, "value") else severity
     return _SEVERITY_ORDER.get(raw, 0)
+
+
+def _source_allowed(alert) -> bool:
+    return (getattr(alert, "source", None) or "detector") in GUARDIAN_ALERT_SOURCES
 
 
 async def _init_last_seen_id() -> None:
@@ -125,6 +130,9 @@ async def guardian_loop() -> None:
                     if _severity_value(alert.severity) < _SEVERITY_ORDER.get(GUARDIAN_MIN_SEVERITY, 3):
                         continue
                     if not alert.src_ip:
+                        continue
+                    if not _source_allowed(alert):
+                        logger.debug("Guardian: alert #%d came from source %r, skipping", alert.id, alert.source)
                         continue
                     if _matches(alert.src_ip, GUARDIAN_WHITELIST):
                         logger.debug("Guardian: %s is whitelisted, skipping", alert.src_ip)

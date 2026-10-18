@@ -367,6 +367,7 @@ Opt-in (`GUARDIAN_ENABLED=false` by default), off-hot-path consumer of the alert
 #### `guardian_loop()` (`engine.py`)
 - Runs as a background asyncio task started from `src/api/main.py`'s `lifespan()`, polling every `GUARDIAN_POLL_INTERVAL_SECS` (default 15 s) for alerts with `id > last_seen_id`.
 - Skips alerts below `GUARDIAN_MIN_SEVERITY` (default `critical`), alerts whose `src_ip` is absent, and alerts whose `src_ip` matches `GUARDIAN_WHITELIST` (reuses the CIDR/exact-IP matcher from `src/enrichment/ip_lists.py`).
+- Skips alerts whose `source` is not in `GUARDIAN_ALERT_SOURCES` (default `detector`): alerts created through `POST /api/predict` carry `source="api"` and never trigger a block unless the list is widened (the sandbox exerciser needs `detector,api`).
 - Skips a `src_ip` that already has an active (`PENDING`) `MitigationAction` — no duplicate blocks.
 - **Circuit breaker:** if `GUARDIAN_CIRCUIT_MAX_ACTIONS` actions were created in the last `GUARDIAN_CIRCUIT_WINDOW_SECS`, the whole batch is skipped (and never replayed later) and a single "guardian paused" notification fires via the existing `notify_alert()` path.
 - On a qualifying alert: calls `MitigationBackend.block(src_ip, reason)`, then records a `MitigationAction` row (`status=PENDING`, `expires_at=now+GUARDIAN_BLOCK_MINUTES`). If the block call itself raises, no row is written — a failed block must never be recorded as if it succeeded.

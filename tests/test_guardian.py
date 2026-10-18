@@ -119,3 +119,21 @@ class TestGuardianEngine:
             test_db.add(MitigationAction(src_ip=f"10.0.0.{i}", status=MitigationStatus.EXPIRED, created_at=stale))
         await test_db.commit()
         assert await _circuit_breaker_tripped(test_db) is False
+
+
+class TestAlertSourceFilter:
+    """Alerts submitted via POST /api/predict must not drive the Guardian (cnds#22)."""
+
+    def test_api_alerts_are_ignored_by_default(self):
+        from src.guardian.engine import _source_allowed
+        assert _source_allowed(MagicMock(source="detector"))
+        assert not _source_allowed(MagicMock(source="api"))
+
+    def test_rows_without_a_source_count_as_detector(self):
+        from src.guardian.engine import _source_allowed
+        assert _source_allowed(MagicMock(source=None))
+
+    def test_widening_the_setting_allows_api_alerts(self):
+        from src.guardian import engine
+        with patch.object(engine, "GUARDIAN_ALERT_SOURCES", {"detector", "api"}):
+            assert engine._source_allowed(MagicMock(source="api"))

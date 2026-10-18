@@ -10,21 +10,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Torch wheel source differs by architecture:
-#   amd64  → PyTorch CPU index (explicit +cpu build, smaller wheel)
-#   arm64  → PyPI standard index (manylinux2014_aarch64 wheel for 2.5.1)
-#   arm/v7 → no official wheel; FTTransformerEngine degrades to RF fallback
-RUN if [ "$TARGETARCH" = "amd64" ]; then \
-        pip install --no-cache-dir torch==2.5.1+cpu \
-            --index-url https://download.pytorch.org/whl/cpu ; \
-    elif [ "$TARGETARCH" = "arm64" ]; then \
-        pip install --no-cache-dir torch==2.5.1 ; \
+# Dependencies come from hashed lock files (requirements.txt + torch 2.6.0, which
+# fixes CVE-2025-32434); regenerate them with scripts/lock_requirements.sh.
+#   amd64  → torch 2.6.0+cpu from the PyTorch CPU index (smaller wheel)
+#   arm64  → torch 2.6.0 from PyPI (manylinux aarch64 wheel, CPU-only)
+#   arm/v7 → no official wheel; install requirements.txt unlocked and
+#            FTTransformerEngine degrades to RF fallback
+COPY requirements.txt requirements-lock-*.txt ./
+RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
+        pip install --no-cache-dir --timeout=300 --retries=5 --require-hashes \
+            -r requirements-lock-${TARGETARCH}.txt ; \
     else \
         echo "TARGETARCH=${TARGETARCH}: no torch wheel — FTTransformerEngine will degrade to RF fallback." ; \
+        pip install --no-cache-dir --timeout=300 --retries=5 -r requirements.txt ; \
     fi
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir --timeout=300 --retries=5 -r requirements.txt
 
 COPY . .
 

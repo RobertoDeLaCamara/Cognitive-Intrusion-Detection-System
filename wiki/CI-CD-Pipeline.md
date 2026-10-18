@@ -36,6 +36,6 @@ After every run the `post` block removes the test artefacts, the local image and
 | File | Purpose |
 |---|---|
 | `Jenkinsfile` | Pipeline definition |
-| `Dockerfile` | Container build (Python 3.11; installs `torch==2.5.1` CPU wheel on amd64, default CMD starts the API; `dashboard` stage adds Streamlit) |
+| `Dockerfile` | Container build (Python 3.11; installs hash-pinned `requirements-lock-<arch>.txt` incl. `torch==2.6.0` CPU wheels on amd64/arm64, default CMD starts the API; `dashboard` stage adds Streamlit) |
 | `sonar-project.properties` | SonarQube project settings |
 | `.dockerignore` | Files excluded from Docker build context |

@@ -260,7 +260,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu   # optional:
 cp .env.example .env
 ```
 
-`torch` is deliberately not in `requirements.txt` (the Dockerfile installs `torch==2.5.1` CPU wheels separately). Without it the FT-Transformer, LSTM and baseline engines report unavailable and are skipped. The Docker image uses Python 3.11 (`python:3.11-slim`); the dev venv in this checkout runs 3.12.
+`torch` is deliberately not in `requirements.txt` (the Dockerfile installs `torch==2.6.0` CPU wheels from the hashed `requirements-lock-<arch>.txt`; regenerate them with `scripts/lock_requirements.sh`). Without it the FT-Transformer, LSTM and baseline engines report unavailable and are skipped. The Docker image uses Python 3.11 (`python:3.11-slim`); the dev venv in this checkout runs 3.12.
 
 ### 2. Add models
 

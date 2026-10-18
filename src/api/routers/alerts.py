@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from ..models import Alert, Incident, SeverityLevel, IncidentStatus, SuppressionRule
 from ..schemas import (
-    AlertOut, AlertUpdate, IncidentCreate, IncidentOut,
+    AlertOut, AlertUpdate, IncidentCreate, IncidentOut, IncidentUpdate,
     SuppressionRuleCreate, SuppressionRuleOut,
 )
 from ..auth import require_role
@@ -244,6 +244,37 @@ async def create_incident(body: IncidentCreate, db: AsyncSession = Depends(get_d
         assigned_to=body.assigned_to,
     )
     db.add(inc)
+    await db.commit()
+    await db.refresh(inc)
+    return inc
+
+
+# open -> investigating -> resolved -> closed; a status may only move forward (skipping steps is fine).
+_INCIDENT_ORDER = {s: i for i, s in enumerate(
+    (IncidentStatus.OPEN, IncidentStatus.INVESTIGATING, IncidentStatus.RESOLVED, IncidentStatus.CLOSED))}
+
+
+@router.patch("/incidents/{incident_id}", response_model=IncidentOut, dependencies=[_WRITE])
+async def update_incident(incident_id: int, body: IncidentUpdate, db: AsyncSession = Depends(get_db)):
+    inc = await db.get(Incident, incident_id)
+    if not inc:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    if body.status is not None:
+        new = IncidentStatus(body.status)
+        current = inc.status or IncidentStatus.OPEN
+        if _INCIDENT_ORDER[new] < _INCIDENT_ORDER[current]:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot move an incident from {current.value} back to {new.value}",
+            )
+        inc.status = new
+        if _INCIDENT_ORDER[new] >= _INCIDENT_ORDER[IncidentStatus.RESOLVED] and inc.resolved_at is None:
+            inc.resolved_at = utcnow()
+    if body.notes is not None:
+        inc.notes = body.notes
+    if body.assigned_to is not None:
+        inc.assigned_to = body.assigned_to
     await db.commit()
     await db.refresh(inc)
     return inc

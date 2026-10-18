@@ -20,7 +20,7 @@ Tokens carry a `role` claim: `admin`, `analyst` or `viewer`. A route with `requi
 | Route | Roles allowed (when `JWT_SECRET` is set) |
 |---|---|
 | `GET /api/alerts/export` | admin, analyst |
-| `POST /api/incidents` | admin, analyst |
+| `POST /api/incidents`, `PATCH /api/incidents/{id}` | admin, analyst |
 | `POST /api/suppression-rules` | admin, analyst |
 | `DELETE /api/suppression-rules/{rule_id}` | admin |
 | `GET /api/baseline/status`, `GET /api/baseline/windows` | admin, analyst, viewer |
@@ -208,6 +208,14 @@ Create an incident (201; `admin`/`analyst` when JWT is on).
 
 ```json
 {"title": "DDoS campaign", "description": "...", "severity": "critical", "assigned_to": "analyst@example.com"}
+```
+
+### `PATCH /api/incidents/{id}`
+
+Update `status`, `notes` and/or `assigned_to` (`admin`/`analyst` when JWT is on). Status only moves forward through `open` → `investigating` → `resolved` → `closed` (steps may be skipped); a backward move returns 409 and an unknown id 404. `resolved_at` is set automatically the first time the status reaches `resolved` or `closed`.
+
+```json
+{"status": "resolved", "notes": "Blocked at the firewall"}
 ```
 
 Incidents are also created automatically by correlation when one source IP reaches `CORRELATION_THRESHOLD` alerts inside `CORRELATION_WINDOW_SECS` (title `Correlated attack from <ip>`); this happens on the `/api/predict` path.

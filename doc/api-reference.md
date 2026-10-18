@@ -25,7 +25,7 @@ Tokens carry a `role` claim: `admin`, `analyst` or `viewer`. A route with `requi
 | `DELETE /api/suppression-rules/{rule_id}` | admin |
 | `GET /api/baseline/status`, `GET /api/baseline/windows` | admin, analyst, viewer |
 | `POST`/`GET /api/auth/users`, `DELETE /api/auth/users/{user_id}` | admin |
-| `GET /api/alerts`, `GET /api/alerts/{id}`, `GET /api/alerts/trends`, `GET /api/incidents`, `GET /api/stats`, `GET /api/suppression-rules`, `GET /api/adaptive-weights`, `GET /api/dns-log` | admin, analyst, viewer |
+| `GET /api/alerts`, `GET /api/alerts/{id}`, `GET /api/alerts/trends`, `GET /api/incidents`, `GET /api/stats`, `GET /api/suppression-rules`, `GET /api/adaptive-weights`, `GET /api/dns-log`, `GET /api/engines` | admin, analyst, viewer |
 | `PATCH /api/alerts/{id}`, `POST /api/predict` | admin, analyst |
 
 There is no bootstrap user: the first `admin` has to be inserted directly into the `users` table (password hashed with bcrypt), because `POST /api/auth/users` itself needs an admin token once `JWT_SECRET` is set.
@@ -255,6 +255,10 @@ Suppression is applied on the `/api/predict` path only.
 ### `GET /api/adaptive-weights`
 
 Returns `{"status": "ok", "weights": {...}}` or `{"status": "insufficient_data", "weights": null}`. Requires `ADAPTIVE_WEIGHTS_ENABLED=true` and at least `ADAPTIVE_MIN_SAMPLES` (default 100) acknowledged alerts. The weights cover supervised / isolation_forest / lstm / rules only and are informational: nothing applies them automatically.
+
+### `GET /api/engines`
+
+Registered detection engines: `{"engines": [{"name", "enabled", "class", "weight", "adaptive_weight"}, ...]}` for `supervised`, `isolation_forest`, `lstm`, `baseline` and `rules`. `enabled` is the engine's `is_available` (rules is always true), `weight` the configured ensemble weight before redistribution, and `adaptive_weight` the value from `/api/adaptive-weights` (null until there are enough acknowledged alerts).
 
 ---
 

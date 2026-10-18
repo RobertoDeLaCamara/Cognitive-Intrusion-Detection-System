@@ -318,6 +318,36 @@ The rules engine is always available and provides a minimum detection floor. In 
 
 ---
 
+## Adding an Engine
+
+`src/engines/registry.py` is the single place engines are instantiated; `GET /api/engines` and `/health` read from it. A new ML engine takes these steps:
+
+1. **Implement the protocol** (`src/engines/protocol.py`): an `is_available` property and `anomaly_score(...) -> Optional[float]` returning a normalised `[0, 1]` score. Load models in `__init__` and degrade to `is_available = False` when files are missing.
+
+   ```python
+   class MyEngine:
+       def __init__(self):
+           self._model = None  # load here; leave None if the file is absent
+
+       @property
+       def is_available(self) -> bool:
+           return self._model is not None
+
+       def anomaly_score(self, host_features=None):
+           if not self.is_available or host_features is None:
+               return 0.0
+           return float(self._model.score(host_features))
+   ```
+
+2. **Instantiate it in `registry.py`**, add an `assert isinstance(my_engine, DetectionEngine)` next to the others and an entry in `ENGINES`.
+3. **Give it an ensemble slot**: add a field to `EngineScores` and a `WEIGHT_*` entry in `src/config.py` and `EnsembleScorer._BASE_WEIGHTS` (all weights must sum to 1.0 ± 0.01), and handle the field in `EnsembleScorer.score()`.
+4. **Call it** from `on_flow_complete()` in `src/pipeline.py` (and `routers/predict.py` for the API path) and fill the field.
+5. **Smoke test**: `tests/test_engines.py` shows the pattern: with the model file missing `is_available` is false and `anomaly_score` returns 0.0 without raising; with a model it stays inside `[0, 1]`.
+
+Steps 3 and 4 are explicit wiring, not automatic discovery: the scorer still has one named field per engine.
+
+---
+
 ## Engine Performance Characteristics
 
 | Engine | Latency | Memory | CPU | False Positive Risk |

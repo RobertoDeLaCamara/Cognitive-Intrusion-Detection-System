@@ -13,6 +13,8 @@ os.environ.setdefault("MLFLOW_TRACKING_URI", "")
 # fixture (the real names are already bound). Tests that need the FT engine
 # instantiate it explicitly via test_ft_transformer_engine.py.
 os.environ.setdefault("FT_MODEL_FILE", "__disabled_in_tests__")
+# Tests that run on_flow_complete must not start the asset flusher against a real DB.
+os.environ.setdefault("ASSET_INVENTORY_ENABLED", "false")
 
 # src.api.main refuses to import without API_KEY/JWT_SECRET unless
 # AUTH_DISABLED=true (cnds#20). Opt in so existing tests can import the app.

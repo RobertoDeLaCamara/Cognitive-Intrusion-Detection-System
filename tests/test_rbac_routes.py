@@ -33,6 +33,7 @@ READ = [
     ("GET", "/api/dns-log", None),
     ("GET", "/api/engines", None),
     ("GET", "/api/drift-status", None),
+    ("GET", "/api/assets", None),
     ("GET", "/api/feedback-stats", None),
 ]
 WRITE = [

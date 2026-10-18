@@ -15,6 +15,7 @@ from .routers.auth import router as auth_router
 from .routers.baseline import router as baseline_router
 from .routers.engines import router as engines_router
 from .routers.drift import router as drift_router
+from .routers.assets import router as assets_router
 from .routers.feedback import router as feedback_router
 from .metrics import setup_prometheus, setup_otel
 from .rate_limit import RateLimitMiddleware
@@ -150,6 +151,7 @@ app.include_router(auth_router)
 app.include_router(baseline_router)
 app.include_router(engines_router)
 app.include_router(drift_router)
+app.include_router(assets_router)
 app.include_router(feedback_router)
 
 

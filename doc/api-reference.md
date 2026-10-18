@@ -25,7 +25,8 @@ Tokens carry a `role` claim: `admin`, `analyst` or `viewer`. A route with `requi
 | `DELETE /api/suppression-rules/{rule_id}` | admin |
 | `GET /api/baseline/status`, `GET /api/baseline/windows` | admin, analyst, viewer |
 | `POST`/`GET /api/auth/users`, `DELETE /api/auth/users/{user_id}` | admin |
-| `GET /api/alerts`, `GET /api/alerts/{id}`, `GET /api/alerts/trends`, `GET /api/incidents`, `GET /api/stats`, `GET /api/suppression-rules`, `GET /api/adaptive-weights`, `GET /api/dns-log`, `GET /api/engines`, `GET /api/drift-status`, `GET /api/feedback-stats` | admin, analyst, viewer |
+| `GET /api/alerts`, `GET /api/alerts/{id}`, `GET /api/alerts/trends`, `GET /api/incidents`, `GET /api/stats`, `GET /api/suppression-rules`, `GET /api/adaptive-weights`, `GET /api/dns-log`, `GET /api/engines`, `GET /api/drift-status`, `GET /api/feedback-stats`, `GET /api/assets` | admin, analyst, viewer |
+
 
 
 | `PATCH /api/alerts/{id}`, `POST /api/predict` | admin, analyst |
@@ -273,6 +274,10 @@ Input drift of the supervised model: for each of the 76 flow features, the live 
 `GET /api/feedback-stats` returns `tp_count`, `fp_count`, `unknown_count`, `exportable_rows` (labeled tp/fp alerts that kept their 76 flow features), `next_retrain_threshold` (`FEEDBACK_RETRAIN_THRESHOLD`, default 500 labeled alerts) and `retrain_ready`.
 
 `GET /api/feedback-export` (admin/analyst) returns a CSV: the 76 flow features in `FlowExtractor` order, `label` (1 = tp, 0 = fp), `attack_type` and `alert_id`. Alerts created before this change have no stored features and are skipped. Retraining itself is manual: feed the CSV to your training script.
+
+### `GET /api/assets`
+
+LAN asset inventory built from completed flows (private addresses only). Query: `classification` (`server`, `workstation`, `iot`, `unknown`), `limit` (default 50, max 500), `offset`. Response: `{"total": N, "assets": [{"ip", "classification", "first_seen", "last_seen", "is_new", "alert_count", "risk_score", "flows_out", "flows_in"}]}`, newest `last_seen` first. `is_new` is true when the host was first seen in the last 24 h. `risk_score` (0–100) sums alert severities (low 1, medium 3, high 7, critical 15). Classification is a heuristic over traffic direction, peers and ports and stays `unknown` below 10 flows. Alerts also carry `src_asset_type` with the source host's classification (null when the host is not in the inventory). Counters are kept in memory and merged into `host_profiles` every `ASSET_FLUSH_SECS` (60), so profiles survive restarts; `ASSET_INVENTORY_ENABLED=false` turns it off.
 
 ---
 

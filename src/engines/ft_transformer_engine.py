@@ -23,7 +23,6 @@ import logging
 import os
 from typing import Optional, Tuple
 
-import joblib
 import numpy as np
 
 from ..config import (
@@ -34,6 +33,7 @@ from ..config import (
     FT_USE_GPU,
 )
 from .. import mlflow_registry
+from ..model_integrity import load_joblib
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +183,7 @@ class FTTransformerEngine:
         if not os.path.exists(self._scaler_path):
             return None
         try:
-            return joblib.load(self._scaler_path)
+            return load_joblib(self._scaler_path)
         except Exception as e:
             logger.error("Failed to load scaler at %s: %s", self._scaler_path, e)
             return None

@@ -316,6 +316,17 @@ If models are absent, CNDS starts in **rules-only mode**. The `/health` endpoint
 {"engines": {"supervised": false, "isolation_forest": false, "lstm": false, "rules": true}}
 ```
 
+### Verifying model files
+
+`.joblib` and `.pkl` files are Python pickles, so loading a tampered one runs arbitrary code. CNDS checks them against a SHA-256 manifest (`models/MANIFEST.sha256`, `sha256sum` format) before loading:
+
+```bash
+python scripts/model_manifest.py write   # after training or copying new models
+python scripts/model_manifest.py check   # verify; exit 1 on mismatch
+```
+
+`MODEL_INTEGRITY_MODE` (default `auto`): with a manifest present every pickle must be listed and match, otherwise it is refused; with no manifest it loads unverified and logs one warning. `enforce` refuses to load anything without a manifest; `off` disables the check. `MODEL_MANIFEST_PATH` overrides the location. The `.pt` checkpoints are loaded with `torch.load(weights_only=True)`. Artifacts pulled from the MLflow registry are not covered by the manifest.
+
 ### Loading models from MLflow
 
 ```bash

@@ -10,10 +10,10 @@ import threading
 import numpy as np
 from typing import Optional
 
-import joblib
 
 from ..config import IF_MODEL_PATH, IF_SCALER_PATH, MLFLOW_REGISTRY_NAME
 from .. import mlflow_registry
+from ..model_integrity import load_joblib
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class IsolationForestEngine:
             logger.info("IsolationForestEngine loaded from MLflow")
         elif os.path.exists(self._model_path):
             try:
-                self._model = joblib.load(self._model_path)
+                self._model = load_joblib(self._model_path)
                 logger.info("IsolationForestEngine loaded: %s", self._model_path)
             except Exception as e:
                 logger.error("Failed to load IF model: %s", e)
@@ -50,7 +50,7 @@ class IsolationForestEngine:
 
         try:
             if os.path.exists(self._scaler_path):
-                self._scaler = joblib.load(self._scaler_path)
+                self._scaler = load_joblib(self._scaler_path)
         except Exception as e:
             logger.warning("IF scaler not loaded: %s", e)
 
@@ -91,10 +91,10 @@ class IsolationForestEngine:
     def reload(self, model_path: str, scaler_path: str = "") -> bool:
         """Load model (and optionally scaler) from disk and hot-swap."""
         try:
-            new_model = joblib.load(model_path)
+            new_model = load_joblib(model_path)
             new_scaler = None
             if scaler_path and os.path.exists(scaler_path):
-                new_scaler = joblib.load(scaler_path)
+                new_scaler = load_joblib(scaler_path)
             self.swap(new_model, new_scaler)
             logger.info("IsolationForestEngine reloaded from %s", model_path)
             return True

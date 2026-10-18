@@ -36,6 +36,7 @@ WRITE = [
     ("PATCH", "/api/alerts/1", {"acknowledged": True}),
     ("POST", "/api/predict", {"src_ip": "10.0.0.1"}),
     ("POST", "/api/incidents", {"title": "t", "severity": "high"}),
+    ("PATCH", "/api/incidents/1", {"status": "investigating"}),
     ("POST", "/api/suppression-rules", {"src_ip": "10.1.1.1"}),
     ("GET", "/api/alerts/export", None),
 ]

@@ -1,7 +1,7 @@
 """Pydantic schemas for the Cognitive Network Defense System API."""
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 import ipaddress
 
@@ -91,6 +91,12 @@ class IncidentCreate(BaseModel):
     title: str
     description: Optional[str] = None
     severity: Optional[str] = "medium"
+    assigned_to: Optional[str] = None
+
+
+class IncidentUpdate(BaseModel):
+    status: Optional[Literal["open", "investigating", "resolved", "closed"]] = None
+    notes: Optional[str] = None
     assigned_to: Optional[str] = None
 
 

@@ -193,6 +193,13 @@ class FTTransformerEngine:
     def is_available(self) -> bool:
         return self._model is not None and self._scaler is not None
 
+    def scaler_stats(self):
+        """(mean, std) the model was trained with, or None. Used by the drift monitor."""
+        sc = self._scaler
+        if sc is None or not hasattr(sc, "mean_") or not hasattr(sc, "scale_"):
+            return None
+        return sc.mean_, sc.scale_
+
     @property
     def expects_payload_features(self) -> bool:
         # Unified model uses only the 76 flow features.

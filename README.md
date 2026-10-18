@@ -517,6 +517,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `JWT_EXPIRE_MINUTES` | `60` | JWT token expiry (minutes) |
 | `CNDS_API_KEY` | _(empty)_ | Dashboard only: API key it sends as `X-API-Key` (compose passes `API_KEY`) |
 | `CNDS_API_USER` / `CNDS_API_PASSWORD` | _(empty)_ | Dashboard only: account it logs in with when JWT is enabled; needs the `analyst` or `admin` role to acknowledge alerts, `viewer` is enough to read |
+| `DRIFT_ENABLED` | `true` | Track live-vs-training flow-feature drift (`GET /api/drift-status`); `DRIFT_WINDOW_FLOWS`, `DRIFT_FEATURE_Z`, `DRIFT_WARN_FRACTION`, `DRIFT_CRIT_FRACTION` tune it |
 | `PROMETHEUS_ENABLED` | `false` | Enable Prometheus metrics at `/metrics` |
 | `METRICS_TOKEN` | _(empty)_ | When set, `/metrics` requires `Authorization: Bearer <token>`; empty keeps it public |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | _(empty)_ | OpenTelemetry OTLP endpoint |

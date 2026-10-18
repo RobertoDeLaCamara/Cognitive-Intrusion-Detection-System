@@ -32,6 +32,7 @@ READ = [
     ("GET", "/api/adaptive-weights", None),
     ("GET", "/api/dns-log", None),
     ("GET", "/api/engines", None),
+    ("GET", "/api/drift-status", None),
 ]
 WRITE = [
     ("PATCH", "/api/alerts/1", {"acknowledged": True}),

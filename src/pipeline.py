@@ -15,10 +15,13 @@ from typing import List, Optional
 
 from .config import (
     DATABASE_URL, DEDUP_WINDOW_SECS, TRUSTED_OUTBOUND,
+    DRIFT_ENABLED, DRIFT_WINDOW_FLOWS, DRIFT_MIN_FLOWS, DRIFT_FEATURE_Z,
+    DRIFT_WARN_FRACTION, DRIFT_CRIT_FRACTION,
 )
 from .engines.registry import supervised, iforest, lstm, baseline as baseline_engine, rules, ensemble
 from .ensemble.scorer import EngineScores, severity_from_score
-from .features.flow_extractor import FlowRecord
+from .features.flow_extractor import FlowRecord, FLOW_FEATURE_NAMES
+from .monitoring.feature_drift import FeatureDriftMonitor
 from .unsupervised.collector import BaselineCollector
 from .unsupervised.triggers import CompositeTrigger
 from .unsupervised.window_trainer import WindowTrainer
@@ -30,6 +33,42 @@ logger = logging.getLogger(__name__)
 _baseline_collector: Optional[BaselineCollector] = None
 _window_trainer: Optional[WindowTrainer] = None
 _baseline_collector_lock = threading.Lock()
+
+
+def _notify_drift(report: dict) -> None:
+    """Send a drift notice on the existing channels without blocking the capture worker."""
+    import asyncio
+    from .enrichment.notifications import notify_alert
+
+    payload = {
+        "severity": "critical" if report["verdict"] == "critical" else "high",
+        "src_ip": "model-drift",
+        "dst_ip": "-",
+        "attack_type": (
+            f"Feature drift {report['verdict']}: {report['drifted_features']}/{len(FLOW_FEATURE_NAMES)} "
+            f"flow features shifted by >= {DRIFT_FEATURE_Z} training std over {report['flows_in_window']} flows"
+        ),
+        "ensemble_score": report["drifted_fraction"],
+        "triggered_rules": [],
+    }
+    threading.Thread(target=lambda: asyncio.run(notify_alert(payload)), daemon=True).start()
+
+
+def _drift_baseline():
+    stats = getattr(supervised, "scaler_stats", lambda: None)()
+    return stats  # (mean, std) from the FT-Transformer scaler, None for the RF fallback
+
+
+feature_drift_monitor = FeatureDriftMonitor(
+    FLOW_FEATURE_NAMES,
+    window_flows=DRIFT_WINDOW_FLOWS,
+    feature_z=DRIFT_FEATURE_Z,
+    warn_fraction=DRIFT_WARN_FRACTION,
+    crit_fraction=DRIFT_CRIT_FRACTION,
+    min_flows=DRIFT_MIN_FLOWS,
+    baseline_loader=_drift_baseline,
+    on_verdict_worse=_notify_drift,
+)
 
 
 def get_baseline_collector() -> Optional[BaselineCollector]:
@@ -227,6 +266,9 @@ def on_flow_complete(
     ti_get_store()
 
     scores = EngineScores()
+
+    if DRIFT_ENABLED:
+        feature_drift_monitor.observe(flow_vec)
 
     if supervised.is_available:
         result = supervised.predict(flow_vec, payload_features)

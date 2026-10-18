@@ -14,6 +14,7 @@ from .routers.websocket import router as ws_router
 from .routers.auth import router as auth_router
 from .routers.baseline import router as baseline_router
 from .routers.engines import router as engines_router
+from .routers.drift import router as drift_router
 from .metrics import setup_prometheus, setup_otel
 from .rate_limit import RateLimitMiddleware
 from ..config import API_KEY, JWT_SECRET, AUTH_DISABLED, CORS_ORIGINS, RATE_LIMIT_REQUESTS, GUARDIAN_ENABLED, TELEGRAM_BOT_TOKEN
@@ -147,6 +148,7 @@ app.include_router(ws_router)
 app.include_router(auth_router)
 app.include_router(baseline_router)
 app.include_router(engines_router)
+app.include_router(drift_router)
 
 
 @app.get("/health")

@@ -269,6 +269,13 @@ THREAT_INTEL_REFRESH_MINUTES = int(os.getenv("THREAT_INTEL_REFRESH_MINUTES", "60
 
 # ── Unsupervised baseline ─────────────────────────────────────────────────────
 BASELINE_COLLECTION_ENABLED = os.getenv("BASELINE_COLLECTION_ENABLED", "true").lower() == "true"
+# Input-feature drift of the supervised model (src/monitoring/feature_drift.py)
+DRIFT_ENABLED       = os.getenv("DRIFT_ENABLED", "true").lower() == "true"
+DRIFT_WINDOW_FLOWS  = int(os.getenv("DRIFT_WINDOW_FLOWS", "5000"))     # flows per tumbling window
+DRIFT_MIN_FLOWS     = int(os.getenv("DRIFT_MIN_FLOWS", "200"))         # flows before a partial window is reported
+DRIFT_FEATURE_Z     = float(os.getenv("DRIFT_FEATURE_Z", "1.0"))       # live-vs-train mean shift (train std) that marks a feature drifted
+DRIFT_WARN_FRACTION = float(os.getenv("DRIFT_WARN_FRACTION", "0.10"))  # share of drifted features -> warning
+DRIFT_CRIT_FRACTION = float(os.getenv("DRIFT_CRIT_FRACTION", "0.25"))  # share of drifted features -> critical
 BASELINE_DRIFT_WARN = float(os.getenv("BASELINE_DRIFT_WARN", "0.30"))  # warning threshold
 BASELINE_DRIFT_CRIT = float(os.getenv("BASELINE_DRIFT_CRIT", "0.60"))  # critical threshold  # path to known-bad hashes
 

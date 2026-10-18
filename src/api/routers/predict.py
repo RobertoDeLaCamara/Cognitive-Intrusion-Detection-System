@@ -19,7 +19,7 @@ from ...features.flow_extractor import FlowRecord
 from ...enrichment import geoip
 from ...enrichment.mitre import enrich as mitre_enrich
 from ...enrichment.correlation import correlate_alert
-from ...enrichment.suppression import is_suppressed
+from ...enrichment.suppression import find_suppressing_rule
 from ...enrichment.notifications import notify_alert
 from ...enrichment.confidence_decay import apply_decay
 from ...enrichment.ip_lists import is_allowlisted, is_blocklisted
@@ -125,6 +125,7 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
 
     # --- Persist alert if anomaly (with dedup) ---
     alert_id = None
+    suppression_reason = None
     if result.is_anomaly:
         dedup_key = (body.src_ip, scores.attack_type or "unknown")
         now = datetime.now(timezone.utc)
@@ -174,8 +175,10 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
         await db.flush()
 
         # Check suppression rules
-        if await is_suppressed(alert, db):
+        rule = await find_suppressing_rule(alert, db)
+        if rule is not None:
             inc_suppressed("suppression_rule")
+            suppression_reason = f"rule #{rule.id}" + (f": {rule.reason}" if rule.reason else "")
             await db.rollback()
         else:
             # Alert correlation
@@ -221,6 +224,8 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
         ),
         active_engines=result.active_engines,
         alert_id=alert_id,
+        suppressed=suppression_reason is not None,
+        suppression_reason=suppression_reason,
         src_geo=geo,
         mitre_techniques=mitre,
     )

@@ -11,6 +11,7 @@ Covers:
 """
 
 import pytest
+from types import SimpleNamespace
 import pytest_asyncio
 import numpy as np
 from contextlib import asynccontextmanager, ExitStack
@@ -136,7 +137,7 @@ def _anomaly_patches(rule_result=(0.9, ["icmp_flood"]), score=0.9):
         "src.api.routers.predict._ensemble":   mock_ensemble,
         "src.api.routers.predict.geoip.lookup": lambda ip: None,
         "src.api.routers.predict.apply_decay": lambda ip, s: s,
-        "src.api.routers.predict.is_suppressed":   AsyncMock(return_value=False),
+        "src.api.routers.predict.find_suppressing_rule":   AsyncMock(return_value=None),
         "src.api.routers.predict.correlate_alert": AsyncMock(return_value=None),
         "src.api.routers.predict.broadcast_alert": AsyncMock(),
         "src.api.routers.predict.notify_alert":    AsyncMock(),
@@ -209,7 +210,8 @@ async def test_predict_dedup_second_call_returns_no_alert_id(client):
 async def test_predict_suppressed_alert_not_persisted(client):
     """Suppression rule fires → alert rolled back, response has alert_id=None."""
     patches = _anomaly_patches()
-    patches["src.api.routers.predict.is_suppressed"] = AsyncMock(return_value=True)
+    patches["src.api.routers.predict.find_suppressing_rule"] = AsyncMock(
+        return_value=SimpleNamespace(id=7, reason="maintenance window"))
 
     with ExitStack() as stack:
         for target, value in patches.items():
@@ -221,6 +223,8 @@ async def test_predict_suppressed_alert_not_persisted(client):
 
     assert resp.status_code == 200
     assert resp.json()["alert_id"] is None
+    assert resp.json()["suppressed"] is True
+    assert resp.json()["suppression_reason"] == "rule #7: maintenance window"
 
 
 @pytest.mark.asyncio
@@ -302,7 +306,7 @@ async def test_predict_supervised_engine_used_when_available(client):
          patch("src.api.routers.predict._ensemble",   mock_ensemble), \
          patch("src.api.routers.predict.geoip.lookup", return_value=None), \
          patch("src.api.routers.predict.apply_decay", return_value=0.95), \
-         patch("src.api.routers.predict.is_suppressed",   AsyncMock(return_value=False)), \
+         patch("src.api.routers.predict.find_suppressing_rule",   AsyncMock(return_value=None)), \
          patch("src.api.routers.predict.correlate_alert", AsyncMock(return_value=None)), \
          patch("src.api.routers.predict.broadcast_alert", AsyncMock()), \
          patch("src.api.routers.predict.notify_alert",    AsyncMock()), \

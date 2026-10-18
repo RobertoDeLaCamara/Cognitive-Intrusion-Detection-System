@@ -10,7 +10,7 @@ querying the database on every alert.
 import asyncio
 import logging
 import time
-from typing import List
+from typing import List, Optional
 
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,6 +49,11 @@ def invalidate_cache() -> None:
 
 async def is_suppressed(alert: Alert, db: AsyncSession) -> bool:
     """Check if an alert matches any active suppression rule."""
+    return await find_suppressing_rule(alert, db) is not None
+
+
+async def find_suppressing_rule(alert: Alert, db: AsyncSession) -> Optional[SuppressionRule]:
+    """Return the first active suppression rule the alert matches, or None."""
     await _refresh_cache(db)
 
     for rule in _cache:
@@ -67,8 +72,8 @@ async def is_suppressed(alert: Alert, db: AsyncSession) -> bool:
             if alert_sev > rule_sev:
                 continue
         logger.debug("Alert suppressed by rule #%d: %s", rule.id, rule.reason)
-        return True
-    return False
+        return rule
+    return None
 
 
 async def cleanup_expired(db: AsyncSession) -> int:

@@ -123,7 +123,7 @@ Behaviour worth knowing:
 
 - Addresses in `IP_ALLOWLIST` return score 0 with no engines; addresses in `IP_BLOCKLIST` return score 1.0, `severity: "critical"`, `attack_type: "Blocklisted"` (no alert row is written for either).
 - The score is multiplied by `CONFIDENCE_DECAY_FACTOR` per repeat from the same IP inside `CONFIDENCE_DECAY_WINDOW`.
-- A repeat `(src_ip, attack_type)` inside `DEDUP_WINDOW_SECS` returns `alert_id: null`; so does a match against a suppression rule.
+- A repeat `(src_ip, attack_type)` inside `DEDUP_WINDOW_SECS` returns `alert_id: null`; so does a match against a suppression rule, in which case the alert is not stored and the response carries `suppressed: true` and `suppression_reason` (`rule #<id>: <reason>`).
 - A persisted alert is broadcast on `/ws/alerts`, correlated into incidents and sent to webhook/Telegram if its severity meets `NOTIFY_MIN_SEVERITY`.
 - This path does not run the baseline engine or the threat-intel check; the live-capture pipeline does.
 

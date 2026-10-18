@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from ..api.database import AsyncSessionLocal
 from ..api.models import MitigationAction, MitigationStatus
-from ..config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+from ..config import TELEGRAM_ALLOWED_USER_IDS, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 from ..timeutils import utcnow
 from .backends import AdGuardBackend
 
@@ -66,9 +66,26 @@ async def _answer_callback(client: httpx.AsyncClient, callback_id: str, text: st
         logger.error("Telegram answerCallbackQuery failed: %s", e)
 
 
+def _callback_authorized(callback: dict) -> bool:
+    """Only the configured chat, and only allow-listed users in it, may confirm or undo a block."""
+    chat_id = str(((callback.get("message") or {}).get("chat") or {}).get("id", ""))
+    if not TELEGRAM_CHAT_ID or chat_id != str(TELEGRAM_CHAT_ID):
+        return False
+    allowed = TELEGRAM_ALLOWED_USER_IDS
+    if not allowed and not str(TELEGRAM_CHAT_ID).startswith("-"):
+        allowed = {str(TELEGRAM_CHAT_ID)}  # private chat: the user ID equals the chat ID
+    return str((callback.get("from") or {}).get("id", "")) in allowed
+
+
 async def _handle_callback(client: httpx.AsyncClient, callback: dict) -> None:
     data = callback.get("data", "")
     callback_id = callback.get("id", "")
+    if not _callback_authorized(callback):
+        logger.warning("Telegram callback from unauthorized user %s in chat %s ignored",
+                       (callback.get("from") or {}).get("id"),
+                       ((callback.get("message") or {}).get("chat") or {}).get("id"))
+        await _answer_callback(client, callback_id, "Not authorized.")
+        return
     if ":" not in data:
         return
     op, _, raw_id = data.partition(":")

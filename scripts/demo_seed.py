@@ -8,6 +8,7 @@ with representative alerts.
 """
 
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -18,6 +19,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s  %(message)s", datef
 log = logging.getLogger(__name__)
 
 API_URL = "http://api:8000"
+# /api/predict needs credentials unless the API runs with AUTH_DISABLED=true.
+# API_KEY: key deployments. CNDS_API_TOKEN: a JWT of an analyst/admin (JWT deployments).
+AUTH_HEADERS = {
+    **({"X-API-Key": os.environ["API_KEY"]} if os.environ.get("API_KEY") else {}),
+    **({"Authorization": f"Bearer {os.environ['CNDS_API_TOKEN']}"} if os.environ.get("CNDS_API_TOKEN") else {}),
+}
 MODELS_DIR = Path("models")
 
 
@@ -92,7 +99,7 @@ def seed_alerts() -> None:
     posted = 0
     for scenario in scenarios:
         try:
-            r = httpx.post(f"{API_URL}/api/predict", json=scenario, timeout=10)
+            r = httpx.post(f"{API_URL}/api/predict", json=scenario, headers=AUTH_HEADERS, timeout=10)
             data = r.json()
             if data.get("is_anomaly"):
                 posted += 1

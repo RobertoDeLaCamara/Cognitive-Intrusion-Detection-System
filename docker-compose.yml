@@ -98,6 +98,11 @@ services:
       - "8501:8501"
     environment:
       - CNDS_API_URL=http://api:8000
+      # Credentials the dashboard uses against the API (see dashboard/api_client.py).
+      # API-key deployments: CNDS_API_KEY. JWT deployments: an analyst/admin account.
+      - CNDS_API_KEY=${API_KEY:-}
+      - CNDS_API_USER=${CNDS_API_USER:-}
+      - CNDS_API_PASSWORD=${CNDS_API_PASSWORD:-}
     depends_on:
       api:
         condition: service_healthy

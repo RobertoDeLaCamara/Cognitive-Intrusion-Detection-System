@@ -56,7 +56,7 @@ Migration files live in `alembic/versions/` and are tracked in git.
 - [ ] Use PostgreSQL instead of SQLite for concurrent access
 - [ ] Set `JWT_SECRET` to a strong random value to enable authentication
 - [ ] Configure `CORS_ORIGINS` to restrict allowed origins
-- [ ] Set `API_KEY` (checks every route) and/or `JWT_SECRET` (protects only the role-gated routes — export, incident/suppression writes, baseline, user management). One of them is required: with neither, the API refuses to start unless `AUTH_DISABLED=true` (lab use only). Seed the first admin directly in the database, see [API Reference](API-Reference.md#authentication)
+- [ ] Set `API_KEY` (checks every route) and/or `JWT_SECRET` (role checks on every route except `/health`, `/metrics` and `/api/auth/token`; give the dashboard its own account via `CNDS_API_USER` / `CNDS_API_PASSWORD`). One of them is required: with neither, the API refuses to start unless `AUTH_DISABLED=true` (lab use only). Seed the first admin directly in the database, see [API Reference](API-Reference.md#authentication)
 - [ ] Pin `CAPTURE_INTERFACE` to the correct network interface
 - [ ] Set `LOG_FORMAT=json` for structured logging compatible with ELK/Loki/CloudWatch
 - [ ] Enable `PROMETHEUS_ENABLED=true` and configure scraping

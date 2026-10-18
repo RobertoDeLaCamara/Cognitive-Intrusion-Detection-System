@@ -17,6 +17,12 @@ from ...timeutils import utcnow
 
 router = APIRouter(prefix="/api", tags=["alerts"])
 
+# Role policy when JWT auth is enabled (a no-op otherwise, see auth.require_role):
+#   read routes  -> any authenticated role
+#   write routes -> analyst or admin; destructive/admin routes -> admin
+_READ = Depends(require_role("admin", "analyst", "viewer"))
+_WRITE = Depends(require_role("admin", "analyst"))
+
 # Upper bound for `hours` filters (10 years); larger values overflow timedelta/datetime.
 MAX_HOURS = 24 * 365 * 10
 
@@ -41,7 +47,7 @@ def _to_naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
     return dt
 
 
-@router.get("/alerts", response_model=List[AlertOut])
+@router.get("/alerts", response_model=List[AlertOut], dependencies=[_READ])
 async def list_alerts(
     limit: int = Query(50, le=500),
     offset: int = Query(0, ge=0),
@@ -158,7 +164,7 @@ async def export_alerts(
     )
 
 
-@router.get("/alerts/trends")
+@router.get("/alerts/trends", dependencies=[_READ])
 async def alert_trends(
     hours: int = Query(24, ge=1, le=168),
     bucket: str = Query("hour", pattern="^(hour|day)$"),
@@ -187,7 +193,7 @@ async def alert_trends(
     return {"bucket": bucket, "hours": hours, "data": buckets}
 
 
-@router.get("/alerts/{alert_id}", response_model=AlertOut)
+@router.get("/alerts/{alert_id}", response_model=AlertOut, dependencies=[_READ])
 async def get_alert(alert_id: int, db: AsyncSession = Depends(get_db)):
     alert = await db.get(Alert, alert_id)
     if not alert:
@@ -195,7 +201,7 @@ async def get_alert(alert_id: int, db: AsyncSession = Depends(get_db)):
     return alert
 
 
-@router.patch("/alerts/{alert_id}", response_model=AlertOut)
+@router.patch("/alerts/{alert_id}", response_model=AlertOut, dependencies=[_WRITE])
 async def update_alert(
     alert_id: int,
     body: AlertUpdate,
@@ -215,7 +221,7 @@ async def update_alert(
     return alert
 
 
-@router.get("/incidents", response_model=List[IncidentOut])
+@router.get("/incidents", response_model=List[IncidentOut], dependencies=[_READ])
 async def list_incidents(
     limit: int = Query(20, le=200),
     status: Optional[str] = None,
@@ -243,7 +249,7 @@ async def create_incident(body: IncidentCreate, db: AsyncSession = Depends(get_d
     return inc
 
 
-@router.get("/stats")
+@router.get("/stats", dependencies=[_READ])
 async def stats(db: AsyncSession = Depends(get_db)):
     from sqlalchemy import func, case
     result = await db.execute(
@@ -266,7 +272,7 @@ async def stats(db: AsyncSession = Depends(get_db)):
 
 # ── Suppression Rules (Phase 8) ───────────────────────────────────────────────
 
-@router.get("/suppression-rules", response_model=List[SuppressionRuleOut])
+@router.get("/suppression-rules", response_model=List[SuppressionRuleOut], dependencies=[_READ])
 async def list_suppression_rules(db: AsyncSession = Depends(get_db)):
     now = utcnow()
     result = await db.execute(
@@ -312,7 +318,7 @@ async def delete_suppression_rule(rule_id: int, db: AsyncSession = Depends(get_d
 
 # ── Adaptive Weights (Phase 8) ────────────────────────────────────────────────
 
-@router.get("/adaptive-weights")
+@router.get("/adaptive-weights", dependencies=[_READ])
 async def get_adaptive_weights(db: AsyncSession = Depends(get_db)):
     from ...enrichment.adaptive_weights import compute_adaptive_weights
     weights = await compute_adaptive_weights(db)
@@ -323,7 +329,7 @@ async def get_adaptive_weights(db: AsyncSession = Depends(get_db)):
 
 # ── DNS Logs (Phase 8) ────────────────────────────────────────────────────────
 
-@router.get("/dns-log")
+@router.get("/dns-log", dependencies=[_READ])
 async def get_dns_logs(src_ip: Optional[str] = None):
     from ...enrichment.dns_logger import get_dns_log, get_all_logs
     if src_ip:

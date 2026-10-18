@@ -455,7 +455,7 @@ python siem/syslog/forwarder.py --listen-port 5514 --target-host siem-server --t
    EOF
    ```
    (run with `DATABASE_URL` pointing at the production database). Further users can then be created with `POST /api/auth/users` and an admin token.
-3. `JWT_SECRET` only protects the role-gated routes; keep `API_KEY` (or a reverse proxy) in place if the read routes must not be public.
+3. `JWT_SECRET` puts role checks on every route except `/health`, `/metrics` and `/api/auth/token`; `/metrics` stays public for Prometheus, so restrict it at the reverse proxy if it must not be.
 
 ### TLS
 

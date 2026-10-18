@@ -11,11 +11,11 @@ At least one mechanism must be configured: the API refuses to start with neither
 | Mechanism | Env Var | Header / Param | Scope |
 |-----------|---------|----------------|-------|
 | API key (legacy) | `API_KEY` | `X-API-Key: <key>` | Every HTTP route except `/health`, `/docs`, `/openapi.json`, `/metrics`, `/api/auth/*` (`/ws/alerts` authenticates inside its own handler) |
-| JWT | `JWT_SECRET` | `Authorization: Bearer <token>` | Only routes that declare a role (table below), plus the `/ws/alerts` `?token=` |
+| JWT | `JWT_SECRET` | `Authorization: Bearer <token>` | Every route except `/health`, `/metrics` and `/api/auth/token` (role table below), plus the `/ws/alerts` `?token=` |
 
 ### JWT roles
 
-Tokens carry a `role` claim: `admin`, `analyst` or `viewer`. A route with `require_role(...)` returns 401 when the token is missing/invalid and 403 when the role is not allowed. Routes without a role check are **not** protected by JWT alone.
+Tokens carry a `role` claim: `admin`, `analyst` or `viewer`. A route with `require_role(...)` returns 401 when the token is missing/invalid and 403 when the role is not allowed. Every API route except `/health`, `/metrics` and `/api/auth/token` declares a role, so a valid token is always required.
 
 | Route | Roles allowed (when `JWT_SECRET` is set) |
 |---|---|
@@ -25,7 +25,8 @@ Tokens carry a `role` claim: `admin`, `analyst` or `viewer`. A route with `requi
 | `DELETE /api/suppression-rules/{rule_id}` | admin |
 | `GET /api/baseline/status`, `GET /api/baseline/windows` | admin, analyst, viewer |
 | `POST`/`GET /api/auth/users`, `DELETE /api/auth/users/{user_id}` | admin |
-| `GET /api/alerts`, `GET /api/alerts/{id}`, `PATCH /api/alerts/{id}`, `GET /api/alerts/trends`, `GET /api/incidents`, `GET /api/stats`, `GET /api/suppression-rules`, `GET /api/adaptive-weights`, `GET /api/dns-log`, `POST /api/predict` | none (open) |
+| `GET /api/alerts`, `GET /api/alerts/{id}`, `GET /api/alerts/trends`, `GET /api/incidents`, `GET /api/stats`, `GET /api/suppression-rules`, `GET /api/adaptive-weights`, `GET /api/dns-log` | admin, analyst, viewer |
+| `PATCH /api/alerts/{id}`, `POST /api/predict` | admin, analyst |
 
 There is no bootstrap user: the first `admin` has to be inserted directly into the `users` table (password hashed with bcrypt), because `POST /api/auth/users` itself needs an admin token once `JWT_SECRET` is set.
 

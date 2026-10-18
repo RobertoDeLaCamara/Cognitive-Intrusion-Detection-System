@@ -7,7 +7,7 @@ from sqlalchemy import select, desc, func, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..database import get_db
-from ..models import Alert, Incident, SeverityLevel, IncidentStatus, SuppressionRule
+from ..models import Alert, HostProfile, Incident, SeverityLevel, IncidentStatus, SuppressionRule
 from ..schemas import (
     AlertOut, AlertUpdate, IncidentCreate, IncidentOut, IncidentUpdate,
     SuppressionRuleCreate, SuppressionRuleOut,
@@ -47,6 +47,19 @@ def _to_naive_utc(dt: Optional[datetime]) -> Optional[datetime]:
     return dt
 
 
+async def _attach_asset_types(db: AsyncSession, alerts) -> None:
+    """Set `src_asset_type` on each alert from the asset inventory (None when the host is unknown)."""
+    ips = {a.src_ip for a in alerts if a.src_ip}
+    if not ips:
+        return
+    rows = (await db.execute(
+        select(HostProfile.ip, HostProfile.classification).where(HostProfile.ip.in_(ips))
+    )).all()
+    kinds = dict(rows)
+    for a in alerts:
+        a.src_asset_type = kinds.get(a.src_ip)
+
+
 @router.get("/alerts", response_model=List[AlertOut], dependencies=[_READ])
 async def list_alerts(
     limit: int = Query(50, le=500),
@@ -83,7 +96,9 @@ async def list_alerts(
         q = q.where(Alert.timestamp >= utcnow() - timedelta(hours=hours))
     q = q.offset(offset).limit(limit)
     result = await db.execute(q)
-    return result.scalars().all()
+    alerts = result.scalars().all()
+    await _attach_asset_types(db, alerts)
+    return alerts
 
 
 @router.get("/alerts/export", dependencies=[Depends(require_role("admin", "analyst"))])
@@ -198,6 +213,7 @@ async def get_alert(alert_id: int, db: AsyncSession = Depends(get_db)):
     alert = await db.get(Alert, alert_id)
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
+    await _attach_asset_types(db, [alert])
     return alert
 
 

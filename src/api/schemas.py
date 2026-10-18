@@ -80,6 +80,7 @@ class AlertOut(BaseModel):
     mitre_techniques: Optional[List[Dict[str, str]]] = None
     ja3_hash: Optional[str] = None
     source: Optional[str] = None
+    src_asset_type: Optional[str] = None   # classification of the source host in the asset inventory
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -16,7 +16,7 @@ def create_test_app():
     """Create a fresh FastAPI app for testing."""
     from fastapi import FastAPI
     from fastapi.middleware.cors import CORSMiddleware
-    from src.api.routers import alerts, predict, engines, drift, feedback
+    from src.api.routers import alerts, predict, engines, drift, feedback, assets
     from src.api.routers.websocket import router as ws_router
     from src.api.routers.auth import router as auth_router
 
@@ -35,6 +35,7 @@ def create_test_app():
     test_app.include_router(predict.router)
     test_app.include_router(engines.router)
     test_app.include_router(drift.router)
+    test_app.include_router(assets.router)
     test_app.include_router(feedback.router)
     test_app.include_router(ws_router)
     test_app.include_router(auth_router)

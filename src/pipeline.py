@@ -15,6 +15,7 @@ from typing import List, Optional
 
 from .config import (
     DATABASE_URL, DEDUP_WINDOW_SECS, TRUSTED_OUTBOUND,
+    ASSET_INVENTORY_ENABLED, ASSET_FLUSH_SECS,
     DRIFT_ENABLED, DRIFT_WINDOW_FLOWS, DRIFT_MIN_FLOWS, DRIFT_FEATURE_Z,
     DRIFT_WARN_FRACTION, DRIFT_CRIT_FRACTION,
 )
@@ -22,6 +23,7 @@ from .engines.registry import supervised, iforest, lstm, baseline as baseline_en
 from .ensemble.scorer import EngineScores, severity_from_score
 from .features.flow_extractor import FlowRecord, FLOW_FEATURE_NAMES
 from .monitoring.feature_drift import FeatureDriftMonitor
+from .inventory.assets import AssetTracker, flush as flush_assets
 from .unsupervised.collector import BaselineCollector
 from .unsupervised.triggers import CompositeTrigger
 from .unsupervised.window_trainer import WindowTrainer
@@ -198,9 +200,47 @@ def _persist_alert(record, scores, result, severity, triggered, ja3_info=None, p
         logger.warning("Alert queue full — dropping alert for %s", record.src_ip)
 
 
+# ── Asset inventory (cnds#13) ──────────────────────────────────────────────
+asset_tracker = AssetTracker()
+_asset_flusher: Optional[threading.Thread] = None
+_asset_stop = threading.Event()
+
+
+def _flush_assets_now() -> None:
+    drained = asset_tracker.drain()
+    if not drained:
+        return
+    _init_db()
+    session = _SessionLocal()
+    try:
+        flush_assets(session, drained)
+    except Exception as e:
+        session.rollback()
+        logger.error("Asset inventory flush failed: %s", e)
+    finally:
+        session.close()
+
+
+def _asset_flush_loop() -> None:
+    while not _asset_stop.wait(ASSET_FLUSH_SECS):
+        _flush_assets_now()
+
+
+def _start_asset_flusher() -> None:
+    global _asset_flusher
+    if _asset_flusher is not None:
+        return
+    _asset_stop.clear()
+    _asset_flusher = threading.Thread(target=_asset_flush_loop, daemon=True, name="asset-flusher")
+    _asset_flusher.start()
+
+
 def drain_alert_queue(timeout: float = 5.0) -> None:
     """Signal the writer to stop and wait for pending alerts to flush."""
     _writer_stop.set()
+    if ASSET_INVENTORY_ENABLED:
+        _asset_stop.set()
+        _flush_assets_now()
     if _writer_thread is not None and _writer_thread.is_alive():
         _writer_thread.join(timeout=timeout)
         if _writer_thread.is_alive():
@@ -267,6 +307,10 @@ def on_flow_complete(
         ti_ja3_malicious, _ = ti_check_ja3(ja3_info["hash"])
     # Ensure threat intel refresh happens in background
     ti_get_store()
+
+    if ASSET_INVENTORY_ENABLED:
+        _start_asset_flusher()
+        asset_tracker.observe(record.src_ip, record.dst_ip, record.key[3] or None)
 
     scores = EngineScores()
 

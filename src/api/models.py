@@ -105,6 +105,22 @@ class SuppressionRule(Base):
     expires_at  = Column(DateTime, nullable=False, index=True)
 
 
+class HostProfile(Base):
+    """One row per LAN host seen by the capture pipeline (asset inventory, cnds#13)."""
+    __tablename__ = "host_profiles"
+
+    id             = Column(Integer, primary_key=True, index=True)
+    ip             = Column(String(45), unique=True, index=True, nullable=False)
+    first_seen     = Column(DateTime, default=utcnow, nullable=False)
+    last_seen      = Column(DateTime, default=utcnow, index=True, nullable=False)
+    flows_out      = Column(Integer, default=0, nullable=False)   # flows it initiated
+    flows_in       = Column(Integer, default=0, nullable=False)   # flows it received
+    listen_ports   = Column(JSON, nullable=True)                  # ports it was reached on (capped)
+    out_ports      = Column(JSON, nullable=True)                  # ports it connected to (capped)
+    peers          = Column(JSON, nullable=True)                  # distinct peer IPs (capped)
+    classification = Column(String(20), default="unknown", index=True, nullable=False)
+
+
 class MitigationStatus(str, enum.Enum):
     PENDING   = "pending"
     CONFIRMED = "confirmed"

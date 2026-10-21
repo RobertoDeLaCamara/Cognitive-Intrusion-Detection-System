@@ -98,11 +98,18 @@ RF_SCORE_THRESHOLD  = float(os.getenv("RF_SCORE_THRESHOLD", "0.90"))  # min conf
 # Rule names that are unambiguous signature matches for a known attack pattern
 # (not statistical hints) — any one of these forces is_anomaly=True and a
 # critical severity score, independent of how the weighted engines vote.
+# syn_scan added 2026-10-21: >20 SYNs on one flow with no completing
+# handshake (rules.py's syn_flag_cnt/fwd_act_data_pkts check) is as
+# unambiguous a signature as the payload matches below — a real flood/scan
+# confirmed live against raspi-189 (cnds-red-team's syn_flood scenario) never
+# surfaced an alert without this, because WEIGHT_RULES alone (0.05-0.25
+# depending on deployment) can't clear ENSEMBLE_THRESHOLD on its own.
 CRITICAL_RULES = set(
     x.strip() for x in os.getenv(
         "CRITICAL_RULES",
         "payload:sql_injection,payload:command_injection,payload:log4j,"
-        "payload:shellshock,payload:xss,payload:path_traversal,malicious_ja3",
+        "payload:shellshock,payload:xss,payload:path_traversal,malicious_ja3,"
+        "syn_scan",
     ).split(",") if x.strip()
 )
 

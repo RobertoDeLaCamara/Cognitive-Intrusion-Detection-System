@@ -54,16 +54,48 @@ def test_payload_match_triggers(engine):
 
 
 def test_syn_scan_triggers(engine):
+    """A real SYN flood/scan: many SYNs, none carrying payload data.
+
+    tot_fwd_pkts is realistic here (== syn_flag_cnt, as it must be for a
+    pure-SYN flow) — this is the regression test for the bug where the rule
+    compared syn_flag_cnt > 20 AND tot_fwd_pkts < 5, which can never both
+    hold (every SYN counted in syn_flag_cnt is itself a forward packet
+    counted in tot_fwd_pkts, so tot_fwd_pkts >= syn_flag_cnt always). Proven
+    unreachable in production by cnds-red-team's syn_flood scenario against
+    a real target (25 and 40 raw SYNs on one flow, zero alerts). The fix
+    checks fwd_act_data_pkts instead, which only counts packets that
+    actually carry a payload and stays 0 for a pure-SYN flow regardless of
+    packet count.
+    """
     from src.features.flow_extractor import FLOW_FEATURE_NAMES
     vec = _zero_flow_vec()
     syn_idx = FLOW_FEATURE_NAMES.index("syn_flag_cnt")
     fwd_idx = FLOW_FEATURE_NAMES.index("tot_fwd_pkts")
-    vec[syn_idx] = 25  # above PORT_SCAN_THRESHOLD (20)
-    vec[fwd_idx] = 3   # below 5
-    rec = _FakeRecord(fwd_lengths=[40, 40, 40])
+    data_idx = FLOW_FEATURE_NAMES.index("fwd_act_data_pkts")
+    vec[syn_idx] = 25      # above PORT_SCAN_THRESHOLD (20)
+    vec[fwd_idx] = 25      # realistic: every SYN is a forward packet too
+    vec[data_idx] = 0      # no payload ever sent — pure SYN flood
+    rec = _FakeRecord(fwd_lengths=[40] * 25)
     score, triggered = engine.evaluate(rec, vec, [])
     assert score == 1.0
     assert "syn_scan" in triggered
+
+
+def test_syn_scan_does_not_trigger_on_real_data_traffic(engine):
+    """Many SYNs (e.g. retransmits) that go on to exchange real payload data
+    must NOT be flagged as a scan — this is what distinguishes the fixed
+    rule from simply lowering the old, unreachable threshold."""
+    from src.features.flow_extractor import FLOW_FEATURE_NAMES
+    vec = _zero_flow_vec()
+    syn_idx = FLOW_FEATURE_NAMES.index("syn_flag_cnt")
+    fwd_idx = FLOW_FEATURE_NAMES.index("tot_fwd_pkts")
+    data_idx = FLOW_FEATURE_NAMES.index("fwd_act_data_pkts")
+    vec[syn_idx] = 25       # above PORT_SCAN_THRESHOLD (20)
+    vec[fwd_idx] = 100
+    vec[data_idx] = 50      # real payload exchanged — not a scan
+    rec = _FakeRecord(fwd_lengths=[40] * 25 + [500] * 50)
+    score, triggered = engine.evaluate(rec, vec, [])
+    assert "syn_scan" not in triggered
 
 
 def test_asymmetric_upload_triggers(engine):

@@ -23,7 +23,7 @@ PROTO_UDP  = 17
 
 # Feature indices by name
 _IDX_SYN_FLAG_CNT = FLOW_FEATURE_NAMES.index("syn_flag_cnt")
-_IDX_TOT_FWD_PKTS = FLOW_FEATURE_NAMES.index("tot_fwd_pkts")
+_IDX_FWD_ACT_DATA_PKTS = FLOW_FEATURE_NAMES.index("fwd_act_data_pkts")
 
 
 class RulesEngine:
@@ -56,10 +56,21 @@ class RulesEngine:
         # 2. Port scan heuristic: many unique destination ports, few bytes
         # (Detected at the dispatcher level via host features — flagged here
         # if the single flow has suspiciously high port diversity.)
-        # Proxy: high SYN count with low data
+        # Proxy: high SYN count with (almost) no actual payload data — a real
+        # SYN flood/scan never completes a handshake, so no data is ever
+        # exchanged. NOTE: this used to compare against tot_fwd_pkts < 5,
+        # which can never hold once syn_flag_cnt > 20: every SYN counted by
+        # syn_flag_cnt is itself counted in tot_fwd_pkts, so tot_fwd_pkts is
+        # always >= syn_flag_cnt and the old condition was unreachable (see
+        # cnds-red-team's live syn_flood scenario, which proved this against
+        # a real target: 25 and 40 raw SYNs on one flow, zero alerts).
+        # fwd_act_data_pkts only counts packets that actually carry a
+        # payload, so it stays low for a pure-SYN flood regardless of how
+        # many SYNs are sent, while legitimate high-SYN traffic that goes on
+        # to exchange real data will not falsely trigger.
         if (flow_features is not None and
                 flow_features[_IDX_SYN_FLAG_CNT] > PORT_SCAN_THRESHOLD and
-                flow_features[_IDX_TOT_FWD_PKTS] < 5):
+                flow_features[_IDX_FWD_ACT_DATA_PKTS] < 5):
             triggered.append("syn_scan")
 
         # 3. Large payload

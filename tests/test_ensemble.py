@@ -74,6 +74,23 @@ def test_critical_rule_forces_anomaly_even_if_ml_engines_disagree(scorer):
     assert result.score == pytest.approx(1.0)
 
 
+def test_syn_scan_critical_rule_forces_anomaly(scorer):
+    """Regression: a confirmed syn_scan (raw SYN flood/scan, no completing
+    handshake) must always alert, even when the statistical engines see
+    nothing unusual. Added 2026-10-21 after a live cnds-red-team run against
+    raspi-189 proved the rule fired in rules.py but never surfaced an alert,
+    because WEIGHT_RULES alone can't clear ENSEMBLE_THRESHOLD — syn_scan is
+    as unambiguous a signature as the payload matches already covered by
+    test_critical_rule_forces_anomaly_even_if_ml_engines_disagree above."""
+    scores = EngineScores(
+        supervised=0.0, isolation_forest=0.0, lstm=0.0, rules=1.0,
+        triggered_rules=["syn_scan"],
+    )
+    result = scorer.score(scores)
+    assert result.is_anomaly
+    assert result.score == pytest.approx(1.0)
+
+
 def test_non_critical_rule_does_not_force_anomaly(scorer):
     """A rule that isn't in CRITICAL_RULES (e.g. a generic large_payload
     heuristic) still goes through the normal weighted blend."""

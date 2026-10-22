@@ -16,8 +16,15 @@ LABELS = {"": "— no verdict —", "tp": "True positive", "fp": "False positive
 
 st.title("🔎 Alert detail")
 
-alert_id = st.number_input("Alert ID", min_value=1, step=1, format="%d",
-                           value=int(st.session_state.get("alert_id") or 1))
+def _initial_id() -> int:
+    """`?id=7` (links from notifications) wins over the id of the last row opened."""
+    raw = st.query_params.get("id")
+    if raw is not None and str(raw).isdigit() and int(raw) > 0:
+        return int(raw)
+    return int(st.session_state.get("alert_id") or 1)
+
+
+alert_id = st.number_input("Alert ID", min_value=1, step=1, format="%d", value=_initial_id())
 st.session_state["alert_id"] = int(alert_id)
 alert = common.fetch_alert(int(alert_id))
 if not alert:

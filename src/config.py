@@ -213,6 +213,13 @@ FEEDBACK_RETRAIN_THRESHOLD = int(os.getenv("FEEDBACK_RETRAIN_THRESHOLD", "500"))
 # ── Notifications (Phase 8) ───────────────────────────────────────────────────
 WEBHOOK_URLS       = [u.strip() for u in os.getenv("WEBHOOK_URLS", "").split(",") if u.strip()]
 NOTIFY_MIN_SEVERITY = os.getenv("NOTIFY_MIN_SEVERITY", "high")  # minimum severity to notify
+# ntfy (https://ntfy.sh): push notifications to phones. Empty NTFY_URL = disabled.
+NTFY_URL       = os.getenv("NTFY_URL", "").rstrip("/")       # e.g. http://192.168.1.189:2586
+NTFY_TOPIC     = os.getenv("NTFY_TOPIC", "cnds")
+NTFY_USER      = os.getenv("NTFY_USER", "")                  # basic auth (write-only user is enough)
+NTFY_PASSWORD  = os.getenv("NTFY_PASSWORD", "")
+NTFY_TOKEN     = os.getenv("NTFY_TOKEN", "")                 # access token; wins over user/password
+DASHBOARD_URL  = os.getenv("DASHBOARD_URL", "").rstrip("/")  # e.g. http://192.168.1.38:8511; adds a tap-to-open link
 TELEGRAM_BOT_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN", "")       # empty = disabled
 TELEGRAM_CHAT_ID    = os.getenv("TELEGRAM_CHAT_ID", "")
 # Comma-separated Telegram user IDs allowed to press Confirm/Undo. Empty = only TELEGRAM_CHAT_ID

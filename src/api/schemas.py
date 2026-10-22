@@ -85,6 +85,17 @@ class AlertOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class AlertDetailOut(AlertOut):
+    """Single-alert view: AlertOut plus the heavy fields the list endpoint leaves out."""
+    protocol: Optional[int] = None
+    payload_matches: Optional[List[str]] = None
+    ja3_string: Optional[str] = None
+    flow_features: Optional[List[float]] = None
+    host_features: Optional[List[float]] = None
+    flow_feature_names: Optional[List[str]] = None
+    host_feature_names: Optional[List[str]] = None
+
+
 class AlertUpdate(BaseModel):
     acknowledged: Optional[bool] = None
     label: Optional[Literal["tp", "fp", "unknown"]] = None

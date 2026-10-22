@@ -760,7 +760,7 @@ docker compose -f docker-compose.sandbox.yml --profile attack up -d attacker
 docker compose -f docker-compose.sandbox.yml --profile attack down -v
 ```
 
-The sandbox creates a `172.20.0.0/24` Docker network with 3 simulated devices (laptop, phone, smart-tv) generating realistic traffic, while an attacker container cycles through 10 attack types. The detector captures real packets with Scapy, and Guardian auto-blocks the attacker in AdGuard Home.
+The sandbox creates a `172.28.0.0/24` Docker network with 3 simulated devices (laptop, phone, smart-tv) generating realistic traffic, while an attacker container cycles through 10 attack types. The detector captures real packets with Scapy, and Guardian auto-blocks the attacker in AdGuard Home.
 
 See [`sandbox/net/README.md`](sandbox/net/README.md) for the full topology, configuration, and troubleshooting guide.
 

@@ -10,7 +10,7 @@ A diferencia del sandbox basado en API (`sandbox/orchestrator.py`), este entorno
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│  Docker Network: homenet (172.20.0.0/24)                                │
+│  Docker Network: homenet (172.28.0.0/24)                                │
 │                                                                         │
 │  ┌─────────┐  ┌─────────┐  ┌──────────┐       ┌─────────────────────┐  │
 │  │ laptop  │  │  phone  │  │ smart-tv │       │     attacker        │  │
@@ -24,7 +24,7 @@ A diferencia del sandbox basado en API (`sandbox/orchestrator.py`), este entorno
 │       │             │            │                         │             │
 │  ┌────┴─────────────┴────────────┴──────┐    ┌────────────┴──────────┐  │
 │  │   AdGuard Home (DNS + enforcement)   │    │    CNDS Detector      │  │
-│  │   172.20.0.2                         │    │    172.20.0.3         │  │
+│  │   172.28.0.2                         │    │    172.28.0.3         │  │
 │  │   :53 (DNS) / :3000 (WebUI)         │    │    captures eth0      │  │
 │  └──────────────────────────────────────┘    └───────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────┘
@@ -113,7 +113,7 @@ curl -s http://localhost:8000/api/dns-log | python -m json.tool
 curl -s -u admin:sandbox123 http://localhost:3000/control/access/list | python -m json.tool
 ```
 
-Deberías ver `172.20.0.66` (el atacante) en `disallowed_clients` después de que se generen alertas de severidad alta.
+Deberías ver `172.28.0.66` (el atacante) en `disallowed_clients` después de que se generen alertas de severidad alta.
 
 ### 7. Parar todo
 
@@ -136,7 +136,7 @@ El archivo `.env.sandbox` contiene todos los parámetros, optimizados para demo:
 | `GUARDIAN_MIN_SEVERITY` | high | critical | Bloquea más agresivamente |
 | `GUARDIAN_BLOCK_MINUTES` | 5 | 30 | Rollback rápido para iterar |
 | `GUARDIAN_POLL_INTERVAL_SECS` | 5 | 15 | Reacciona más rápido |
-| `IP_BLOCKLIST` | 172.20.0.66 | _(vacío)_ | Marca al atacante como crítico |
+| `IP_BLOCKLIST` | 172.28.0.66 | _(vacío)_ | Marca al atacante como crítico |
 
 ---
 
@@ -165,11 +165,11 @@ sandbox/net/
    - Port scan (10+ SYNs a puertos distintos) → regla `port_scan`
    - ICMP flood (20+ pings rápidos) → regla `icmp_flood`
    - SQL injection en payload HTTP → regla `sql_injection`
-   - IP 172.20.0.66 en la blocklist → boost automático a `critical`
+   - IP 172.28.0.66 en la blocklist → boost automático a `critical`
 
 3. **Ensemble** combina scores de todos los engines → alerta `high` o `critical`.
 
-4. **Guardian** detecta alerta `high+` de `172.20.0.66`:
+4. **Guardian** detecta alerta `high+` de `172.28.0.66`:
    - Verifica que no está en whitelist ✓
    - Llama a AdGuard API → añade a `disallowed_clients`
    - Crea registro en `mitigation_actions` con `expires_at` = ahora + 5 min
@@ -190,7 +190,7 @@ sandbox/net/
 **Guardian no bloquea:**
 - Verificar que `GUARDIAN_ENABLED=true` en los logs: `docker logs sandbox-detector | grep -i guardian`
 - Verificar que hay alertas high/critical: `curl localhost:8000/api/alerts?severity=high`
-- Verificar la conectividad detector→adguard: `docker exec sandbox-detector curl http://172.20.0.2:3000/control/access/list`
+- Verificar la conectividad detector→adguard: `docker exec sandbox-detector curl http://172.28.0.2:3000/control/access/list`
 
 **El atacante no genera alertas:**
 - Los primeros 15s el atacante espera → dale tiempo

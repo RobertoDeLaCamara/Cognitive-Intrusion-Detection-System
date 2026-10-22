@@ -26,8 +26,8 @@ logging.basicConfig(
 log = logging.getLogger("client")
 
 ROLE = os.getenv("CLIENT_ROLE", "laptop")
-DNS_SERVER = os.getenv("DNS_SERVER", "172.20.0.2")
-TARGETS = os.getenv("TARGETS", "172.20.0.2").split(",")
+DNS_SERVER = os.getenv("DNS_SERVER", "172.28.0.2")
+TARGETS = os.getenv("TARGETS", "172.28.0.2").split(",")
 
 # Domains to query — mix of common sites
 DOMAINS = [

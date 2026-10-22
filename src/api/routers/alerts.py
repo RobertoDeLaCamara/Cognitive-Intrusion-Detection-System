@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..database import get_db
 from ..models import Alert, HostProfile, Incident, SeverityLevel, IncidentStatus, SuppressionRule
 from ..schemas import (
-    AlertOut, AlertUpdate, IncidentCreate, IncidentOut, IncidentUpdate,
+    AlertDetailOut, AlertOut, AlertUpdate, IncidentCreate, IncidentOut, IncidentUpdate,
     SuppressionRuleCreate, SuppressionRuleOut,
 )
 from ..auth import require_role
@@ -208,13 +208,21 @@ async def alert_trends(
     return {"bucket": bucket, "hours": hours, "data": buckets}
 
 
-@router.get("/alerts/{alert_id}", response_model=AlertOut, dependencies=[_READ])
+@router.get("/alerts/{alert_id}", response_model=AlertDetailOut, dependencies=[_READ])
 async def get_alert(alert_id: int, db: AsyncSession = Depends(get_db)):
     alert = await db.get(Alert, alert_id)
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
     await _attach_asset_types(db, [alert])
-    return alert
+    detail = AlertDetailOut.model_validate(alert)
+    try:  # names label the stored feature vectors; skip them if the extractors can't be imported
+        from ...features.flow_extractor import FLOW_FEATURE_NAMES
+        from ...features.host_extractor import HOST_FEATURE_NAMES
+        detail.flow_feature_names = list(FLOW_FEATURE_NAMES)
+        detail.host_feature_names = list(HOST_FEATURE_NAMES)
+    except ImportError:
+        pass
+    return detail
 
 
 @router.patch("/alerts/{alert_id}", response_model=AlertOut, dependencies=[_WRITE])

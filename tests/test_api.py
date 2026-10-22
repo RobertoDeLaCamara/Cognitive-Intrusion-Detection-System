@@ -626,3 +626,23 @@ async def test_suppression_rule_without_condition_is_rejected(client, body):
 async def test_suppression_rule_with_any_single_condition_is_accepted(client, body):
     resp = await client.post("/api/suppression-rules", json=body)
     assert resp.status_code == 201, resp.text
+
+
+@pytest.mark.asyncio
+async def test_get_alert_detail_includes_heavy_fields(client, test_session):
+    from datetime import datetime, timezone
+    alert = Alert(
+        timestamp=datetime.now(timezone.utc), src_ip="10.0.0.9", severity=SeverityLevel.HIGH,
+        payload_matches=["union select"], ja3_string="771,4865", flow_features=[0.5] * 76,
+    )
+    test_session.add(alert)
+    await test_session.commit()
+    await test_session.refresh(alert)
+
+    detail = (await client.get(f"/api/alerts/{alert.id}")).json()
+    assert detail["payload_matches"] == ["union select"]
+    assert detail["ja3_string"] == "771,4865" and len(detail["flow_features"]) == 76
+    assert len(detail["flow_feature_names"]) == 76 and len(detail["host_feature_names"]) == 18
+
+    listed = (await client.get("/api/alerts")).json()[0]
+    assert "flow_features" not in listed and "payload_matches" not in listed

@@ -20,3 +20,5 @@ models/**/*.pt
 !models/unified/unified_ft_transformer.pt
 !models/unified/unified_scaler.pkl
 !models/unified/unified_metadata.json
+# Runtime state written by the sandbox AdGuard container (root-owned, unreadable by the builder)
+sandbox/net/adguard/work

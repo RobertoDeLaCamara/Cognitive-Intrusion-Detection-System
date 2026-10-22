@@ -8,7 +8,7 @@
 #   docker compose -f docker-compose.sandbox.yml up --build --profile attack
 #
 # Networks:
-#   homenet  (172.20.0.0/24) — simulated LAN, traffic captured by detector
+#   homenet  (172.28.0.0/24) — simulated LAN, traffic captured by detector
 #   backend  (internal)      — DB, API, dashboard (not captured)
 
 services:
@@ -47,7 +47,7 @@ services:
       - ./sandbox/net/adguard/conf:/opt/adguardhome/conf
     networks:
       homenet:
-        ipv4_address: 172.20.0.2
+        ipv4_address: 172.28.0.2
       # Also on backend so the API (Guardian) can reach it
       backend: {}
     # Web UI on host:3000 for inspection; DNS on 53 within homenet
@@ -133,7 +133,7 @@ services:
       - no-new-privileges:true
     networks:
       homenet:
-        ipv4_address: 172.20.0.3
+        ipv4_address: 172.28.0.3
       backend: {}
     volumes:
       - ./models:/app/models:ro
@@ -173,13 +173,13 @@ services:
     container_name: sandbox-client-laptop
     environment:
       CLIENT_ROLE: laptop
-      DNS_SERVER: 172.20.0.2
-      TARGETS: "172.20.0.2,172.20.0.3,172.20.0.11,172.20.0.12"
+      DNS_SERVER: 172.28.0.2
+      TARGETS: "172.28.0.2,172.28.0.3,172.28.0.11,172.28.0.12"
     networks:
       homenet:
-        ipv4_address: 172.20.0.10
+        ipv4_address: 172.28.0.10
     dns:
-      - 172.20.0.2
+      - 172.28.0.2
     depends_on:
       adguard:
         condition: service_healthy
@@ -195,13 +195,13 @@ services:
     container_name: sandbox-client-phone
     environment:
       CLIENT_ROLE: phone
-      DNS_SERVER: 172.20.0.2
-      TARGETS: "172.20.0.2,172.20.0.10,172.20.0.12"
+      DNS_SERVER: 172.28.0.2
+      TARGETS: "172.28.0.2,172.28.0.10,172.28.0.12"
     networks:
       homenet:
-        ipv4_address: 172.20.0.11
+        ipv4_address: 172.28.0.11
     dns:
-      - 172.20.0.2
+      - 172.28.0.2
     depends_on:
       adguard:
         condition: service_healthy
@@ -217,13 +217,13 @@ services:
     container_name: sandbox-client-tv
     environment:
       CLIENT_ROLE: smart-tv
-      DNS_SERVER: 172.20.0.2
-      TARGETS: "172.20.0.2,172.20.0.10,172.20.0.11"
+      DNS_SERVER: 172.28.0.2
+      TARGETS: "172.28.0.2,172.28.0.10,172.28.0.11"
     networks:
       homenet:
-        ipv4_address: 172.20.0.12
+        ipv4_address: 172.28.0.12
     dns:
-      - 172.20.0.2
+      - 172.28.0.2
     depends_on:
       adguard:
         condition: service_healthy
@@ -239,13 +239,13 @@ services:
       dockerfile: Dockerfile.attacker
     container_name: sandbox-attacker
     environment:
-      TARGETS: "172.20.0.10,172.20.0.11,172.20.0.12,172.20.0.2,172.20.0.3"
+      TARGETS: "172.28.0.10,172.28.0.11,172.28.0.12,172.28.0.2,172.28.0.3"
       ATTACK_DELAY: "30"
     networks:
       homenet:
-        ipv4_address: 172.20.0.66
+        ipv4_address: 172.28.0.66
     dns:
-      - 172.20.0.2
+      - 172.28.0.2
     cap_add:
       - NET_ADMIN
       - NET_RAW
@@ -263,8 +263,8 @@ networks:
     driver: bridge
     ipam:
       config:
-        - subnet: 172.20.0.0/24
-          gateway: 172.20.0.1
+        - subnet: 172.28.0.0/24
+          gateway: 172.28.0.1
   backend:
     internal: true
 

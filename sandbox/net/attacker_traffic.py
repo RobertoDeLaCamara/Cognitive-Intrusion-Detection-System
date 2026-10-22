@@ -32,9 +32,9 @@ logging.basicConfig(
 )
 log = logging.getLogger("attacker")
 
-TARGETS = os.getenv("TARGETS", "172.20.0.10,172.20.0.11,172.20.0.12").split(",")
+TARGETS = os.getenv("TARGETS", "172.28.0.10,172.28.0.11,172.28.0.12").split(",")
 ATTACK_DELAY = int(os.getenv("ATTACK_DELAY", "30"))  # seconds between attacks
-DNS_SERVER = os.getenv("DNS_SERVER", "172.20.0.2")
+DNS_SERVER = os.getenv("DNS_SERVER", "172.28.0.2")
 
 
 # ─── Attack: TCP SYN Scan ─────────────────────────────────────────────────────

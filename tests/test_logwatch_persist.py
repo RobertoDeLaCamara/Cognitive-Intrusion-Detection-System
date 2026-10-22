@@ -54,6 +54,7 @@ async def test_persisted_alert_has_logwatch_source_and_enrichment(session, sent)
     assert row.timestamp.year == 2026 and row.timestamp.tzinfo is None       # naive UTC like every column
     assert row.acknowledged is False
     assert sent and sent[0]["severity"] == "medium"
+    assert sent[0]["id"] == saved.id and sent[0]["source"] == "logwatch"      # lets ntfy link back to the alert
 
 
 @pytest.mark.asyncio

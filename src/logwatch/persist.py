@@ -42,6 +42,7 @@ async def persist_alert(db: AsyncSession, la: LogAlert, notify: bool = True) -> 
     if notify:
         try:
             await notify_alert({
+                "id": alert.id, "source": SOURCE,
                 "src_ip": alert.src_ip, "dst_ip": la.service, "severity": la.severity,
                 "ensemble_score": score, "attack_type": la.description, "triggered_rules": [la.rule],
             })

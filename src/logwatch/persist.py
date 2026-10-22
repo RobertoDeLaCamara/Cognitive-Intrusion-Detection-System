@@ -3,6 +3,7 @@
 import logging
 from datetime import datetime, timezone
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..api.models import Alert, SeverityLevel
@@ -48,3 +49,13 @@ async def persist_alert(db: AsyncSession, la: LogAlert, notify: bool = True) -> 
         except Exception as exc:   # a broken webhook must never lose the alert
             logger.warning("logwatch notification failed: %s", exc)
     return alert
+
+
+async def already_alerted(db: AsyncSession, la: LogAlert) -> bool:
+    """True when a logwatch alert for the same rule and source is already stored inside the
+    rule's cooldown. Makes restarts and backfill replays idempotent."""
+    since = datetime.fromtimestamp(la.last_ts - la.cooldown_secs, timezone.utc).replace(tzinfo=None)
+    rows = await db.execute(
+        select(Alert.triggered_rules).where(
+            Alert.source == SOURCE, Alert.src_ip == (la.ip or la.key), Alert.timestamp >= since))
+    return any(la.rule in (rules or []) for (rules,) in rows)

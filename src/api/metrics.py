@@ -36,6 +36,8 @@ _request_count = None
 _request_latency = None
 _alert_count = None
 _alert_suppressed_count = None
+_logwatch_events_count = None
+_logwatch_errors_count = None
 _ensemble_score_histogram = None
 
 # ── Unsupervised baseline metrics ─────────────────────────────────────────────
@@ -62,6 +64,7 @@ def _init_metrics():
     global _baseline_dropped_while_training, _baseline_windows_trained_total
     global _baseline_engine_available, _baseline_engine_version
     global _baseline_last_reload_ts, _baseline_drift_score
+    global _logwatch_events_count, _logwatch_errors_count
     prom = _get_prometheus()
     if prom is None:
         return
@@ -83,6 +86,12 @@ def _init_metrics():
         "Distribution of ensemble confidence scores",
         ["is_anomaly"],
         buckets=[0.1, 0.2, 0.3, 0.4, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95, 1.0],
+    )
+    _logwatch_events_count = prom.Counter(
+        "cnds_logwatch_events_total", "Log lines read and parsed by logwatch", ["service"]
+    )
+    _logwatch_errors_count = prom.Counter(
+        "cnds_logwatch_poll_errors_total", "Failed logwatch polls (Loki unreachable or erroring)", ["service"]
     )
     # Baseline subsystem
     _baseline_buffer_vectors = prom.Gauge(
@@ -133,6 +142,16 @@ def inc_alert(severity: str, engine: str = "ensemble"):
     """Increment the alert counter."""
     if _alert_count is not None:
         _alert_count.labels(severity=severity, engine=engine).inc()
+
+
+def inc_logwatch_events(service: str, n: int = 1):
+    if _logwatch_events_count is not None and n:
+        _logwatch_events_count.labels(service=service).inc(n)
+
+
+def inc_logwatch_error(service: str):
+    if _logwatch_errors_count is not None:
+        _logwatch_errors_count.labels(service=service).inc()
 
 
 def inc_suppressed(reason: str = "suppression_rule"):

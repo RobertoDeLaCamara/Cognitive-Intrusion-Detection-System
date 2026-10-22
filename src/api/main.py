@@ -19,7 +19,7 @@ from .routers.assets import router as assets_router
 from .routers.feedback import router as feedback_router
 from .metrics import setup_prometheus, setup_otel
 from .rate_limit import RateLimitMiddleware
-from ..config import API_KEY, JWT_SECRET, AUTH_DISABLED, CORS_ORIGINS, RATE_LIMIT_REQUESTS, GUARDIAN_ENABLED, TELEGRAM_BOT_TOKEN
+from ..config import API_KEY, JWT_SECRET, AUTH_DISABLED, CORS_ORIGINS, RATE_LIMIT_REQUESTS, GUARDIAN_ENABLED, TELEGRAM_BOT_TOKEN, LOKI_URL
 from ..engines.registry import supervised, iforest, lstm
 
 from ..config import setup_logging
@@ -80,6 +80,12 @@ async def lifespan(app: FastAPI):
         if TELEGRAM_BOT_TOKEN:
             from ..guardian.telegram_listener import telegram_listener_loop
             background_tasks.append(asyncio.create_task(telegram_listener_loop()))
+
+    # logwatch: attack detection from service logs (opt-in: needs LOKI_URL)
+    if LOKI_URL:
+        from ..logwatch.service import logwatch_loop
+        background_tasks.append(asyncio.create_task(logwatch_loop()))
+        logger.info("logwatch enabled (Loki at %s)", LOKI_URL)
 
     yield
 

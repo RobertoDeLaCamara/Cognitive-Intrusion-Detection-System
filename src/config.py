@@ -210,6 +210,22 @@ ASSET_INVENTORY_ENABLED = os.getenv("ASSET_INVENTORY_ENABLED", "true").lower() =
 ASSET_FLUSH_SECS        = int(os.getenv("ASSET_FLUSH_SECS", "60"))
 FEEDBACK_RETRAIN_THRESHOLD = int(os.getenv("FEEDBACK_RETRAIN_THRESHOLD", "500"))
 
+# ── logwatch: attack detection from service logs (cnds#53-#59) ───────────────
+# Empty LOKI_URL disables it. Streams map a service name (it picks the parser) to a LogQL selector.
+LOKI_URL            = os.getenv("LOKI_URL", "").rstrip("/")
+LOKI_USER           = os.getenv("LOKI_USER", "")
+LOKI_PASSWORD       = os.getenv("LOKI_PASSWORD", "")
+LOGWATCH_STREAMS    = _json.loads(os.getenv("LOGWATCH_STREAMS", '{"gitea": "{container=\\"gitea\\"}"}'))
+LOGWATCH_POLL_SECS  = int(os.getenv("LOGWATCH_POLL_SECS", "60"))
+LOGWATCH_BATCH      = int(os.getenv("LOGWATCH_BATCH", "1000"))            # entries per Loki request
+LOGWATCH_BACKFILL_SECS = int(os.getenv("LOGWATCH_BACKFILL_SECS", "86400"))  # history read on first start (primes the 24 h windows)
+LOGWATCH_LAG_SECS   = int(os.getenv("LOGWATCH_LAG_SECS", "15"))           # ignore the newest seconds: log shippers deliver late
+LOGWATCH_SILENT_POLLS = int(os.getenv("LOGWATCH_SILENT_POLLS", "30"))     # polls with no entries before a "source silent" alert
+LOGWATCH_RULES_DIR  = os.getenv("LOGWATCH_RULES_DIR", "")                 # empty = the rules shipped in src/logwatch/rules
+# Sources the "untrusted" rules ignore: private ranges, Docker, Tailscale, loopback. Add your own public IPs.
+LOGWATCH_TRUSTED_CIDRS = [c.strip() for c in os.getenv(
+    "LOGWATCH_TRUSTED_CIDRS", "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,100.64.0.0/10,127.0.0.0/8").split(",") if c.strip()]
+
 # ── Notifications (Phase 8) ───────────────────────────────────────────────────
 WEBHOOK_URLS       = [u.strip() for u in os.getenv("WEBHOOK_URLS", "").split(",") if u.strip()]
 NOTIFY_MIN_SEVERITY = os.getenv("NOTIFY_MIN_SEVERITY", "high")  # minimum severity to notify

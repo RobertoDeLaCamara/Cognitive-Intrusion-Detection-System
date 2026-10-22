@@ -78,6 +78,7 @@ class LogRuleEngine:
             rule=rule.name, service=rule.service, description=rule.description,
             severity=rule.severity, key=key, ip=ev.ip, count=len(hits),
             window_secs=rule.window_secs, first_ts=hits[0][0], last_ts=ev.ts,
+            cooldown_secs=rule.cooldown_secs,
             mitre=[dict(t) for t in rule.mitre],
             samples=[raw for _, raw in list(hits)[-MAX_SAMPLES:] if raw],
         )

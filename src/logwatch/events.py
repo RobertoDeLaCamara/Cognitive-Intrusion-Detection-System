@@ -30,5 +30,6 @@ class LogAlert:
     window_secs: int
     first_ts: float
     last_ts: float
+    cooldown_secs: int = 0
     mitre: List[Dict[str, str]] = field(default_factory=list)
     samples: List[str] = field(default_factory=list)

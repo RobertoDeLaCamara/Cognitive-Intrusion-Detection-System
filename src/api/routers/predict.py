@@ -16,6 +16,7 @@ from ..metrics import inc_alert, inc_suppressed, observe_ensemble_score
 from ...engines.registry import supervised as _supervised, iforest as _iforest, lstm as _lstm, rules as _rules, ensemble as _ensemble
 from ...ensemble.scorer import EngineScores, severity_from_score
 from ...features.flow_extractor import FlowRecord
+from ...labels import is_benign
 from ...enrichment import geoip
 from ...enrichment.mitre import enrich as mitre_enrich
 from ...enrichment.correlation import correlate_alert
@@ -68,7 +69,7 @@ async def predict(body: PredictRequest, db: AsyncSession = Depends(get_db)):
         result = _supervised.predict(flow_vec, pay_vec)
         if result:
             label, conf = result
-            scores.supervised = 0.0 if label.upper() == "BENIGN" else conf
+            scores.supervised = 0.0 if is_benign(label) else conf
             scores.attack_type = label
             scores.supervised_confidence = conf
         else:

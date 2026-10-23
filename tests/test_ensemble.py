@@ -140,6 +140,22 @@ def test_attack_type_weight_override(scorer):
     assert weights_benign == weights
 
 
+@pytest.mark.parametrize("label", ["BENIGN", "Benign"])
+def test_benign_label_ignores_attack_type_weights(scorer, monkeypatch, label):
+    """The engines emit "Benign"; a per-type override must never apply to normal traffic."""
+    from src.ensemble import scorer as scorer_mod
+    monkeypatch.setitem(scorer_mod.ATTACK_TYPE_WEIGHTS, label, {"supervised": 0.9})
+    assert scorer._get_weights(label) == scorer._get_weights(None)
+
+
+@pytest.mark.parametrize("label", ["BENIGN", "Benign", None])
+def test_severity_from_score_benign_label_uses_score_only(label):
+    from src.ensemble.scorer import severity_from_score
+    assert severity_from_score(0.75, label) == "high"
+    assert severity_from_score(0.90, label) == "critical"
+    assert severity_from_score(0.60, label) == "medium"
+
+
 def test_calibrated_score_drives_anomaly_decision(scorer):
     """is_anomaly should be based on calibrated_score, not raw score."""
     scores = EngineScores(supervised=0.6, isolation_forest=0.5, lstm=0.5, rules=0.5)

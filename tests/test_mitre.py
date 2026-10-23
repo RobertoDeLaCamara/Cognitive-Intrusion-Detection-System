@@ -5,8 +5,9 @@ from src.enrichment.mitre import map_attack_type, map_rules, enrich
 
 
 class TestMapAttackType:
-    def test_benign_returns_empty(self):
-        assert map_attack_type("BENIGN") == []
+    @pytest.mark.parametrize("label", ["BENIGN", "Benign", "benign"])
+    def test_benign_returns_empty(self, label):
+        assert map_attack_type(label) == []
 
     def test_none_returns_empty(self):
         assert map_attack_type(None) == []

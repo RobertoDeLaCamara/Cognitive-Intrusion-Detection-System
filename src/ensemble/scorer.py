@@ -14,6 +14,7 @@ from ..config import (
     WEIGHT_SUPERVISED, WEIGHT_IFOREST, WEIGHT_LSTM, WEIGHT_RULES, WEIGHT_BASELINE,
     ENSEMBLE_THRESHOLD, ATTACK_TYPE_WEIGHTS, CALIBRATION_TEMPERATURE, CRITICAL_RULES,
 )
+from ..labels import is_benign
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,7 @@ class EnsembleScorer:
 
     def _get_weights(self, attack_type: Optional[str]) -> Dict[str, float]:
         """Return base weights, overridden by attack-type-specific weights if configured."""
-        if attack_type and attack_type != "BENIGN" and attack_type in ATTACK_TYPE_WEIGHTS:
+        if not is_benign(attack_type) and attack_type in ATTACK_TYPE_WEIGHTS:
             overrides = ATTACK_TYPE_WEIGHTS[attack_type]
             weights = dict(self._BASE_WEIGHTS)
             weights.update(overrides)
@@ -148,7 +149,7 @@ class EnsembleScorer:
 
 def severity_from_score(score: float, attack_type: str | None = None) -> str:
     """Unified severity classification used by both capture pipeline and API."""
-    if attack_type and attack_type not in ("BENIGN", None):
+    if attack_type and not is_benign(attack_type):
         critical_types = {"DDoS", "DoS", "Infiltration", "Web Attack"}
         if any(t in attack_type for t in critical_types) and score >= 0.70:
             return "critical"

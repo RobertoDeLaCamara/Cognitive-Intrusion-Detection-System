@@ -86,6 +86,23 @@ def test_alert_detail_renders_all_sections():
     assert any(m.label == "Ensemble score" and m.value == "93.0%" for m in at.metric)
 
 
+def test_alert_detail_opens_the_id_from_the_query_string():
+    at = AppTest.from_file(str(DASHBOARD / "views" / "alert_detail.py"), default_timeout=20)
+    at.query_params["id"] = "7"
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert "SSH-Patator" in at.header[0].value
+
+
+@pytest.mark.parametrize("raw", ["abc", "-3", "0", ""])
+def test_alert_detail_ignores_a_bad_id_in_the_query_string(raw):
+    at = AppTest.from_file(str(DASHBOARD / "views" / "alert_detail.py"), default_timeout=20)
+    at.session_state["alert_id"] = 7
+    at.query_params["id"] = raw
+    at.run()
+    assert not at.exception and "SSH-Patator" in at.header[0].value        # falls back to the session id
+
+
 def test_alert_detail_handles_unknown_id():
     at = AppTest.from_file(str(DASHBOARD / "views" / "alert_detail.py"), default_timeout=20)
     at.session_state["alert_id"] = 999

@@ -6,6 +6,8 @@ Reference: https://attack.mitre.org/techniques/enterprise/
 
 from typing import Dict, List, Optional
 
+from ..labels import is_benign
+
 # Attack type (from supervised model) → ATT&CK techniques
 _ATTACK_TYPE_MAP: Dict[str, List[Dict[str, str]]] = {
     "DoS Hulk":        [{"id": "T1498", "name": "Network Denial of Service", "tactic": "Impact"}],
@@ -45,7 +47,7 @@ _RULE_MAP: Dict[str, List[Dict[str, str]]] = {
 
 def map_attack_type(attack_type: Optional[str]) -> List[Dict[str, str]]:
     """Map a supervised model label to ATT&CK techniques."""
-    if not attack_type or attack_type == "BENIGN":
+    if not attack_type or is_benign(attack_type):
         return []
     # Try exact match first, then partial
     if attack_type in _ATTACK_TYPE_MAP:

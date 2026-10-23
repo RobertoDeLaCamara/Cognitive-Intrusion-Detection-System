@@ -22,6 +22,7 @@ from .config import (
 from .engines.registry import supervised, iforest, lstm, baseline as baseline_engine, rules, ensemble
 from .ensemble.scorer import EngineScores, severity_from_score
 from .features.flow_extractor import FlowRecord, FLOW_FEATURE_NAMES
+from .labels import is_benign
 from .monitoring.feature_drift import FeatureDriftMonitor
 from .inventory.assets import AssetTracker, flush as flush_assets
 from .unsupervised.collector import BaselineCollector
@@ -321,7 +322,7 @@ def on_flow_complete(
         result = supervised.predict(flow_vec, payload_features)
         if result:
             label, conf = result
-            scores.supervised = 0.0 if label.upper() == "BENIGN" else conf
+            scores.supervised = 0.0 if is_benign(label) else conf
             scores.attack_type = label
             scores.supervised_confidence = conf
 
@@ -371,7 +372,7 @@ def on_flow_complete(
             f"score={result.score:.3f}",
             f"engines={result.active_engines}",
         ]
-        if scores.attack_type and scores.attack_type != "BENIGN":
+        if not is_benign(scores.attack_type):
             parts.append(f"type={scores.attack_type}")
         if triggered:
             parts.append(f"rules={triggered}")

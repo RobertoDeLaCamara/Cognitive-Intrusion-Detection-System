@@ -324,6 +324,33 @@ class TestOnFlowComplete:
 
         assert captured_scores[0] == 0.0
 
+    @pytest.mark.parametrize("label,expect_type", [("Benign", False), ("BENIGN", False), ("PortScan", True)])
+    def test_alert_log_omits_type_for_benign_label(self, caplog, label, expect_type):
+        """A rule-forced alert on a flow the model calls Benign must not log type=Benign."""
+        import logging
+        import src.pipeline as pipeline
+        sup, ifo, lm, rl, ens = _mock_engines(
+            sup_available=True,
+            sup_result=(label, 0.95),
+            rule_result=(1.0, ["syn_scan"]),
+            ens_result=_ens_result(score=1.0, is_anomaly=True),
+        )
+        flow = _flow(src_ip="10.0.0.17")
+
+        with patch.object(pipeline, "TRUSTED_OUTBOUND", {}):
+            with patch.object(pipeline, "supervised", sup):
+                with patch.object(pipeline, "iforest", ifo):
+                    with patch.object(pipeline, "lstm", lm):
+                        with patch.object(pipeline, "rules", rl):
+                            with patch.object(pipeline, "ensemble", ens):
+                                with patch.object(pipeline, "_persist_alert"):
+                                    with caplog.at_level(logging.WARNING, logger="src.pipeline"):
+                                        pipeline.on_flow_complete(flow, np.zeros(76), None, [])
+
+        alerts = [r.getMessage() for r in caplog.records if "[ALERT]" in r.getMessage()]
+        assert len(alerts) == 1
+        assert ("type=" in alerts[0]) is expect_type
+
 
 # ── _persist_alert ─────────────────────────────────────────────────────────
 

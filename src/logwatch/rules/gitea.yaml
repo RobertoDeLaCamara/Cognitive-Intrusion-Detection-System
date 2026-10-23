@@ -1,0 +1,109 @@
+# Detection rules for the Gitea access log (src/logwatch/gitea.py).
+# `untrusted_only` rules ignore sources inside LOGWATCH_TRUSTED_CIDRS (LAN, Docker, Tailscale
+# and the owner's public IPs). Thresholds were tuned against the real logs of 2026-10-15..22:
+# see `python -m src.logwatch.replay --help`.
+rules:
+  - name: gitea_signup_flood
+    service: gitea
+    description: Gitea sign-up flood
+    match: {method: POST, path: '^/user/sign_up$'}
+    group_by: ip
+    threshold: 10
+    window_secs: 600
+    cooldown_secs: 3600
+    severity: medium
+    untrusted_only: true
+    mitre: [{id: T1136, name: Create Account, tactic: Persistence}]
+
+  # Registration is closed, so every attempt is a probe. Real attackers were low and slow
+  # (max 4/hour, 53/day from one IP, 2026-10-15..22): a burst rule alone never fires.
+  - name: gitea_signup_attempts
+    service: gitea
+    description: Persistent Gitea sign-up attempts while registration is closed
+    match: {method: POST, path: '^/user/sign_up$'}
+    group_by: ip
+    threshold: 3
+    window_secs: 86400
+    cooldown_secs: 86400
+    severity: medium
+    untrusted_only: true
+    mitre: [{id: T1136, name: Create Account, tactic: Persistence}]
+
+  # Registration is closed (DISABLE_REGISTRATION=true): a 303 means an account was created.
+  - name: gitea_signup_success
+    service: gitea
+    description: Gitea account created through sign-up while registration is closed
+    match: {method: POST, path: '^/user/sign_up$', status: 303}
+    group_by: ip
+    threshold: 1
+    window_secs: 60
+    cooldown_secs: 300
+    severity: critical
+    mitre: [{id: T1136, name: Create Account, tactic: Persistence}]
+
+  # A failed login re-renders the form (200); a successful one redirects (303).
+  - name: gitea_login_bruteforce
+    service: gitea
+    description: Gitea login brute force
+    match: {method: POST, path: '^/user/login$', status: 200}
+    group_by: ip
+    threshold: 5
+    window_secs: 600
+    cooldown_secs: 3600
+    severity: high
+    untrusted_only: true
+    mitre: [{id: T1110, name: Brute Force, tactic: Credential Access}]
+
+  - name: gitea_login_failures
+    service: gitea
+    description: Repeated failed Gitea logins over a day
+    match: {method: POST, path: '^/user/login$', status: 200}
+    group_by: ip
+    threshold: 3
+    window_secs: 86400
+    cooldown_secs: 86400
+    severity: medium
+    untrusted_only: true
+    mitre: [{id: T1110, name: Brute Force, tactic: Credential Access}]
+
+  - name: gitea_admin_untrusted
+    service: gitea
+    description: Gitea admin panel opened from an untrusted address
+    match: {path: '^/-/admin', status: 200}
+    group_by: ip
+    threshold: 1
+    window_secs: 60
+    cooldown_secs: 900
+    severity: critical
+    untrusted_only: true
+    mitre: [{id: T1190, name: Exploit Public-Facing Application, tactic: Initial Access}]
+
+  # Tokens, SSH keys, webhooks and OAuth apps are how an intruder keeps access.
+  - name: gitea_persistence
+    service: gitea
+    description: Gitea token, SSH key, webhook or OAuth app created from an untrusted address
+    match:
+      - {method: POST, path: '^/user/settings/(applications|keys)', status: 303}
+      - {method: POST, path: '^/[^/]+/[^/]+/settings/(hooks|keys)', status: 303}
+    group_by: ip
+    threshold: 1
+    window_secs: 60
+    cooldown_secs: 300
+    severity: high
+    untrusted_only: true
+    mitre: [{id: T1098, name: Account Manipulation, tactic: Persistence}]
+
+  - name: gitea_recon
+    service: gitea
+    description: Gitea scanning (version probes, installer, many 404s)
+    match:
+      - {path: '^/api/v1/version$'}
+      - {path: '^/install'}
+      - {status: 404}
+    group_by: ip
+    threshold: 10
+    window_secs: 600
+    cooldown_secs: 3600
+    severity: low
+    untrusted_only: true
+    mitre: [{id: T1595, name: Active Scanning, tactic: Reconnaissance}]

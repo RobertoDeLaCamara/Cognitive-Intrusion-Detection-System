@@ -133,6 +133,8 @@ Extracted by `src/features/payload_analyzer.py`. Per-flow numeric features from 
 | `payload:*` | 6 regex signatures (SQLi, XSS, command injection, path traversal, Log4j, Shellshock) | — |
 | `malicious_ja3` | JA3 hash in the known-bad list | — |
 
+Payload regex rules are skipped on encrypted or compressed payloads (TLS record header, or at least 256 bytes with entropy of 7.0 bits/byte or more). `CRITICAL_RULES` defaults to the six `payload:*` rules, `malicious_ja3` and `syn_scan`.
+
 ---
 
 ## Ensemble Scoring
@@ -236,6 +238,10 @@ by the unsupervised baseline subsystem (`src/unsupervised/`): while the detector
 runs, `BaselineCollector` buffers host feature vectors and, once the composite
 trigger fires, `WindowTrainer` fits a new IsolationForest + LSTM Autoencoder and
 logs them to MLflow. Enabled by default (`BASELINE_COLLECTION_ENABLED=true`).
+The trigger needs all four of `BASELINE_MIN_VECTORS` (50000), `BASELINE_MIN_SRC_IPS` (20),
+`BASELINE_MIN_ELAPSED_SECS` (1800) and `BASELINE_MIN_PORT_ENTROPY` (2.5); these are defaults, so
+lower them on a small network (a home LAN never reaches 20 distinct source IPs). Watch progress with
+`docker logs cnds-detector 2>&1 | grep baseline_progress` (logged every 30 s, with or without `--api`).
 See [Unsupervised Baseline Training](https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System/blob/master/doc/unsupervised.md).
 
 ```bash

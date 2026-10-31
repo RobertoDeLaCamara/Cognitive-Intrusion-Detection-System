@@ -203,17 +203,18 @@ High-precision, zero-latency detection of well-understood attack patterns. Rules
 host_features[icmp_ratio] × packet_count > ICMP_FLOOD_THRESHOLD
 ```
 - Detects ICMP ping floods and Smurf amplification.
-- Threshold: `ICMP_FLOOD_THRESHOLD` (default: 100 packets/second).
+- Threshold: `ICMP_FLOOD_THRESHOLD` (default: 50).
 - MITRE: T1498 (Network Denial of Service).
 
 #### Rule 2: SYN Scan
 ```
-flow_features[syn_flag_count] > PORT_SCAN_THRESHOLD
-AND flow_features[tot_fwd_pkts] < 3
+flow_features[syn_flag_cnt] > PORT_SCAN_THRESHOLD
+AND flow_features[fwd_act_data_pkts] < 5
 ```
-- Detects TCP SYN-only port scans (nmap default mode).
-- Low forward packet count indicates connections are never completed.
-- Threshold: `PORT_SCAN_THRESHOLD` (default: 50 SYNs).
+- Detects TCP SYN-only port scans and SYN floods (nmap default mode).
+- Few forward packets that carry data indicate the handshake never completes and no real data is exchanged. (Before #49 the condition was unreachable and the rule never fired.)
+- Threshold: `PORT_SCAN_THRESHOLD` (default: 20 SYNs).
+- `syn_scan` is in the default `CRITICAL_RULES` (#50), so a hit forces an alert regardless of the weighted blend.
 - MITRE: T1046 (Network Service Scanning).
 
 #### Rule 3: Large Payload
@@ -221,7 +222,7 @@ AND flow_features[tot_fwd_pkts] < 3
 flow_features[max_fwd_len] > LARGE_PAYLOAD_BYTES
 ```
 - Detects unusually large payload packets potentially carrying exploits or exfiltration.
-- Threshold: `LARGE_PAYLOAD_BYTES` (default: 65000 bytes).
+- Threshold: `LARGE_PAYLOAD_BYTES` (default: 10000 bytes).
 - MITRE: T1030 (Data Transfer Size Limits violation).
 
 #### Rule 4: Payload Signatures
@@ -230,6 +231,7 @@ any(payload_features[0:6]) == 1
 ```
 - Fires when any of the 6 payload patterns (SQLi, XSS, CMDi, traversal, Log4J, Shellshock) matches.
 - Each matching pattern adds a separate triggered rule entry to the alert.
+- Payloads that look encrypted or compressed are skipped (#68): a TLS record header at the start of the payload, or a sample of at least 256 bytes with Shannon entropy of 7.0 bits/byte or more (`looks_encrypted()` in `src/features/payload_analyzer.py`). Plaintext attacks sit well below that entropy, while chance regex matches inside bulk TLS or backup transfers used to surface as `CRITICAL_RULES` alerts.
 - MITRE: T1190 (Exploit Public-Facing Application), T1059.007 (XSS).
 
 #### Rule 5: Asymmetric Upload
@@ -252,6 +254,39 @@ ja3_hash in malicious_ja3_set
 - Rules return `1.0` when any rule fires, `0.0` otherwise.
 - `triggered_rules` list contains the names of all fired rules.
 - Multiple rules can fire simultaneously from the same packet/flow.
+- Default `CRITICAL_RULES` (each forces an alert on its own): the six `payload:*` rules (`sql_injection`, `command_injection`, `log4j`, `shellshock`, `xss`, `path_traversal`), `malicious_ja3` and `syn_scan`.
+
+---
+
+## 5. Logwatch (log-based rules, outside the ensemble)
+
+**Package:** `src/logwatch/`
+
+### Purpose
+Detects attacks on exposed services from their application logs, which the packet pipeline cannot see (sign-up floods, login brute force, admin access or token creation from unknown addresses). It is not one of the five scored engines: it has no weight, does not touch the ensemble and does not appear in `GET /api/engines`.
+
+### Components
+
+| File | Role |
+|---|---|
+| `gitea.py` | Parses Gitea HTTP access-log lines into `LogEvent`s (`parse_line`); other lines return `None` |
+| `rules.py` | Loads and validates declarative YAML rules (`load_rules`, `RuleError`). A rule has `service`, `match` (`method`, `path` regex, `status`), `group_by` (`ip` or `user`), `threshold`, `window_secs`, `cooldown_secs`, `severity`, optional `untrusted_only` and `mitre` |
+| `engine.py` | `LogRuleEngine.feed(event)` keeps a sliding window per (rule, key) and returns a `LogAlert` when the count reaches the threshold. Time comes from the events, not the wall clock. After firing, a (rule, key) stays silent for `cooldown_secs`. Memory is bounded (`MAX_WINDOW_EVENTS` 10,000 per key, `MAX_KEYS_PER_RULE` 50,000) |
+| `rules/gitea.yaml` | Shipped rule set: sign-up flood/attempts/success, login brute force/failures, admin panel from an untrusted address, token/SSH key/webhook creation, scanning |
+| `persist.py` | `persist_alert()` stores a `LogAlert` as an `Alert` with `source="logwatch"`, `engine_scores={"logwatch": <score>}` (severity mapped to 0.30/0.60/0.80/1.00), evidence in `payload_matches`, GeoIP and MITRE data, then calls `notify_alert()` (best effort) |
+| `replay.py` | CLI to run log files through the rules without touching the database |
+
+### Behaviour
+- `untrusted_only` rules ignore sources inside the trusted networks given to `LogRuleEngine(trusted=...)`.
+- The Guardian only acts on `GUARDIAN_ALERT_SOURCES` (default `detector`), so logwatch alerts never block anything.
+- Replay example, to tune thresholds against real logs:
+
+```bash
+zcat gitea.log.*.gz | python -m src.logwatch.replay --service gitea --tz Europe/Madrid \
+    --trusted 192.168.0.0/16,172.16.0.0/12 -
+```
+
+- Nothing in `main.py`, `src/pipeline.py` or the API starts a live log watcher, and no `LOGWATCH_*` environment variable is read. The `LOGWATCH_TRUSTED_CIDRS` name in the `rules/gitea.yaml` header comment is not implemented in this repository.
 
 ---
 

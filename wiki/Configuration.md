@@ -43,7 +43,7 @@ Variables marked _reserved_ are defined in `src/config.py` but no runtime code r
 | `WEIGHT_BASELINE` | `0.15` | Unsupervised baseline engine weight |
 | `ATTACK_TYPE_WEIGHTS` | `{}` | JSON: per-attack-type engine weight overrides, keyed by the supervised label; engine keys are `supervised`, `isolation_forest`, `lstm`, `rules`, `baseline` |
 | `CALIBRATION_TEMPERATURE` | `1.0` | Platt scaling temperature (>1 softer, <1 sharper) |
-| `CRITICAL_RULES` | `payload:sql_injection,payload:command_injection,payload:log4j,payload:shellshock,payload:xss,payload:path_traversal,malicious_ja3` | Comma-separated rules that force score 1.0 / alert regardless of the blend |
+| `CRITICAL_RULES` | `payload:sql_injection,payload:command_injection,payload:log4j,payload:shellshock,payload:xss,payload:path_traversal,malicious_ja3,syn_scan` | Comma-separated rules that force score 1.0 / alert regardless of the blend |
 | `FT_TEMPERATURE` | `2.0` | FT-Transformer logit temperature; `1.0` disables |
 
 ## Rules Engine Thresholds
@@ -131,7 +131,11 @@ Variables marked _reserved_ are defined in `src/config.py` but no runtime code r
 | `ADAPTIVE_WEIGHTS_ENABLED` | `false` | Enable adaptive engine weight computation |
 | `ADAPTIVE_MIN_SAMPLES` | `100` | Min acknowledged alerts before adapting weights |
 | `WEBHOOK_URLS` | _(empty)_ | Comma-separated webhook/Slack notification URLs |
-| `NOTIFY_MIN_SEVERITY` | `high` | Minimum severity to trigger webhook notification |
+| `NOTIFY_MIN_SEVERITY` | `high` | Minimum severity to trigger webhook, Telegram and ntfy notifications |
+| `NTFY_URL` | _(empty)_ | Base URL of an ntfy server (e.g. `http://192.168.1.189:2586`); empty disables the ntfy channel |
+| `NTFY_TOPIC` | `cnds` | ntfy topic alerts are published to |
+| `NTFY_USER` / `NTFY_PASSWORD` | _(empty)_ | Basic auth for ntfy (a write-only user is enough); ignored when `NTFY_TOKEN` is set |
+| `NTFY_TOKEN` | _(empty)_ | ntfy access token, sent as a Bearer token; takes precedence over user/password |
 | `TELEGRAM_BOT_TOKEN` | _(empty)_ | Telegram bot token; empty disables |
 | `TELEGRAM_CHAT_ID` | _(empty)_ | Telegram chat/group ID |
 | `DNS_LOGGING_ENABLED` | `false` | Enable DNS query logging from captured traffic |
@@ -173,9 +177,15 @@ Variables marked _reserved_ are defined in `src/config.py` but no runtime code r
 
 ## Unsupervised Baseline
 
+The four `BASELINE_MIN_*` variables are the trigger thresholds; all four must hold at once. The defaults suit a large network. A home LAN with about ten talkers never reaches 20 distinct source IPs, so lower them, for example `BASELINE_MIN_VECTORS=5000`, `BASELINE_MIN_SRC_IPS=5`, `BASELINE_MIN_ELAPSED_SECS=900`, `BASELINE_MIN_PORT_ENTROPY=1.5`.
+
 | Variable | Default | Description |
 |---|---|---|
 | `BASELINE_COLLECTION_ENABLED` | `true` | Collect host vectors and train baseline models (read by `main.py`) |
+| `BASELINE_MIN_VECTORS` | `50000` | Training trigger: minimum feature vectors in the window |
+| `BASELINE_MIN_SRC_IPS` | `20` | Training trigger: minimum distinct source IPs |
+| `BASELINE_MIN_ELAPSED_SECS` | `1800` | Training trigger: minimum seconds since the window started |
+| `BASELINE_MIN_PORT_ENTROPY` | `2.5` | Training trigger: minimum destination-port Shannon entropy (bits) |
 | `BASELINE_DRIFT_WARN` | `0.30` | Drift score for the `warning` verdict |
 | `BASELINE_DRIFT_CRIT` | `0.60` | Drift score for the `critical` verdict |
 

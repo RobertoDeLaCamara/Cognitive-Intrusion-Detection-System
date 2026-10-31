@@ -32,7 +32,7 @@
         └───────┬────────┘    → logger + SQLite  →  FastAPI
                 │
                 ├─► SIEM (Splunk / Elastic / Syslog-CEF)
-                ├─► Webhook / Telegram notifications
+                ├─► Webhook / Telegram / ntfy notifications
                 └─► [Guardian] (optional) — whitelist → block via AdGuard → auto-rollback
 ```
 
@@ -42,7 +42,7 @@
 - **Async worker queue** — packets are dispatched to a configurable number of worker threads (`PACKET_WORKERS`, default 4) via a bounded queue (`PACKET_QUEUE_SIZE`, default 20,000).
 - **Flow-based detection** — the dispatcher tracks bidirectional flows. When a flow expires (`FLOW_TIMEOUT` seconds of inactivity), all accumulated features are sent to the engines.
 - **Graceful degradation** — any engine can be missing (no model file). Its weight is redistributed proportionally across the remaining active engines.
-- **Two alert paths** — the capture pipeline (`pipeline.py`) and `POST /api/predict` score independently; suppression, decay, IP lists, correlation, WebSocket broadcast and webhook/Telegram notification run only on the `/api/predict` path (see [Alert Enrichment](Alert-Enrichment.md)).
+- **Two alert paths** — the capture pipeline (`pipeline.py`) and `POST /api/predict` score independently; decay, IP lists, correlation, WebSocket broadcast and webhook/Telegram/ntfy notification run only on the `/api/predict` path; suppression rules run on both paths (the capture pipeline checks them in its writer thread, #66) (see [Alert Enrichment](Alert-Enrichment.md)).
 - **Dedicated DB writer** — alert persistence uses a separate writer thread with a bounded queue so packet workers are never blocked on I/O.
 - **Guardian is off-hot-path by design** — the optional auto-response module (`src/guardian/`) only polls the alerts table it already wrote to; it never hooks into `pipeline.py` or the capture worker threads. It runs inside the API process (FastAPI lifespan).
 - **MCP server and triage agent are out of process** — `src/mcp_server/` (read-only, stdio) and `src/triage/` (`python -m src.triage`, writes only `triage_annotations`) are separate processes that read the same database; neither can block or acknowledge.
@@ -82,7 +82,7 @@ src/
 │   ├── correlation.py        # Auto-group alerts into incidents
 │   ├── adaptive_weights.py   # Feedback-driven weight tuning
 │   ├── suppression.py        # Temporary alert suppression rules
-│   ├── notifications.py      # Webhook / Slack / Telegram
+│   ├── notifications.py      # Webhook / Slack / Telegram / ntfy
 │   ├── confidence_decay.py   # Exponential score decay for repeat alerts
 │   ├── ip_lists.py           # IP allowlist / blocklist
 │   ├── threat_intel.py       # AbuseIPDB / JA3 / MISP feeds

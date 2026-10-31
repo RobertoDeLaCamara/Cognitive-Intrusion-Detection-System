@@ -254,8 +254,18 @@ A dataclass that describes the statistical properties of a training window. Cons
 | Environment variable | Default | Description |
 |---|---|---|
 | `BASELINE_COLLECTION_ENABLED` | `true` | Set to `false` to disable the collector entirely. `init_baseline_collector()` is still called but creates a disabled instance. |
+| `BASELINE_MIN_VECTORS` | `50000` | `CompositeTrigger.min_total_vectors`: minimum feature vectors in the window |
+| `BASELINE_MIN_SRC_IPS` | `20` | `CompositeTrigger.min_distinct_src_ips`: minimum distinct source IPs |
+| `BASELINE_MIN_ELAPSED_SECS` | `1800` | `CompositeTrigger.min_elapsed_sec`: minimum seconds since the window started |
+| `BASELINE_MIN_PORT_ENTROPY` | `2.5` | `CompositeTrigger.min_dst_port_entropy_bits`: minimum destination-port Shannon entropy (bits) |
 
-All other knobs (`min_total_vectors`, `val_fraction`, etc.) are constructor arguments on `CompositeTrigger` and `WindowTrainer`. To change them, modify `pipeline.init_baseline_collector()` — the factory function in `src/pipeline.py` that wires the three objects together.
+The four `BASELINE_MIN_*` variables are read in `src/config.py` and passed to `CompositeTrigger` by `pipeline.init_baseline_collector()`; the values in the `CompositeTrigger` table below are only the dataclass defaults, which match the variable defaults. A home LAN with about ten talkers never reaches 20 distinct source IPs at the defaults, so lower them, for example `BASELINE_MIN_VECTORS=5000`, `BASELINE_MIN_SRC_IPS=5`, `BASELINE_MIN_ELAPSED_SECS=900`, `BASELINE_MIN_PORT_ENTROPY=1.5`.
+
+All other knobs (`val_fraction`, epochs, `n_estimators`, `HARD_CAP`, etc.) are constructor arguments or module constants of `WindowTrainer` / `BaselineCollector` with no environment variable; changing them needs a code edit in `src/unsupervised/` or `pipeline.init_baseline_collector()`.
+
+### Watching progress
+
+The detector logs a `baseline_progress` line every 30 seconds (`n`, `ips`, `elapsed` and `entropy`, each as current/threshold, plus the `bottleneck` and `drift`; during a training run it logs `training_in_flight=True dropped=<n>` instead). Since #67 this works with or without `--api`: `main.py` starts the scrape thread itself when `--api` is absent. Use `docker logs cnds-detector 2>&1 | grep baseline_progress`. The same counters update the `cnds_baseline_*` Prometheus gauges every 5 seconds; they are scrapeable at `/metrics` only when the API runs with `PROMETHEUS_ENABLED=true`.
 
 ---
 
@@ -348,7 +358,7 @@ Supplemental classes `TestShannonEntropy` and `TestObserveRobustness` cover the 
 
 A non-zero drop count in the `WARNING` log after training means that the training duration exceeded the time needed to accumulate the next window. Strategies to reduce drops:
 
-- Lower `min_total_vectors` on `CompositeTrigger` so windows are smaller and training completes faster.
+- Lower `BASELINE_MIN_VECTORS` so windows are smaller and training completes faster.
 - Reduce `epochs` or `n_estimators` in `WindowTrainer` (requires code change, not an env var).
 - Move the training workload off the detection host entirely by consuming the MLflow artifacts from a separate process.
 

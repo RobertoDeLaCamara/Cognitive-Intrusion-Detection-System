@@ -331,7 +331,8 @@ triggered_rules: list[str]   # from rules engine
 #### Notifications (`notifications.py`)
 - Webhook push: POST JSON alert to all `WEBHOOK_URLS` (space-separated list).
 - Telegram: Send message to `TELEGRAM_CHAT_ID` via `TELEGRAM_BOT_TOKEN`.
-- Minimum severity gate: `NOTIFY_MIN_SEVERITY` (default: `medium`).
+- ntfy: publish a JSON message to `NTFY_URL` (topic `NTFY_TOPIC`, default `cnds`; auth with `NTFY_TOKEN` or `NTFY_USER` + `NTFY_PASSWORD`). Priority follows severity (low 2, medium 3, high 4, critical 5). Empty `NTFY_URL` disables it; a failed publish is logged and never raises.
+- Minimum severity gate: `NOTIFY_MIN_SEVERITY` (default: `high`).
 
 ---
 

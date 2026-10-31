@@ -146,19 +146,30 @@ class HealthOut(BaseModel):
 class SuppressionRuleCreate(BaseModel):
     src_ip: Optional[str] = None
     dst_ip: Optional[str] = None
+    dst_port: Optional[int] = Field(None, ge=1, le=65535, description="Destination port the rule is limited to")
     attack_type: Optional[str] = None
     min_severity: Optional[str] = Field(None, description="Suppress alerts at or below this severity level")
     reason: Optional[str] = None
-    duration_minutes: int = Field(120, ge=1, le=10080, description="Duration in minutes (max 7 days)")
+    duration_minutes: int = Field(
+        120, ge=1, le=525600,
+        description="Duration in minutes (max 7 days; up to 365 days for a narrow rule: "
+                    "src_ip or dst_ip plus dst_port)",
+    )
 
     @model_validator(mode="after")
     def _require_a_condition(self):
         """A rule with no condition matches every alert, i.e. silences the whole system."""
         conditions = (self.src_ip, self.dst_ip, self.attack_type, self.min_severity)
-        if not any(c and c.strip() for c in conditions):
+        if not (any(c and c.strip() for c in conditions) or self.dst_port is not None):
             raise ValueError(
                 "a suppression rule needs at least one condition: "
-                "src_ip, dst_ip, attack_type or min_severity"
+                "src_ip, dst_ip, dst_port, attack_type or min_severity"
+            )
+        narrow = bool((self.src_ip or self.dst_ip) and self.dst_port is not None)
+        if self.duration_minutes > 10080 and not narrow:
+            raise ValueError(
+                "duration_minutes above 7 days is only allowed for a narrow rule "
+                "(src_ip or dst_ip together with dst_port)"
             )
         return self
 
@@ -167,6 +178,7 @@ class SuppressionRuleOut(BaseModel):
     id: int
     src_ip: Optional[str]
     dst_ip: Optional[str]
+    dst_port: Optional[int] = None
     attack_type: Optional[str]
     min_severity: Optional[str]
     reason: Optional[str]

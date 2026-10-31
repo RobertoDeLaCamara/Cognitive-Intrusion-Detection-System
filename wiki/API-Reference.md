@@ -233,11 +233,12 @@ Rules that have not expired yet.
 
 ### `POST /api/suppression-rules`
 
-Create a rule (201; `admin`/`analyst`). All match fields are optional; `duration_minutes` defaults to 120 (1–10080, i.e. at most 7 days). The server computes `expires_at`; clients do not send it.
+Create a rule (201; `admin`/`analyst`). All match fields are optional but at least one is required: `src_ip`, `dst_ip`, `dst_port` (1-65535), `attack_type`, `min_severity`. `duration_minutes` defaults to 120 (1–10080, i.e. at most 7 days); a *narrow* rule (`src_ip` or `dst_ip` together with `dst_port`) may last up to 525600 minutes (365 days). The server computes `expires_at`; clients do not send it.
 
 ```json
 {
   "src_ip": "192.168.1.20",
+  "dst_port": null,
   "attack_type": null,
   "min_severity": null,
   "reason": "Scheduled vulnerability scan",
@@ -249,7 +250,7 @@ Create a rule (201; `admin`/`analyst`). All match fields are optional; `duration
 
 204 on success (`admin`), 404 if unknown. Expired rules are purged by a background task every 5 minutes.
 
-Suppression is applied on the `/api/predict` path only.
+Suppression is applied on the `/api/predict` path and to alerts written by the detector (a suppressed detector alert is logged as `suppressed by rule #N` and not stored). Adding `dst_port` needs the Alembic revision `a8b9c0d1e2f3`, which the API applies at startup: recreate `api` before the detector.
 
 ---
 

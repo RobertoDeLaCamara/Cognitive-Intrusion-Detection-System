@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Baseline stability gate**: a retrained window is no longer promoted when its LSTM threshold is more than `BASELINE_THRESHOLD_MAX_RATIO` (3.0) times above/below the median of the last accepted windows; after `BASELINE_MAX_CONSECUTIVE_REJECTS` (3) rejections in a row the new level is accepted as a regime change. Seen on raspi-189 with 3000-vector windows: p99 thresholds of 0.32 and 8.93 for consecutive windows of the same network. Larger windows (`BASELINE_MIN_VECTORS`) also steady it.
+
 ### Security
 - **BREAKING: the API refuses to start without authentication** — if neither `API_KEY` nor `JWT_SECRET` is set, importing `src.api.main` exits non-zero unless `AUTH_DISABLED=true` (only the literal `true`; logs a warning). The sandbox opts in explicitly; set `JWT_SECRET` or `API_KEY` in `.env` before redeploying (cnds#20).
 

@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- **Baseline stability gate**: a retrained window is no longer promoted when its LSTM threshold is more than `BASELINE_THRESHOLD_MAX_RATIO` (3.0) times above/below the median of the last accepted windows; after `BASELINE_MAX_CONSECUTIVE_REJECTS` (3) rejections in a row the new level is accepted as a regime change. Seen on raspi-189 with 3000-vector windows: p99 thresholds of 0.32 and 8.93 for consecutive windows of the same network. Larger windows (`BASELINE_MIN_VECTORS`) also steady it.
 - Triage agent (`src/triage/`, `python -m src.triage`) — out-of-process advisory verdicts written only to the append-only `triage_annotations` table (migration `c3d8e1f4a7b2`); `scripts/eval_triage.py`
 - `start` / `end` / `hours` date-range filters on `GET /api/alerts` (#5)
 - Baseline training trigger thresholds configurable via `BASELINE_MIN_VECTORS`, `BASELINE_MIN_SRC_IPS`, `BASELINE_MIN_ELAPSED_SECS`, `BASELINE_MIN_PORT_ENTROPY` (#65)

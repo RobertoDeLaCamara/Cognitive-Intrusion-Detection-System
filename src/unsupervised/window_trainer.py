@@ -20,6 +20,11 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
 from .. import mlflow_registry
+from ..config import (
+    BASELINE_MAX_CONSECUTIVE_REJECTS,
+    BASELINE_THRESHOLD_MAX_RATIO,
+    BASELINE_THRESHOLD_REF_WINDOWS,
+)
 from ..engines.lstm_model import LSTMAutoencoder
 from .artifact_schema import (
     ARTIFACT_ROOT,
@@ -54,6 +59,21 @@ def _register_baseline(mlflow, run_id: str, artifact_uri: str) -> None:
         source=f"{artifact_uri.rstrip('/')}/{ARTIFACT_ROOT}",
         run_id=run_id,
     )
+
+
+def _threshold_is_stable(threshold: float, reference: List[float], max_ratio: float) -> bool:
+    """True if ``threshold`` is within a factor ``max_ratio`` of the median of ``reference``.
+
+    The p99 of a small validation set is driven by a handful of outliers and was seen to swing
+    0.32 -> 8.93 between consecutive windows of the same network. An empty reference or
+    ``max_ratio <= 0`` accepts everything (first window after a restart, gate disabled).
+    """
+    if max_ratio <= 0 or not reference:
+        return True
+    median = float(np.median(reference))
+    if median <= 0:
+        return True
+    return median / max_ratio <= threshold <= median * max_ratio
 
 
 def _to_sequences(X: np.ndarray, seq_len: int) -> np.ndarray:
@@ -98,6 +118,10 @@ class WindowTrainer:
         # Rolling history of the last 20 trained windows (thread-safe).
         self._history: deque = deque(maxlen=20)
         self._history_lock = threading.Lock()
+
+        # Thresholds of the windows that were promoted (stability gate reference), in-process only.
+        self._accepted_thresholds: deque = deque(maxlen=max(BASELINE_THRESHOLD_REF_WINDOWS, 1))
+        self._consecutive_rejects = 0
         self._windows_trained_total: int = 0
 
     def get_history(self) -> list:
@@ -109,6 +133,30 @@ class WindowTrainer:
         """Return the cumulative count of successfully trained windows (monotone counter)."""
         with self._history_lock:
             return self._windows_trained_total
+
+    def _accept_threshold(self, threshold: float) -> bool:
+        """Stability gate. True if the window may be promoted, False to keep the current baseline."""
+        reference = list(self._accepted_thresholds)
+        if not _threshold_is_stable(threshold, reference, BASELINE_THRESHOLD_MAX_RATIO):
+            if self._consecutive_rejects < BASELINE_MAX_CONSECUTIVE_REJECTS:
+                self._consecutive_rejects += 1
+                logger.warning(
+                    "Baseline window REJECTED: threshold %.6f is more than %.1fx away from the "
+                    "median %.6f of the last %d accepted windows (reject %d/%d); keeping the "
+                    "current baseline",
+                    threshold, BASELINE_THRESHOLD_MAX_RATIO, float(np.median(reference)),
+                    len(reference), self._consecutive_rejects, BASELINE_MAX_CONSECUTIVE_REJECTS,
+                )
+                return False
+            logger.warning(
+                "Baseline threshold %.6f stayed out of range for %d windows in a row — "
+                "accepting it as a regime change",
+                threshold, self._consecutive_rejects,
+            )
+            self._accepted_thresholds.clear()
+        self._consecutive_rejects = 0
+        self._accepted_thresholds.append(threshold)
+        return True
 
     def train_window(
         self, samples: List[CollectedSample], provenance: ProvenanceMetadata
@@ -245,6 +293,10 @@ class WindowTrainer:
             self._threshold_percentile,
             threshold,
         )
+
+        # 6b. Stability gate: do not replace the live baseline with an outlier window.
+        if not self._accept_threshold(threshold):
+            return
 
         # 7. Record in rolling history (always, regardless of MLflow availability).
         entry = {

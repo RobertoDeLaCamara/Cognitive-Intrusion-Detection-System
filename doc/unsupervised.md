@@ -258,6 +258,9 @@ A dataclass that describes the statistical properties of a training window. Cons
 | `BASELINE_MIN_SRC_IPS` | `20` | `CompositeTrigger.min_distinct_src_ips`: minimum distinct source IPs |
 | `BASELINE_MIN_ELAPSED_SECS` | `1800` | `CompositeTrigger.min_elapsed_sec`: minimum seconds since the window started |
 | `BASELINE_MIN_PORT_ENTROPY` | `2.5` | `CompositeTrigger.min_dst_port_entropy_bits`: minimum destination-port Shannon entropy (bits) |
+| `BASELINE_THRESHOLD_MAX_RATIO` | `3.0` | Stability gate: a trained window is not promoted when its LSTM threshold is more than this factor above/below the median of the last accepted windows (`0` disables) |
+| `BASELINE_THRESHOLD_REF_WINDOWS` | `5` | Stability gate: how many accepted thresholds the median is taken over (in-process, reset on restart) |
+| `BASELINE_MAX_CONSECUTIVE_REJECTS` | `3` | Stability gate: after this many rejections in a row the new level is accepted as a regime change |
 
 The four `BASELINE_MIN_*` variables are read in `src/config.py` and passed to `CompositeTrigger` by `pipeline.init_baseline_collector()`; the values in the `CompositeTrigger` table below are only the dataclass defaults, which match the variable defaults. A home LAN with about ten talkers never reaches 20 distinct source IPs at the defaults, so lower them, for example `BASELINE_MIN_VECTORS=5000`, `BASELINE_MIN_SRC_IPS=5`, `BASELINE_MIN_ELAPSED_SECS=900`, `BASELINE_MIN_PORT_ENTROPY=1.5`.
 

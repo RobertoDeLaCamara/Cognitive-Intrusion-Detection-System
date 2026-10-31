@@ -64,6 +64,22 @@ PAYLOAD_FEATURE_NAMES = [
 _PRESCREEN = re.compile(b"|".join(p.pattern for _, p in _PATTERNS), re.IGNORECASE)
 
 
+# Encrypted or compressed payloads (TLS, QUIC, SSH, gzip, bulk transfers) cannot carry a
+# readable web attack, but with tens of thousands of packets per transfer a ~0.03% chance
+# match per packet surfaces as a CRITICAL_RULES override (backups, image pulls, HTTPS).
+# Plaintext attacks (SQLi/XSS/shell strings) sit well below 6 bits/byte; random or
+# compressed data sits near 8. Short samples under-measure entropy, hence the length floor.
+_ENCRYPTED_MIN_LEN = 256
+_ENCRYPTED_ENTROPY = 7.0
+
+
+def looks_encrypted(sample: bytes) -> bool:
+    """True for a TLS record at the start of the payload or a high-entropy blob."""
+    if len(sample) >= 5 and 0x14 <= sample[0] <= 0x17 and sample[1] == 0x03 and sample[2] <= 0x04:
+        return True
+    return len(sample) >= _ENCRYPTED_MIN_LEN and byte_entropy(sample) >= _ENCRYPTED_ENTROPY
+
+
 def analyze_payload(packet) -> List[str]:
     """Return list of matched attack pattern names for this packet."""
     if Raw not in packet:
@@ -75,6 +91,9 @@ def analyze_payload(packet) -> List[str]:
     sample = payload[:4096]
     # Quick pre-screen: skip expensive per-pattern matching if no suspicious bytes
     if not _PRESCREEN.search(sample):
+        return []
+    # Entropy is only computed on a prescreen hit, so benign traffic pays nothing extra
+    if looks_encrypted(sample):
         return []
     matches = []
     for name, pattern in _PATTERNS:

@@ -225,3 +225,36 @@ def test_benign_apostrophe_not_flagged_as_sqli():
     assert vec[0] == 0.0  # has_sqli
     vec2 = extract_payload_features([b"user=O'Brien's account settings"])
     assert vec2[0] == 0.0  # has_sqli
+
+
+class TestEncryptedPayloadSkipped:
+    """Encrypted/compressed payloads must not trigger regex rules (CRITICAL_RULES override)."""
+
+    def test_tls_record_header_skipped(self):
+        # A TLS application-data record whose ciphertext happens to contain "<script"
+        assert _matches(b"\x17\x03\x03\x00\x20" + b"<script>alert(1)</script>") == []
+
+    def test_high_entropy_blob_skipped(self):
+        rng = random.Random(7)
+        blob = bytes(rng.randrange(256) for _ in range(1400))
+        assert _matches(blob[:700] + b"<script>" + blob[700:]) == []
+
+    def test_random_payloads_never_match(self):
+        rng = random.Random(1)
+        for _ in range(2000):
+            data = bytes(rng.randrange(256) for _ in range(1200))
+            assert _matches(data) == []
+
+    def test_plaintext_xss_still_detected(self):
+        assert "xss" in _matches(b"GET /?q=<script>alert(1)</script> HTTP/1.1\r\nHost: x\r\n\r\n")
+
+    def test_plaintext_sqli_still_detected(self):
+        assert "sql_injection" in _matches(b"POST /login HTTP/1.1\r\n\r\nuser=admin' OR '1'='1'--&pw=x")
+
+    def test_long_plaintext_attack_still_detected(self):
+        body = (b"Lorem ipsum dolor sit amet, " * 40) + b"; cat /etc/passwd "
+        assert "command_injection" in _matches(body)
+
+    def test_looks_encrypted_short_high_entropy_not_flagged(self):
+        from src.features.payload_analyzer import looks_encrypted
+        assert not looks_encrypted(bytes(range(200)))  # below the length floor

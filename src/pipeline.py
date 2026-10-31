@@ -134,6 +134,10 @@ def _write_alert(item) -> None:
     flow_vec = rest[0] if rest else None
     session = _SessionLocal()
     try:
+        rule = _suppressing_rule(session, record, scores, severity)
+        if rule is not None:
+            logger.info("Alert %s -> %s suppressed by rule #%d", record.src_ip, record.dst_ip, rule.id)
+            return
         from .enrichment.geoip import lookup as geoip_lookup
         from .enrichment.mitre import enrich as mitre_enrich
         alert = Alert(
@@ -168,6 +172,30 @@ def _write_alert(item) -> None:
         session.commit()
     finally:
         session.close()
+
+
+_SUPPRESS_TTL = 10.0
+_suppress_cache: list = []
+_suppress_ts: float = 0.0
+
+
+def _suppressing_rule(session, record, scores, severity):
+    """Sync twin of enrichment.suppression.find_suppressing_rule for the detector's writer thread."""
+    global _suppress_cache, _suppress_ts
+    from .api.models import SuppressionRule
+    from .enrichment.suppression import rule_matches
+    from .timeutils import utcnow
+    if time.time() - _suppress_ts >= _SUPPRESS_TTL:
+        try:
+            _suppress_cache = session.query(SuppressionRule).filter(SuppressionRule.expires_at > utcnow()).all()
+        except Exception as e:  # a failed refresh must never drop the alert: keep the stale cache
+            logger.warning("Suppression rule refresh failed, using cached rules: %s", e)
+            session.rollback()
+        _suppress_ts = time.time()
+    for rule in _suppress_cache:
+        if rule_matches(rule, record.src_ip, record.dst_ip, scores.attack_type, severity):
+            return rule
+    return None
 
 
 def _writer_loop():

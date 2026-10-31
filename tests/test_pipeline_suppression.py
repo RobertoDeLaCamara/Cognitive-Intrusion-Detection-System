@@ -1,0 +1,79 @@
+"""Suppression rules must apply to detector-written alerts, not only to /api/predict."""
+
+import time
+from datetime import timedelta
+from types import SimpleNamespace
+
+import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+import src.pipeline as pipeline
+from src.api.models import Base, SuppressionRule
+from src.enrichment.suppression import rule_matches
+from src.timeutils import utcnow
+
+
+def _rule(**kw):
+    return SimpleNamespace(**{"src_ip": None, "dst_ip": None, "attack_type": None, "min_severity": None, **kw})
+
+
+class TestRuleMatches:
+    def test_empty_rule_matches_everything(self):
+        assert rule_matches(_rule(), "1.1.1.1", "2.2.2.2", "Generic", "critical")
+
+    def test_dst_only(self):
+        r = _rule(dst_ip="224.0.0.251")
+        assert rule_matches(r, "9.9.9.9", "224.0.0.251", None, "medium")
+        assert not rule_matches(r, "9.9.9.9", "10.0.0.1", None, "medium")
+
+    def test_pair_must_match_both(self):
+        r = _rule(src_ip="10.0.0.1", dst_ip="10.0.0.2")
+        assert rule_matches(r, "10.0.0.1", "10.0.0.2", None, "low")
+        assert not rule_matches(r, "10.0.0.3", "10.0.0.2", None, "low")
+
+    def test_min_severity_is_a_ceiling(self):
+        r = _rule(min_severity="high")
+        assert rule_matches(r, "a", "b", None, "medium")
+        assert rule_matches(r, "a", "b", None, "high")
+        assert not rule_matches(r, "a", "b", None, "critical")
+
+
+@pytest.fixture
+def session():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    s = sessionmaker(bind=engine)()
+    pipeline._suppress_cache, pipeline._suppress_ts = [], 0.0
+    yield s
+    s.close()
+    pipeline._suppress_cache, pipeline._suppress_ts = [], 0.0
+
+
+def _args(src="10.0.0.1", dst="10.0.0.2", attack="Generic", severity="medium"):
+    return SimpleNamespace(src_ip=src, dst_ip=dst), SimpleNamespace(attack_type=attack), severity
+
+
+class TestSuppressingRule:
+    def test_active_rule_suppresses_but_critical_still_passes(self, session):
+        session.add(SuppressionRule(dst_ip="10.0.0.2", min_severity="high", expires_at=utcnow() + timedelta(hours=1)))
+        session.commit()
+        rec, sc, _ = _args()
+        assert pipeline._suppressing_rule(session, rec, sc, "medium") is not None
+        assert pipeline._suppressing_rule(session, rec, sc, "critical") is None
+
+    def test_expired_rule_ignored(self, session):
+        session.add(SuppressionRule(dst_ip="10.0.0.2", expires_at=utcnow() - timedelta(minutes=1)))
+        session.commit()
+        rec, sc, sev = _args()
+        assert pipeline._suppressing_rule(session, rec, sc, sev) is None
+
+    def test_refresh_failure_keeps_stale_cache(self, session):
+        rule = _rule(id=1, dst_ip="10.0.0.2")
+        pipeline._suppress_cache, pipeline._suppress_ts = [rule], 0.0  # stale -> forces a refresh
+        session.close()
+        session.bind.dispose()
+        session.get_bind().dispose()
+        session.bind = None  # any query now raises
+        rec, sc, sev = _args()
+        assert pipeline._suppressing_rule(session, rec, sc, sev) is rule

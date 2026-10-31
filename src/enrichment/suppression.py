@@ -52,27 +52,32 @@ async def is_suppressed(alert: Alert, db: AsyncSession) -> bool:
     return await find_suppressing_rule(alert, db) is not None
 
 
+_SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
+
+def rule_matches(rule, src_ip, dst_ip, attack_type, severity) -> bool:
+    """True if ``rule`` covers an alert with these fields (unset rule fields match anything)."""
+    if rule.src_ip and rule.src_ip != src_ip:
+        return False
+    if rule.dst_ip and rule.dst_ip != dst_ip:
+        return False
+    if rule.attack_type and rule.attack_type != attack_type:
+        return False
+    if rule.min_severity:
+        sev = severity.value if hasattr(severity, "value") else severity
+        if _SEVERITY_ORDER.get(sev, 0) > _SEVERITY_ORDER.get(rule.min_severity, 0):
+            return False
+    return True
+
+
 async def find_suppressing_rule(alert: Alert, db: AsyncSession) -> Optional[SuppressionRule]:
     """Return the first active suppression rule the alert matches, or None."""
     await _refresh_cache(db)
 
     for rule in _cache:
-        if rule.src_ip and rule.src_ip != alert.src_ip:
-            continue
-        if rule.dst_ip and rule.dst_ip != alert.dst_ip:
-            continue
-        if rule.attack_type and rule.attack_type != alert.attack_type:
-            continue
-        if rule.min_severity:
-            severity_order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-            alert_sev = severity_order.get(
-                alert.severity.value if hasattr(alert.severity, 'value') else alert.severity, 0
-            )
-            rule_sev = severity_order.get(rule.min_severity, 0)
-            if alert_sev > rule_sev:
-                continue
-        logger.debug("Alert suppressed by rule #%d: %s", rule.id, rule.reason)
-        return rule
+        if rule_matches(rule, alert.src_ip, alert.dst_ip, alert.attack_type, alert.severity):
+            logger.debug("Alert suppressed by rule #%d: %s", rule.id, rule.reason)
+            return rule
     return None
 
 

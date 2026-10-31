@@ -156,8 +156,12 @@ pipeline {
             steps {
                 echo "Pushing image to ${REGISTRY}..."
                 sh "docker tag ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${IMAGE_NAME}:latest"
-                retry(3) { sh "docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}" }
-                retry(3) { sh "docker push ${REGISTRY}/${IMAGE_NAME}:latest" }
+                // The registry on Magua can need longer than the Docker client's 30 s response-header
+                // timeout to commit a big layer. The client gives up, but the registry still finishes,
+                // so an immediate retry re-uploads the same layer and times out again. Wait between
+                // attempts so the next one finds the layer already present.
+                retry(4) { sh "docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} || { sleep 90; exit 1; }" }
+                retry(4) { sh "docker push ${REGISTRY}/${IMAGE_NAME}:latest || { sleep 90; exit 1; }" }
             }
         }
 

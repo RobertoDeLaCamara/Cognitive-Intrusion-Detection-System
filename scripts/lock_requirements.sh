@@ -28,3 +28,6 @@ lock amd64 x86_64-manylinux_2_28 "torch==${TORCH_VERSION}+cpu" \
     --index-strategy unsafe-best-match
 # arm64: the PyPI aarch64 wheel is CPU-only.
 lock arm64 aarch64-manylinux_2_28 "torch==${TORCH_VERSION}"
+
+# Split each lock into torch / numeric / rest parts so no Docker layer is huge (see split_lock.py).
+python3 scripts/split_lock.py amd64 arm64

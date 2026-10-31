@@ -16,10 +16,29 @@ WORKDIR /app
 #   arm64  → torch 2.6.0 from PyPI (manylinux aarch64 wheel, CPU-only)
 #   arm/v7 → no official wheel; install requirements.txt unlocked and
 #            FTTransformerEngine degrades to RF fallback
-COPY requirements.txt requirements-lock-*.txt ./
+#
+# Installed in three layers (torch / numeric stack / rest) instead of one ~390 MB layer:
+# the registry on Magua cannot commit a layer that large inside the Docker client's 30 s
+# response-header timeout, so the push of a rebuilt dependency layer failed. torch almost
+# never changes, so its layer is pushed once and then stays cached; each part has its own
+# COPY so changing another dependency does not invalidate it. The parts are generated from
+# requirements-lock-<arch>.txt by scripts/split_lock.py (tests/test_lock_split.py keeps them in sync).
+COPY requirements-lock-torch-*.txt ./
 RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
-        pip install --no-cache-dir --timeout=300 --retries=5 --require-hashes \
-            -r requirements-lock-${TARGETARCH}.txt ; \
+        pip install --no-cache-dir --timeout=300 --retries=5 --require-hashes --no-deps \
+            -r requirements-lock-torch-${TARGETARCH}.txt ; \
+    fi
+
+COPY requirements-lock-sci-*.txt ./
+RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
+        pip install --no-cache-dir --timeout=300 --retries=5 --require-hashes --no-deps \
+            -r requirements-lock-sci-${TARGETARCH}.txt ; \
+    fi
+
+COPY requirements.txt requirements-lock-rest-*.txt ./
+RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
+        pip install --no-cache-dir --timeout=300 --retries=5 --require-hashes --no-deps \
+            -r requirements-lock-rest-${TARGETARCH}.txt ; \
     else \
         echo "TARGETARCH=${TARGETARCH}: no torch wheel — FTTransformerEngine will degrade to RF fallback." ; \
         pip install --no-cache-dir --timeout=300 --retries=5 -r requirements.txt ; \

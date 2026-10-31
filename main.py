@@ -48,6 +48,17 @@ def main():
     baseline_enabled = os.environ.get("BASELINE_COLLECTION_ENABLED", "true").lower() != "false"
     pipeline.init_baseline_collector(enabled=baseline_enabled)
 
+    # The API lifespan starts the progress/metrics thread, but a detector run without
+    # --api never does, so the collector would be invisible. Start it here in that case.
+    if baseline_enabled and not args.api and pipeline.get_baseline_collector() is not None:
+        from src.api.metrics import start_baseline_scrape
+        start_baseline_scrape(
+            collector_getter=pipeline.get_baseline_collector,
+            engine_getter=lambda: baseline,
+            history_getter=lambda: (pipeline.get_window_trainer().get_history() if pipeline.get_window_trainer() else []),
+            windows_total_getter=lambda: (pipeline.get_window_trainer().get_windows_trained_total() if pipeline.get_window_trainer() else 0),
+        )
+
     # Load malicious JA3 hashes if configured
     if MALICIOUS_JA3_FILE:
         from src.features.ja3 import load_malicious_ja3

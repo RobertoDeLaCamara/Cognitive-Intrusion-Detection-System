@@ -5,6 +5,7 @@
 ## [Unreleased]
 
 ### Added
+- **Suppressed detector alerts are logged as `[SUPPRESSED]`** (`src=… | dst=… | dport=… | score=… | type=… | rule=#N`). The `[ALERT]` line is written at detection time, before suppression is evaluated, so it also covers alerts that are then suppressed; count `[SUPPRESSED]` to separate them.
 - Triage agent (`src/triage/`, `python -m src.triage`) — out-of-process advisory verdicts written only to the append-only `triage_annotations` table (migration `c3d8e1f4a7b2`); `scripts/eval_triage.py`
 - `start` / `end` / `hours` date-range filters on `GET /api/alerts` (#5)
 - Baseline training trigger thresholds configurable via `BASELINE_MIN_VECTORS`, `BASELINE_MIN_SRC_IPS`, `BASELINE_MIN_ELAPSED_SECS`, `BASELINE_MIN_PORT_ENTROPY` (#65)

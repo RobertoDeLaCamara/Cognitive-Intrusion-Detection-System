@@ -142,7 +142,13 @@ def _write_alert(item) -> None:
     try:
         rule = _suppressing_rule(session, record, scores, severity)
         if rule is not None:
-            logger.info("Alert %s -> %s suppressed by rule #%d", record.src_ip, record.dst_ip, rule.id)
+            # The "[ALERT]" line is logged at detection time, before this check, so it also
+            # covers alerts that end up here. "[SUPPRESSED]" lets them be counted separately.
+            logger.info(
+                "[SUPPRESSED] src=%s | dst=%s | dport=%s | score=%.3f | type=%s | rule=#%d",
+                record.src_ip, record.dst_ip, record.key[3] or "-", result.score,
+                scores.attack_type, rule.id,
+            )
             return
         from .enrichment.geoip import lookup as geoip_lookup
         from .enrichment.mitre import enrich as mitre_enrich

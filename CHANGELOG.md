@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Suppressed detector alerts are logged as `[SUPPRESSED]`** (`src=… | dst=… | dport=… | score=… | type=… | rule=#N`). The `[ALERT]` line is written at detection time, before suppression is evaluated, so it also covers alerts that are then suppressed; count `[SUPPRESSED]` to separate them.
+
 ### Security
 - **BREAKING: the API refuses to start without authentication** — if neither `API_KEY` nor `JWT_SECRET` is set, importing `src.api.main` exits non-zero unless `AUTH_DISABLED=true` (only the literal `true`; logs a warning). The sandbox opts in explicitly; set `JWT_SECRET` or `API_KEY` in `.env` before redeploying (cnds#20).
 

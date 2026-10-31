@@ -36,6 +36,26 @@ from .provenance import ProvenanceMetadata
 logger = logging.getLogger(__name__)
 
 
+def _register_baseline(mlflow, run_id: str, artifact_uri: str) -> None:
+    """Create a registry version for the baseline artifacts.
+
+    ``mlflow.register_model()`` from a 3.x client queries ``/logged-models/search``,
+    which a 2.x tracking server (ours is 2.22.1) does not implement, so it fails
+    before any version is created. ``create_model_version`` only uses the classic
+    registry endpoints and works against both server generations.
+    """
+    client = mlflow.tracking.MlflowClient()
+    try:
+        client.create_registered_model(MODEL_NAME)
+    except Exception:  # already exists (or a race): create_model_version will tell
+        pass
+    client.create_model_version(
+        name=MODEL_NAME,
+        source=f"{artifact_uri.rstrip('/')}/{ARTIFACT_ROOT}",
+        run_id=run_id,
+    )
+
+
 def _to_sequences(X: np.ndarray, seq_len: int) -> np.ndarray:
     """Produce sliding-window sequences of shape (N-seq_len+1, seq_len, n_features).
 
@@ -298,15 +318,14 @@ class WindowTrainer:
                     mlflow.log_artifacts(tmp, artifact_path=ARTIFACT_ROOT)
 
                 run_id = run.info.run_id  # capture before the context manager closes the run
-            # Run is now FINISHED — register_model outside the context so the artifact
+                artifact_uri = run.info.artifact_uri
+            # Run is now FINISHED — registration outside the context so the artifact
             # set is immutable before the registry entry is created.
             try:
-                mlflow.register_model(
-                    f"runs:/{run_id}/{ARTIFACT_ROOT}", MODEL_NAME
-                )
+                _register_baseline(mlflow, run_id, artifact_uri)
                 registered_ok = True
             except Exception as e:
-                logger.warning("MLflow register_model failed: %s", e)
+                logger.warning("MLflow baseline registration failed: %s", e)
             if registered_ok and self._on_trained is not None:
                 try:
                     self._on_trained()

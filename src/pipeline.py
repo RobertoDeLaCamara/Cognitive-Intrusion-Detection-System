@@ -18,6 +18,7 @@ from .config import (
     ASSET_INVENTORY_ENABLED, ASSET_FLUSH_SECS,
     DRIFT_ENABLED, DRIFT_WINDOW_FLOWS, DRIFT_MIN_FLOWS, DRIFT_FEATURE_Z,
     DRIFT_WARN_FRACTION, DRIFT_CRIT_FRACTION,
+    BASELINE_MIN_VECTORS, BASELINE_MIN_SRC_IPS, BASELINE_MIN_ELAPSED_SECS, BASELINE_MIN_PORT_ENTROPY,
 )
 from .engines.registry import supervised, iforest, lstm, baseline as baseline_engine, rules, ensemble
 from .ensemble.scorer import EngineScores, severity_from_score
@@ -95,7 +96,12 @@ def init_baseline_collector(enabled: bool = True) -> None:
         if _baseline_collector is not None:
             return
         trainer = WindowTrainer(on_trained=baseline_engine.reload_from_mlflow_baseline)
-        trigger = CompositeTrigger()
+        trigger = CompositeTrigger(
+            min_total_vectors=BASELINE_MIN_VECTORS,
+            min_distinct_src_ips=BASELINE_MIN_SRC_IPS,
+            min_elapsed_sec=BASELINE_MIN_ELAPSED_SECS,
+            min_dst_port_entropy_bits=BASELINE_MIN_PORT_ENTROPY,
+        )
         _baseline_collector = BaselineCollector(
             trigger=trigger,
             on_window_ready=trainer.train_window,

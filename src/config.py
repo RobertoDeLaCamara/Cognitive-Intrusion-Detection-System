@@ -288,6 +288,12 @@ THREAT_INTEL_REFRESH_MINUTES = int(os.getenv("THREAT_INTEL_REFRESH_MINUTES", "60
 
 # ── Unsupervised baseline ─────────────────────────────────────────────────────
 BASELINE_COLLECTION_ENABLED = os.getenv("BASELINE_COLLECTION_ENABLED", "true").lower() == "true"
+# Composite trigger for the first/next baseline training window. Defaults suit a
+# large network; a home LAN (~10 talkers) must lower the IP/vector floors or it never fires.
+BASELINE_MIN_VECTORS      = int(os.getenv("BASELINE_MIN_VECTORS", "50000"))
+BASELINE_MIN_SRC_IPS      = int(os.getenv("BASELINE_MIN_SRC_IPS", "20"))
+BASELINE_MIN_ELAPSED_SECS = float(os.getenv("BASELINE_MIN_ELAPSED_SECS", "1800"))
+BASELINE_MIN_PORT_ENTROPY = float(os.getenv("BASELINE_MIN_PORT_ENTROPY", "2.5"))
 # Input-feature drift of the supervised model (src/monitoring/feature_drift.py)
 DRIFT_ENABLED       = os.getenv("DRIFT_ENABLED", "true").lower() == "true"
 DRIFT_WINDOW_FLOWS  = int(os.getenv("DRIFT_WINDOW_FLOWS", "5000"))     # flows per tumbling window

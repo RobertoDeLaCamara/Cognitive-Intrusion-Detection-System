@@ -250,7 +250,7 @@ Create a rule (201; `admin`/`analyst`). All match fields are optional but at lea
 
 204 on success (`admin`), 404 if unknown. Expired rules are purged by a background task every 5 minutes.
 
-Suppression is applied on the `/api/predict` path and to alerts written by the detector (a suppressed detector alert is logged as `suppressed by rule #N` and not stored). Adding `dst_port` needs the Alembic revision `a8b9c0d1e2f3`, which the API applies at startup: recreate `api` before the detector.
+Suppression is applied on the `/api/predict` path and to alerts written by the detector (a suppressed detector alert is not stored; the detector logs it at INFO level with the id of the rule). Adding `dst_port` needs the Alembic revision `a8b9c0d1e2f3`, which the API applies at startup: recreate `api` before the detector.
 
 ---
 

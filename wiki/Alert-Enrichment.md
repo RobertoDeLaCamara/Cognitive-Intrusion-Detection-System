@@ -47,7 +47,7 @@ The decay tracker is bounded by `MAX_TRACKED_IPS` with LRU eviction.
 - `IP_ALLOWLIST` — comma-separated IPs or CIDR ranges (e.g. `10.0.0.1,192.168.0.0/16`) that skip detection entirely (e.g., monitoring infrastructure, load balancers).
 - `IP_BLOCKLIST` — comma-separated IPs or CIDR ranges that are automatically flagged as critical severity regardless of ensemble score.
 
-## Webhook / Slack / Telegram Notifications (_predict path_ and Guardian)
+## Webhook / Slack / Telegram / ntfy Notifications (_predict path_ and Guardian)
 
 **File:** `src/enrichment/notifications.py`
 
@@ -55,6 +55,7 @@ Sends alert summaries to external services when severity meets `NOTIFY_MIN_SEVER
 
 - `WEBHOOK_URLS` — comma-separated URLs (Slack incoming webhooks, custom endpoints; a plain JSON POST with no auth header, so authenticated collectors such as Splunk HEC need a relay)
 - `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` — Telegram bot notifications
+- `NTFY_URL` (+ `NTFY_TOPIC`, default `cnds`; auth with `NTFY_TOKEN` or `NTFY_USER` + `NTFY_PASSWORD`) — push notifications through an [ntfy](https://ntfy.sh) server. Priority follows severity (low 2 to critical 5) and a failed publish is logged, never raised
 
 Webhook payloads contain only summary fields (`text`, IPs, severity, score, attack type, timestamp) — no internal data is leaked. The Telegram text also lists the triggered rules.
 

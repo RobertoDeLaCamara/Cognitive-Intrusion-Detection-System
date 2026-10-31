@@ -7,10 +7,19 @@
 ### Added
 - Triage agent (`src/triage/`, `python -m src.triage`) — out-of-process advisory verdicts written only to the append-only `triage_annotations` table (migration `c3d8e1f4a7b2`); `scripts/eval_triage.py`
 - `start` / `end` / `hours` date-range filters on `GET /api/alerts` (#5)
+- Baseline training trigger thresholds configurable via `BASELINE_MIN_VECTORS`, `BASELINE_MIN_SRC_IPS`, `BASELINE_MIN_ELAPSED_SECS`, `BASELINE_MIN_PORT_ENTROPY` (#65)
+- logwatch: log-based detection (`src/logwatch/`, Gitea rules, replay CLI; no live tailer yet) (#53, #55, #60, #61)
+- ntfy notification channel: `NTFY_URL`, `NTFY_TOPIC`, `NTFY_USER`, `NTFY_PASSWORD`, `NTFY_TOKEN` (#62)
+- `baseline_progress` log lines and baseline metrics are emitted when the detector runs without `--api` (#67)
 
 ### Changed
 - `hours` is bounded to 1–87600 (10 years) on `GET /api/alerts` and `GET /api/alerts/export`; larger values return 422 instead of 500 (#16)
 - Jenkinsfile pushes images only from `master`; PR builds get an advisory Claude review stage
+- `syn_scan` condition fixed (#49) and added to the default `CRITICAL_RULES` (#50)
+- Suppression rules apply to alerts written by the capture pipeline (#66)
+- Payload regex rules are skipped on encrypted or high-entropy payloads (#68)
+- Docker dependencies install in three layers (`requirements-lock-{torch,sci,rest}-<arch>.txt`, `scripts/split_lock.py`); Jenkinsfile registry push uses `retry(4)` with `sleep 90` (#69)
+- Baseline registered with `MlflowClient.create_model_version`, compatible with a 3.x client against a 2.x MLflow server (#70)
 
 ### Fixed
 - Payload-pattern hits and JA3 fingerprints are attributed to their own flow; `payload_matches`, ports and protocol are persisted on capture-pipeline alerts; `sql_injection` / `command_injection` regexes no longer match binary noise

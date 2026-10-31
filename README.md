@@ -35,7 +35,7 @@
         └───────┬────────┘    → logger + SQLite  →  FastAPI
                 │
                 ├─► SIEM (Splunk / Elastic / Syslog-CEF)
-                ├─► Webhook / Telegram notifications (POST /api/predict path; see note below)
+                ├─► Webhook / Telegram / ntfy notifications (POST /api/predict path; see note below)
                 ├─► [MCP Server] (optional, read-only)  →  Claude Code / Desktop
                 └─► [Guardian] (optional)  critical alert → whitelist check →
                                             block src_ip (AdGuard DNS) → auto-rollback timer
@@ -54,24 +54,27 @@
 
 Default ensemble weights (`src/config.py`): Supervised 30 %, Isolation Forest 20 %, Rules 25 %, Baseline 15 %, LSTM 10 %. The shipped `.env.example` sets different values, see Configuration.
 Any missing engine has its weight redistributed proportionally across the active engines.
+Payload regex rules (SQL injection, XSS, path traversal and the rest) are skipped on payloads that look encrypted or compressed: a TLS record header at the start, or a sample of at least 256 bytes with Shannon entropy of 7.0 bits/byte or more. Without this, rare chance matches inside bulk TLS or backup transfers surfaced as `CRITICAL_RULES` alerts (#68). Plaintext attacks are unaffected.
 Rules carries a deliberately high weight so a deterministic signature match is actually felt in the blend; in addition, any rule listed in `CRITICAL_RULES` forces an alert regardless of how the weighted engines vote.
 
-**Two detection paths.** The live-capture path (`main.py` → `src/pipeline.py`) runs all five engines plus threat-intel, trusted-outbound filtering and `(src_ip, attack_type)` dedup, then persists the alert with GeoIP and MITRE data. `POST /api/predict` (`src/api/routers/predict.py`) runs only supervised / Isolation Forest / LSTM / rules (no baseline engine, no threat-intel) and additionally applies the IP allow/block lists, confidence decay, suppression rules, incident correlation, the `/ws/alerts` broadcast and webhook/Telegram notifications. Those extras are not invoked for alerts written by the capture path; the Guardian sends its own notifications.
+**Two detection paths.** The live-capture path (`main.py` → `src/pipeline.py`) runs all five engines plus threat-intel, trusted-outbound filtering and `(src_ip, attack_type)` dedup, then persists the alert with GeoIP and MITRE data. `POST /api/predict` (`src/api/routers/predict.py`) runs only supervised / Isolation Forest / LSTM / rules (no baseline engine, no threat-intel) and additionally applies the IP allow/block lists, confidence decay, suppression rules, incident correlation, the `/ws/alerts` broadcast and webhook/Telegram notifications. Suppression rules are also applied to alerts written by the capture path (since #66; a matching alert is logged and dropped). The other extras (allow/block lists, confidence decay, incident correlation, the `/ws/alerts` broadcast, webhook/Telegram/ntfy notifications) are not invoked for capture-path alerts; the Guardian sends its own notifications.
 
 ### Unsupervised Baseline Training
 
 CNDS continuously collects live network feature vectors and autonomously trains baseline anomaly models — no labeled data required. When enough traffic diversity has been observed, a background thread fits a new **IsolationForest** and **LSTM Autoencoder** on the collected window and persists the artifacts to MLflow.
 
-**Trigger conditions** (all four must be satisfied simultaneously):
+**Trigger conditions** (all four must be satisfied simultaneously). The values below are defaults, not fixed limits: each one is set by an environment variable read in `src/config.py`.
 
-| Condition | Default |
-|---|---|
-| Minimum feature vectors collected | 50,000 |
-| Minimum distinct source IPs | 20 |
-| Minimum elapsed time | 30 minutes |
-| Minimum destination-port Shannon entropy | 2.5 bits |
+| Condition | Environment variable | Default |
+|---|---|---|
+| Minimum feature vectors collected | `BASELINE_MIN_VECTORS` | 50,000 |
+| Minimum distinct source IPs | `BASELINE_MIN_SRC_IPS` | 20 |
+| Minimum elapsed time (seconds) | `BASELINE_MIN_ELAPSED_SECS` | 1800 (30 minutes) |
+| Minimum destination-port Shannon entropy (bits) | `BASELINE_MIN_PORT_ENTROPY` | 2.5 |
 
-A hard cap of 500,000 vectors overrides the composite trigger regardless of the other conditions.
+The defaults suit a large network. A home LAN with about ten talkers never reaches 20 distinct source IPs, so the trigger would never fire; lower the thresholds, for example `BASELINE_MIN_VECTORS=5000 BASELINE_MIN_SRC_IPS=5 BASELINE_MIN_ELAPSED_SECS=900 BASELINE_MIN_PORT_ENTROPY=1.5`. A hard cap of 500,000 vectors overrides the composite trigger regardless of the other conditions.
+
+**Watching progress:** the detector logs a `baseline_progress` line every 30 seconds with each counter against its threshold and the current bottleneck, whether or not it runs with `--api`. Example: `docker logs cnds-detector 2>&1 | grep baseline_progress`. The same counters are exported as `cnds_baseline_*` Prometheus gauges (for example `cnds_baseline_trigger_progress_ratio`); they are served at `/metrics` only when the API runs with `PROMETHEUS_ENABLED=true`.
 
 **Artifact layout** (logged under MLflow experiment `cnds-unsupervised-baseline`, registered as `cnds-unsupervised-baseline`):
 
@@ -88,7 +91,7 @@ If MLflow is not configured, models are still fitted but not persisted; a warnin
 
 **Enable / disable:** set `BASELINE_COLLECTION_ENABLED=false` to disable collection entirely. The default is `true`.
 
-**Drop-counter warning:** while a training run is in progress, incoming samples are silently dropped and counted. When the run completes, a `WARNING` is logged with the total dropped count. A consistently high drop count means training takes longer than one window interval — consider reducing `min_total_vectors` or moving the training workload to a dedicated process.
+**Drop-counter warning:** while a training run is in progress, incoming samples are silently dropped and counted. When the run completes, a `WARNING` is logged with the total dropped count. A consistently high drop count means training takes longer than one window interval — consider lowering `BASELINE_MIN_VECTORS` or moving the training workload to a dedicated process.
 
 See [`doc/unsupervised.md`](doc/unsupervised.md) for the full developer reference.
 
@@ -138,6 +141,32 @@ ABUSEIPDB_API_KEY=your-key-here
 MALICIOUS_JA3_URL=https://raw.githubusercontent.com/strangerealintel/ja3-fingerprints/main/ja3-hashes.txt
 THREAT_INTEL_REFRESH_MINUTES=60
 ```
+
+### Notifications (optional)
+
+`notify_alert()` (`src/enrichment/notifications.py`) fans an alert out to every configured channel once its severity reaches `NOTIFY_MIN_SEVERITY` (default `high`): generic webhooks (`WEBHOOK_URLS`), Telegram (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`) and ntfy (`NTFY_URL`). Callers are `POST /api/predict`, the Guardian, drift notices and logwatch alerts.
+
+**ntfy** pushes to phones through a self-hosted or public [ntfy](https://ntfy.sh) server. Setting `NTFY_URL` enables it; priority follows severity (low 2, medium 3, high 4, critical 5) and, when `DASHBOARD_URL` is set, tapping the notification opens the alert. A failed publish is logged and never blocks alerting.
+
+```bash
+# .env
+NTFY_URL=http://192.168.1.189:2586
+NTFY_TOPIC=cnds
+NTFY_TOKEN=            # preferred; or NTFY_USER + NTFY_PASSWORD (a write-only user is enough)
+```
+
+### Log-based detection — logwatch (library + replay tool)
+
+`src/logwatch/` detects attacks on exposed services from their application logs instead of packets (sign-up floods, login brute force, admin access from unknown addresses). A parser (`gitea.py`) turns access-log lines into events, `engine.py` (`LogRuleEngine`) evaluates declarative sliding-window rules from `rules/*.yaml` (loaded and validated by `rules.py`; shipped set: `rules/gitea.yaml`, eight rules), and `persist.py` stores each hit as an alert with `source="logwatch"` and notifies the usual channels. Event time, not wall-clock time, drives the windows, so replaying an old log yields the same alerts as live watching. Because the Guardian only acts on `GUARDIAN_ALERT_SOURCES` (default `detector`), logwatch alerts never block anything.
+
+Tune thresholds against real logs without touching the database:
+
+```bash
+zcat gitea.log.*.gz | python -m src.logwatch.replay --service gitea --tz Europe/Madrid \
+    --trusted 192.168.0.0/16,172.16.0.0/12 -
+```
+
+> This repository contains no live log tailer: nothing in `main.py`, the pipeline or the API starts logwatch, and no `LOGWATCH_*` variable is read by the code (the `LOGWATCH_TRUSTED_CIDRS` name in `rules/gitea.yaml` comments is not implemented; trusted networks are passed to the engine by the caller, or with `--trusted` in replay).
 
 ### Guardian Auto-Response (optional)
 
@@ -260,7 +289,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu   # optional:
 cp .env.example .env
 ```
 
-`torch` is deliberately not in `requirements.txt` (the Dockerfile installs `torch==2.6.0` CPU wheels from the hashed `requirements-lock-<arch>.txt`; regenerate them with `scripts/lock_requirements.sh`). Without it the FT-Transformer, LSTM and baseline engines report unavailable and are skipped. The Docker image uses Python 3.11 (`python:3.11-slim`); the dev venv in this checkout runs 3.12.
+`torch` is deliberately not in `requirements.txt`. The Dockerfile installs `torch==2.6.0` CPU wheels from hashed lock files in three layers (torch, numeric stack, everything else): `requirements-lock-{torch,sci,rest}-<arch>.txt`. They are split from `requirements-lock-<arch>.txt` by `scripts/split_lock.py`; regenerate all of them with `scripts/lock_requirements.sh` and do not edit them by hand. Without it the FT-Transformer, LSTM and baseline engines report unavailable and are skipped. The Docker image uses Python 3.11 (`python:3.11-slim`); the dev venv in this checkout runs 3.12.
 
 ### 2. Add models
 
@@ -361,6 +390,11 @@ Base URL: `http://localhost:8000`
 | `/api/suppression-rules` | GET / POST | List or create suppression rules (POST requires admin/analyst) |
 | `/api/suppression-rules/{rule_id}` | DELETE | Remove a suppression rule (requires admin) |
 | `/api/adaptive-weights` | GET | Compute adaptive engine weights from feedback |
+| `/api/engines` | GET | Registered engines with `enabled`, configured `weight` and `adaptive_weight` (admin, analyst or viewer when JWT is on) |
+| `/api/assets` | GET | Network asset inventory of LAN hosts: classification, `is_new`, alert count, risk score (filter: `classification` = `server`/`workstation`/`iot`/`unknown`; paging: `limit` 1–500, default 50, `offset`) |
+| `/api/drift-status` | GET | Live-vs-training flow-feature drift: `status` (`ok`, `warming_up`, `no_baseline`, `disabled`), thresholds and the drift report |
+| `/api/feedback-stats` | GET | Counts of analyst feedback labels (`tp`/`fp`/`unknown`) |
+| `/api/feedback-export` | GET | Labelled alerts as a training CSV in the 76-feature schema (`limit` 1–100000, default 10000; requires `analyst` or `admin`) |
 | `/api/baseline/status` | GET | Unsupervised baseline collector, trigger progress, engine info, drift (any role when JWT is on) |
 | `/api/baseline/windows` | GET | History of trained baseline windows (`limit` 1–20) |
 | `/api/dns-log` | GET | DNS query logs (filter: `src_ip`) |
@@ -504,7 +538,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `CORS_ORIGINS` | _(empty)_ | Comma-separated allowed origins; defaults to `http://localhost:3000` |
 | `ATTACK_TYPE_WEIGHTS` | `{}` | JSON: per-attack-type engine weight overrides |
 | `CALIBRATION_TEMPERATURE` | `1.0` | Platt scaling temperature in (0, 10] (>1 softer, <1 sharper) |
-| `CRITICAL_RULES` | `payload:sql_injection,payload:command_injection,payload:log4j,payload:shellshock,payload:xss,payload:path_traversal,malicious_ja3` | Comma-separated rule names that force `is_anomaly` and score 1.0 regardless of the weighted blend |
+| `CRITICAL_RULES` | `payload:sql_injection,payload:command_injection,payload:log4j,payload:shellshock,payload:xss,payload:path_traversal,malicious_ja3,syn_scan` | Comma-separated rule names that force `is_anomaly` and score 1.0 regardless of the weighted blend |
 | `TRUSTED_OUTBOUND` | `{}` | JSON `{"<src_ip>": ["domain.suffix", ...]}`; flows from that IP to a reverse-resolved matching host skip detection (capture pipeline only) |
 | `FT_TEMPERATURE` | `2.0` | Logit temperature for the FT-Transformer softmax, range [0.1, 10]; `1.0` disables scaling |
 | `MLFLOW_TRACKING_URI` | `http://your-mlflow-host:5050` | MLflow server URL; empty disables MLflow |
@@ -517,6 +551,10 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `JWT_EXPIRE_MINUTES` | `60` | JWT token expiry (minutes) |
 | `CNDS_API_KEY` | _(empty)_ | Dashboard only: API key it sends as `X-API-Key` (compose passes `API_KEY`) |
 | `CNDS_API_USER` / `CNDS_API_PASSWORD` | _(empty)_ | Dashboard only: account it logs in with when JWT is enabled; needs the `analyst` or `admin` role to acknowledge alerts, `viewer` is enough to read |
+| `BASELINE_MIN_VECTORS` | `50000` | Baseline training trigger: minimum feature vectors in the window |
+| `BASELINE_MIN_SRC_IPS` | `20` | Baseline training trigger: minimum distinct source IPs |
+| `BASELINE_MIN_ELAPSED_SECS` | `1800` | Baseline training trigger: minimum seconds since the window started |
+| `BASELINE_MIN_PORT_ENTROPY` | `2.5` | Baseline training trigger: minimum destination-port Shannon entropy (bits) |
 | `DRIFT_ENABLED` | `true` | Track live-vs-training flow-feature drift (`GET /api/drift-status`); `DRIFT_WINDOW_FLOWS`, `DRIFT_FEATURE_Z`, `DRIFT_WARN_FRACTION`, `DRIFT_CRIT_FRACTION` tune it |
 | `PROMETHEUS_ENABLED` | `false` | Enable Prometheus metrics at `/metrics` |
 | `METRICS_TOKEN` | _(empty)_ | When set, `/metrics` requires `Authorization: Bearer <token>`; empty keeps it public |
@@ -528,6 +566,10 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `ADAPTIVE_MIN_SAMPLES` | `100` | Min acknowledged alerts before adapting weights |
 | `WEBHOOK_URLS` | _(empty)_ | Comma-separated webhook/Slack notification URLs |
 | `NOTIFY_MIN_SEVERITY` | `high` | Minimum severity to trigger webhook notification |
+| `NTFY_URL` | _(empty)_ | Base URL of an [ntfy](https://ntfy.sh) server (e.g. `http://192.168.1.189:2586`); empty disables the ntfy channel |
+| `NTFY_TOPIC` | `cnds` | ntfy topic alerts are published to |
+| `NTFY_USER` / `NTFY_PASSWORD` | _(empty)_ | HTTP basic auth for ntfy; a write-only user is enough. Ignored when `NTFY_TOKEN` is set |
+| `NTFY_TOKEN` | _(empty)_ | ntfy access token, sent as `Authorization: Bearer`; takes precedence over user/password |
 | `TELEGRAM_BOT_TOKEN` | _(empty)_ | Telegram bot token from @BotFather; empty disables |
 | `TELEGRAM_CHAT_ID` | _(empty)_ | Telegram chat/group ID to send alerts to |
 | `TELEGRAM_ALLOWED_USER_IDS` | _(empty)_ | User IDs allowed to press Confirm/Undo; empty = the private chat's own user, required for group chats |

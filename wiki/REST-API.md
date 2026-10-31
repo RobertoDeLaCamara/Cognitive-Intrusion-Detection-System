@@ -20,6 +20,11 @@ Base URL: `http://localhost:8000`
 | `/api/suppression-rules` | GET / POST | List or create suppression rules (POST requires admin/analyst) |
 | `/api/suppression-rules/{rule_id}` | DELETE | Remove a suppression rule (requires admin) |
 | `/api/adaptive-weights` | GET | Compute adaptive engine weights from feedback |
+| `/api/engines` | GET | Registered engines with `enabled`, configured `weight` and `adaptive_weight` (admin, analyst or viewer when JWT is on) |
+| `/api/assets` | GET | Network asset inventory of LAN hosts: classification, `is_new`, alert count, risk score (filter: `classification` = `server`/`workstation`/`iot`/`unknown`; paging: `limit` 1–500, default 50, `offset`) |
+| `/api/drift-status` | GET | Live-vs-training flow-feature drift: `status` (`ok`, `warming_up`, `no_baseline`, `disabled`), thresholds and the drift report |
+| `/api/feedback-stats` | GET | Counts of analyst feedback labels (`tp`/`fp`/`unknown`) |
+| `/api/feedback-export` | GET | Labelled alerts as a training CSV in the 76-feature schema (`limit` 1–100000, default 10000; requires `analyst` or `admin`) |
 | `/api/baseline/status` | GET | Live collector snapshot, trigger progress, drift score — any valid role when JWT is on |
 | `/api/baseline/windows` | GET | Rolling history of last N trained windows (`limit` 1–20) — any valid role when JWT is on |
 | `/api/dns-log` | GET | DNS query logs (filter: `src_ip`) |

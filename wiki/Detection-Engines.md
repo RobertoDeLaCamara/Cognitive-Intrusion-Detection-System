@@ -79,12 +79,27 @@ to Random Forest.
 - **Output:** List of triggered rule names + a score that is `1.0` if any rule fired, else `0.0`.
 - **Rules include:**
   - `icmp_flood` — more than `ICMP_FLOOD_THRESHOLD` forward ICMP packets in the flow
-  - `syn_scan` — SYN flag count above `PORT_SCAN_THRESHOLD` with fewer than 5 forward packets
+  - `syn_scan` — SYN flag count above `PORT_SCAN_THRESHOLD` with fewer than 5 forward packets that carry data
   - `large_payload` — a forward packet larger than `LARGE_PAYLOAD_BYTES`
   - `asymmetric_upload` — more than 10 forward packets and a forward/backward byte ratio above 50
   - `payload:sql_injection`, `payload:xss`, `payload:command_injection`, `payload:path_traversal`, `payload:log4j`, `payload:shellshock` — regex signatures matched on the first 4 KB of each packet
   - `malicious_ja3` — JA3 hash matches the known-malicious list
-- The rules marked in `CRITICAL_RULES` (all six `payload:*` rules and `malicious_ja3` by default) force an alert regardless of the weighted blend. There is no rate-spike rule.
+- The rules marked in `CRITICAL_RULES` (by default the six `payload:*` rules, `malicious_ja3` and `syn_scan`) force an alert regardless of the weighted blend. There is no rate-spike rule.
+
+Payload regex rules are skipped on payloads that look encrypted or compressed (#68): a TLS record header at the start of the payload, or a sample of at least 256 bytes with Shannon entropy of 7.0 bits/byte or more. This stops chance regex matches inside bulk TLS or backup transfers from raising `CRITICAL_RULES` alerts; plaintext attacks are unaffected.
+
+## Logwatch (log-based rules, outside the ensemble)
+
+- **Package:** `src/logwatch/`
+- **Purpose:** detect attacks on exposed services from their application logs (sign-up floods, login brute force, admin access or token creation from unknown addresses), which the packet pipeline cannot see. It has no ensemble weight and is not listed by `GET /api/engines`.
+- **Parts:** `gitea.py` parses Gitea access-log lines into events; `rules.py` loads and validates the YAML rules; `engine.py` (`LogRuleEngine`) evaluates them with a sliding window per (rule, key) and a per-rule cooldown, using event time rather than the wall clock; `rules/gitea.yaml` ships eight Gitea rules; `persist.py` stores each hit as an alert with `source="logwatch"` (evidence in `payload_matches`) and calls the notification channels; `replay.py` runs log files through the rules without touching the database.
+- **Safety:** the Guardian only acts on `GUARDIAN_ALERT_SOURCES` (default `detector`), so logwatch alerts never block anything.
+- **Status:** there is no live log tailer in this repository. Nothing in `main.py`, the pipeline or the API starts logwatch and no `LOGWATCH_*` variable is read; use the replay tool to tune thresholds:
+
+```bash
+zcat gitea.log.*.gz | python -m src.logwatch.replay --service gitea --tz Europe/Madrid \
+    --trusted 192.168.0.0/16,172.16.0.0/12 -
+```
 
 ## Graceful Degradation
 

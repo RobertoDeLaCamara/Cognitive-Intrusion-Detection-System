@@ -13,7 +13,7 @@ All notable changes to this project will be documented in this file.
 
 - **The Guardian ignores alerts submitted through `POST /api/predict`** (cnds#22). New `alerts.source` column (`detector` | `api`, Alembic `d4e5f6a7b8c9`, existing rows backfilled as `detector`); `GUARDIAN_ALERT_SOURCES` (default `detector`) lists the sources it may act on. Before, any caller of `/api/predict` could make the Guardian DNS-block a LAN host by submitting a critical alert. Set `GUARDIAN_ALERT_SOURCES=detector,api` to restore the old behaviour (e.g. for the sandbox exerciser).
 
-- **torch 2.6.0 and hash-pinned Docker dependencies** (cnds#24). The image now installs `torch==2.6.0` (fixes CVE-2025-32434; was 2.5.1) from `requirements-lock-amd64.txt` / `requirements-lock-arm64.txt` with `pip --require-hashes`. Regenerate the lock files with `scripts/lock_requirements.sh` (needs `uv`). Transitive dependencies are now frozen at lock time instead of floating on every build; the arm/v7 fallback still installs `requirements.txt` unlocked.
+- **torch 2.6.0 and hash-pinned Docker dependencies** (cnds#24). The image now installs `torch==2.6.0` (fixes CVE-2025-32434; was 2.5.1) from `requirements-lock-amd64.txt` / `requirements-lock-arm64.txt` with `pip --require-hashes` (since #69 installed as the derived parts `requirements-lock-{torch,sci,rest}-<arch>.txt`). Regenerate the lock files with `scripts/lock_requirements.sh` (needs `uv`; it also runs `scripts/split_lock.py`). Transitive dependencies are now frozen at lock time instead of floating on every build; the arm/v7 fallback still installs `requirements.txt` unlocked.
 
 - **Telegram Confirm/Undo buttons check who pressed them** (cnds#27). A callback is honoured only when it comes from `TELEGRAM_CHAT_ID` and the sender is in `TELEGRAM_ALLOWED_USER_IDS` (default: the private chat's own user; a group chat needs the list set explicitly). Before, any member of the chat could confirm or undo a block.
 
@@ -22,6 +22,10 @@ All notable changes to this project will be documented in this file.
 - **Optional `METRICS_TOKEN` for `/metrics`** (cnds#25). When set, `GET /metrics` returns 401 without `Authorization: Bearer <token>`; Prometheus scrapes it with `authorization.credentials`. Unset keeps the endpoint public as before. The `/ws/alerts` half of the issue was fixed in #31/#33.
 
 ### Added
+- **Baseline training trigger thresholds are configurable** (#65) — `BASELINE_MIN_VECTORS` (50000), `BASELINE_MIN_SRC_IPS` (20), `BASELINE_MIN_ELAPSED_SECS` (1800) and `BASELINE_MIN_PORT_ENTROPY` (2.5) replace the values hard-coded in `CompositeTrigger`. The defaults suit a large network; a home LAN needs lower ones (see `.env.example`) or the trigger never fires.
+- **logwatch — log-based detection** (#53, #55, #60, #61) — `src/logwatch/`: Gitea access-log parser, declarative sliding-window rules (`rules/gitea.yaml`) evaluated by `LogRuleEngine`, `persist_alert()` storing hits as alerts with `source="logwatch"`, and `python -m src.logwatch.replay` to tune thresholds against old logs. The Guardian ignores these alerts by default. No live log tailer is wired in yet.
+- **ntfy notification channel** (#62) — `NTFY_URL`, `NTFY_TOPIC`, `NTFY_USER`, `NTFY_PASSWORD`, `NTFY_TOKEN`; priority follows severity, empty `NTFY_URL` disables it.
+- **`baseline_progress` log lines and baseline metrics without `--api`** (#67) — `main.py` starts the scrape thread when the detector runs without `--api`, so trigger progress is visible in `docker logs`.
 - **`POST /api/predict` reports why an alert was suppressed** (cnds#3) — `suppressed` and `suppression_reason` (`rule #<id>: <reason>`) in the response. Suppressed alerts are still not persisted, so there is no `alerts.suppression_reason` column or `AlertOut` field; new `find_suppressing_rule()` returns the matching rule (`is_suppressed()` is unchanged).
 
 - **`GET /api/engines`** (cnds#9) — registered engines with `enabled`, configured `weight` and `adaptive_weight`, built from a new `ENGINES` map and `describe_engines()` in `src/engines/registry.py`; `doc/engines.md` gains an "Adding an Engine" guide. The scorer still has one named field per engine (no automatic discovery), which the guide states.
@@ -42,6 +46,11 @@ All notable changes to this project will be documented in this file.
 - **Date-range filters on `GET /api/alerts`** (#5, [ADR 0001](docs/adr/0001-date-range-filter-get-api-alerts.md)) — optional `start` / `end` (inclusive ISO 8601; naive values are read as UTC; `start` after `end` returns 422) and `hours` (last N hours). All filters combine with `severity`, `acknowledged`, `src_ip` and with each other (AND). Backward compatible.
 
 ### Changed
+- **`syn_scan` added to the default `CRITICAL_RULES`** (#50) and **the rule's condition fixed** (#49): it was mathematically unreachable, and once it fired it still never surfaced an alert.
+- **Suppression rules now apply to alerts written by the capture pipeline** (#66) — before, they only affected `POST /api/predict`.
+- **Payload regex rules are skipped on encrypted or high-entropy payloads** (#68) — a TLS record header, or at least 256 bytes with entropy of 7.0 bits/byte or more; chance matches in bulk TLS/backup traffic no longer raise `CRITICAL_RULES` alerts.
+- **The Docker image installs dependencies in three layers** (#69) — `requirements-lock-{torch,sci,rest}-<arch>.txt`, split from `requirements-lock-<arch>.txt` by `scripts/split_lock.py` (run by `scripts/lock_requirements.sh`; `tests/test_lock_split.py` keeps them in sync), so no layer is large enough to hit the registry's commit timeout. The Jenkinsfile registry push is wrapped in `retry(4)` with `sleep 90` between attempts.
+- **The unsupervised baseline is registered with `MlflowClient.create_model_version`** (#70), which works with a 3.x client against a 2.x MLflow server.
 - **`hours` is bounded on `GET /api/alerts` and `GET /api/alerts/export`** (#16, [ADR 0002](docs/adr/0002-bound-hours-get-api-alerts-api-alerts.md)) — `1 <= hours <= 87600` (10 years, `MAX_HOURS` in `src/api/routers/alerts.py`). Larger values now return 422 instead of an `OverflowError` 500.
 - **Jenkinsfile** — images are pushed to the registry only from `master` (or the legacy single-branch job); other branches build and test only. A new advisory "Claude PR review" stage posts a review on the Gitea PR and never fails the build.
 

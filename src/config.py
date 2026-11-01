@@ -294,6 +294,12 @@ BASELINE_MIN_VECTORS      = int(os.getenv("BASELINE_MIN_VECTORS", "50000"))
 BASELINE_MIN_SRC_IPS      = int(os.getenv("BASELINE_MIN_SRC_IPS", "20"))
 BASELINE_MIN_ELAPSED_SECS = float(os.getenv("BASELINE_MIN_ELAPSED_SECS", "1800"))
 BASELINE_MIN_PORT_ENTROPY = float(os.getenv("BASELINE_MIN_PORT_ENTROPY", "2.5"))
+# Stability gate: a freshly trained window is NOT promoted when its LSTM threshold is more than
+# this factor above/below the median of the last accepted ones (0 disables the gate). After
+# BASELINE_MAX_CONSECUTIVE_REJECTS rejections in a row the new level is accepted as a regime change.
+BASELINE_THRESHOLD_MAX_RATIO = float(os.getenv("BASELINE_THRESHOLD_MAX_RATIO", "3.0"))
+BASELINE_THRESHOLD_REF_WINDOWS = int(os.getenv("BASELINE_THRESHOLD_REF_WINDOWS", "5"))
+BASELINE_MAX_CONSECUTIVE_REJECTS = int(os.getenv("BASELINE_MAX_CONSECUTIVE_REJECTS", "3"))
 # Input-feature drift of the supervised model (src/monitoring/feature_drift.py)
 DRIFT_ENABLED       = os.getenv("DRIFT_ENABLED", "true").lower() == "true"
 DRIFT_WINDOW_FLOWS  = int(os.getenv("DRIFT_WINDOW_FLOWS", "5000"))     # flows per tumbling window

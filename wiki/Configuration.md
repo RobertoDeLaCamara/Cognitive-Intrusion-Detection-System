@@ -186,6 +186,9 @@ The four `BASELINE_MIN_*` variables are the trigger thresholds; all four must ho
 | `BASELINE_MIN_SRC_IPS` | `20` | Training trigger: minimum distinct source IPs |
 | `BASELINE_MIN_ELAPSED_SECS` | `1800` | Training trigger: minimum seconds since the window started |
 | `BASELINE_MIN_PORT_ENTROPY` | `2.5` | Training trigger: minimum destination-port Shannon entropy (bits) |
+| `BASELINE_THRESHOLD_MAX_RATIO` | `3.0` | Stability gate: a trained window is not promoted when its LSTM threshold is more than this factor above/below the median of the last accepted windows (`0` disables) |
+| `BASELINE_THRESHOLD_REF_WINDOWS` | `5` | Stability gate: how many accepted thresholds the median is taken over (in-process, reset on restart) |
+| `BASELINE_MAX_CONSECUTIVE_REJECTS` | `3` | Stability gate: after this many rejections in a row the new level is accepted as a regime change |
 | `BASELINE_DRIFT_WARN` | `0.30` | Drift score for the `warning` verdict |
 | `BASELINE_DRIFT_CRIT` | `0.60` | Drift score for the `critical` verdict |
 

@@ -6,6 +6,7 @@
 
 ### Added
 - Suppression rules can be limited to a destination port (`dst_port`, Alembic `a8b9c0d1e2f3`). A narrow rule (`src_ip` or `dst_ip` plus `dst_port`) may last up to 365 days instead of 7. The API applies the migration at startup: recreate `api` before the detector.
+- **Baseline stability gate**: a retrained window is no longer promoted when its LSTM threshold is more than `BASELINE_THRESHOLD_MAX_RATIO` (3.0) times above/below the median of the last accepted windows; after `BASELINE_MAX_CONSECUTIVE_REJECTS` (3) rejections in a row the new level is accepted as a regime change. Seen on raspi-189 with 3000-vector windows: p99 thresholds of 0.32 and 8.93 for consecutive windows of the same network. Larger windows (`BASELINE_MIN_VECTORS`) also steady it.
 
 - **Suppressed detector alerts are logged as `[SUPPRESSED]`** (`src=… | dst=… | dport=… | score=… | type=… | rule=#N`). The `[ALERT]` line is written at detection time, before suppression is evaluated, so it also covers alerts that are then suppressed; count `[SUPPRESSED]` to separate them.
 - Triage agent (`src/triage/`, `python -m src.triage`) — out-of-process advisory verdicts written only to the append-only `triage_annotations` table (migration `c3d8e1f4a7b2`); `scripts/eval_triage.py`

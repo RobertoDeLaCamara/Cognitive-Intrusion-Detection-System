@@ -18,6 +18,26 @@ def _rule(**kw):
     return SimpleNamespace(**{"src_ip": None, "dst_ip": None, "attack_type": None, "min_severity": None, **kw})
 
 
+class TestRuleMatchesPort:
+
+    def test_port_rule_matches_only_that_port(self):
+        r = _rule(src_ip="10.0.0.1", dst_ip="10.0.0.2", dst_port=3128)
+        assert rule_matches(r, "10.0.0.1", "10.0.0.2", None, "high", 3128)
+        assert not rule_matches(r, "10.0.0.1", "10.0.0.2", None, "high", 22)
+
+    def test_port_rule_does_not_match_a_flow_without_port(self):
+        r = _rule(dst_ip="10.0.0.2", dst_port=53)
+        assert not rule_matches(r, "10.0.0.1", "10.0.0.2", None, "low", None)
+
+    def test_rule_without_port_matches_any_port(self):
+        r = _rule(dst_ip="10.0.0.2")
+        assert rule_matches(r, "10.0.0.1", "10.0.0.2", None, "low", 443)
+        assert rule_matches(r, "10.0.0.1", "10.0.0.2", None, "low", None)
+
+    def test_legacy_rule_object_without_dst_port_attribute(self):
+        assert rule_matches(_rule(src_ip="a"), "a", "b", None, "low", 80)
+
+
 class TestRuleMatches:
     def test_empty_rule_matches_everything(self):
         assert rule_matches(_rule(), "1.1.1.1", "2.2.2.2", "Generic", "critical")
@@ -50,8 +70,10 @@ def session():
     pipeline._suppress_cache, pipeline._suppress_ts = [], 0.0
 
 
-def _args(src="10.0.0.1", dst="10.0.0.2", attack="Generic", severity="medium"):
-    return SimpleNamespace(src_ip=src, dst_ip=dst), SimpleNamespace(attack_type=attack), severity
+def _args(src="10.0.0.1", dst="10.0.0.2", attack="Generic", severity="medium", dport=0):
+    # FlowRecord.key = (src_ip, dst_ip, src_port, dst_port, protocol)
+    rec = SimpleNamespace(src_ip=src, dst_ip=dst, key=(src, dst, 40000, dport, 6))
+    return rec, SimpleNamespace(attack_type=attack), severity
 
 
 class TestSuppressingRule:
@@ -61,6 +83,15 @@ class TestSuppressingRule:
         rec, sc, _ = _args()
         assert pipeline._suppressing_rule(session, rec, sc, "medium") is not None
         assert pipeline._suppressing_rule(session, rec, sc, "critical") is None
+
+    def test_port_limited_rule_only_suppresses_that_service(self, session):
+        session.add(SuppressionRule(src_ip="10.0.0.1", dst_ip="10.0.0.2", dst_port=3128,
+                                    expires_at=utcnow() + timedelta(hours=1)))
+        session.commit()
+        rec, sc, sev = _args(dport=3128)
+        assert pipeline._suppressing_rule(session, rec, sc, sev) is not None
+        rec, sc, sev = _args(dport=22)
+        assert pipeline._suppressing_rule(session, rec, sc, sev) is None
 
     def test_expired_rule_ignored(self, session):
         session.add(SuppressionRule(dst_ip="10.0.0.2", expires_at=utcnow() - timedelta(minutes=1)))

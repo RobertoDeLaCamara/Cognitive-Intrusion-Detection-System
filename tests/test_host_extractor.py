@@ -97,3 +97,48 @@ def test_protocol_ratios():
     udp_ratio_idx = HOST_FEATURE_NAMES.index("udp_ratio")
     assert features[tcp_ratio_idx] == pytest.approx(0.5)
     assert features[udp_ratio_idx] == pytest.approx(0.5)
+
+
+# --- windowed volume features (host_extractor schema 2) -----------------------
+
+from unittest import mock  # noqa: E402
+
+from scapy.all import IP, TCP  # noqa: E402
+
+from src.features.host_extractor import HostHistory, HostExtractor as _HX  # noqa: E402
+
+_IDX = {n: i for i, n in enumerate(HOST_FEATURE_NAMES)}
+
+
+def _vector_after(n_packets, pps, size_pad=0, idle=0.0):
+    """Feed n_packets at pps packets/s and compute the vector (optionally idle seconds later)."""
+    h = HostHistory()
+    t = 1000.0
+    for i in range(n_packets):
+        t = 1000.0 + i / pps
+        h.add_packet(IP(src="10.0.0.5", dst="10.0.0.1") / TCP(dport=443) / (b"x" * size_pad), t)
+    with mock.patch("time.time", return_value=t + idle):
+        return _HX()._compute(h)
+
+
+def test_volume_features_do_not_grow_with_host_lifetime():
+    """Stationary traffic gives the same volume features after 10x more packets (was x8 in 40 min)."""
+    short = _vector_after(300, pps=50)
+    long_ = _vector_after(3000, pps=50)
+    for name in ("total_packets", "total_bytes", "session_duration", "packets_per_sec", "bytes_per_sec"):
+        i = _IDX[name]
+        assert long_[i] == pytest.approx(short[i], rel=0.05), name
+
+
+def test_total_packets_and_bytes_are_bounded_by_the_window():
+    from src.config import HOST_WINDOW_SIZE
+    v = _vector_after(HOST_WINDOW_SIZE * 5, pps=100)
+    assert v[_IDX["total_packets"]] == HOST_WINDOW_SIZE
+    assert v[_IDX["total_bytes"]] > 0
+
+
+def test_rate_decays_when_the_host_goes_quiet():
+    busy = _vector_after(200, pps=100)
+    quiet = _vector_after(200, pps=100, idle=60.0)
+    assert quiet[_IDX["packets_per_sec"]] < busy[_IDX["packets_per_sec"]] / 10
+    assert quiet[_IDX["session_duration"]] > busy[_IDX["session_duration"]]

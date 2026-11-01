@@ -283,6 +283,11 @@ All artifacts are logged under the `unsupervised_baseline/` prefix in the MLflow
 | `lstm_autoencoder.pt` | `LSTM_FILE` | PyTorch state dict | LSTM Autoencoder weights. **Note:** this is a `.pt` file (PyTorch `state_dict`), not a Keras `.keras` file. Load with `model.load_state_dict(torch.load(...))`. |
 | `threshold.txt` | `THRESHOLD_FILE` | JSON `{"threshold": float, "percentile": float}` | 99th-percentile reconstruction MSE from the validation split. A sequence whose MSE exceeds this value is anomalous. `BaselineEngine` accepts both the new JSON format and the legacy plain-float format for backward compatibility. |
 | `provenance.json` | `PROVENANCE_FILE` | JSON | Full `ProvenanceMetadata` dict for the window that produced this model version. |
+| `feature_schema.txt` | `FEATURE_SCHEMA_FILE` | integer | `HOST_FEATURE_SCHEMA` the models were trained on. |
+
+### Host feature schema
+
+`HOST_FEATURE_SCHEMA` (`artifact_schema.py`) versions the meaning of the 18 host features. Schema 2 computes `packets_per_sec`, `bytes_per_sec`, `total_packets`, `total_bytes` and `session_duration` over the sliding window of the last `HOST_WINDOW_SIZE` packets of the host (the span runs to "now", so an idle host's rate decays); schema 1 used totals since the host was first seen, which grew without bound. `BaselineEngine` refuses a registered model whose `feature_schema.txt` is missing or different and stays off until the next window trains a matching one, so a model fit on old semantics never scores new vectors. Bump the constant whenever a feature changes meaning.
 
 The registered model name is `"cnds-unsupervised-baseline"` (`MODEL_NAME` constant). The MLflow experiment is `"cnds-unsupervised-baseline"` (`experiment_name` default on `WindowTrainer`).
 
@@ -389,7 +394,7 @@ It fits with `fit_models()` (the routine `WindowTrainer` uses) on a chronologica
 
 - **Benign hold-out:** score quantiles, share of rows at or above 0.5 / 0.65 / 0.8 / 0.99 (false positives), share saturated at 1.0, and the false-positive rate of each branch (IsolationForest, LSTM).
 - **Attacks:** recall at the same thresholds and AUC against the hold-out for six simulated scenarios (`syn_flood`, `port_scan`, `udp_flood`, `ssh_bruteforce`, `dns_tunnel`, `slow_exfil`). They are built with the real `HostExtractor` and a pinned clock (`src/unsupervised/attack_sim.py`), so the vectors mean what the detector's vectors mean.
-- **Drifting features:** features whose mean in the newest 20 % of the benign data is at least 2x (or at most 0.5x) the oldest 20 %. `total_packets`, `total_bytes` and `session_duration` are cumulative since a host was first seen, so on stationary traffic they keep growing and a model fit on an older window sees newer normal traffic as unusual.
+- **Drifting features:** features whose mean in the newest 20 % of the benign data is at least 2x (or at most 0.5x) the oldest 20 %. Before host-feature schema 2, `total_packets`, `total_bytes` and `session_duration` were cumulative since a host was first seen and grew x8 on stationary traffic; they are windowed now (see "Host feature schema"), so a feature listed here points at a new problem.
 
 ```bash
 # Real traffic: set BASELINE_DUMP_DIR on the detector, let a few windows accumulate, then

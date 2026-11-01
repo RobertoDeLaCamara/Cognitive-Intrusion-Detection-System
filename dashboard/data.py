@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterable, List, Optional
+import ipaddress
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 
@@ -21,6 +22,46 @@ def _geo_country(geo: Any) -> str:
     if isinstance(geo, dict):
         return str(geo.get("country") or geo.get("country_name") or "")
     return ""
+
+
+def _is_public(ip: Any) -> bool:
+    try:
+        addr = ipaddress.ip_address(str(ip))
+        return addr.is_global and not addr.is_multicast
+    except ValueError:
+        return False
+
+
+def _has_location(geo: Any) -> bool:
+    if not isinstance(geo, dict):
+        return False
+    lat, lon = geo.get("lat") or geo.get("latitude"), geo.get("lon") or geo.get("longitude")
+    return bool(lat and lon)
+
+
+def geo_status(alerts: Iterable[Dict[str, Any]]) -> Tuple[str, Dict[str, int]]:
+    """Explain why the geography map may be empty.
+
+    Returns ``(kind, counts)`` where kind is one of ``no_alerts``, ``ok``,
+    ``private_only`` (every source is a LAN/multicast address, nothing to locate) or
+    ``no_geoip`` (public sources exist but none has a location: GeoIP is off or its
+    database is missing). counts has ``total``, ``public`` and ``located``.
+    """
+    total = public = located = 0
+    for a in alerts:
+        total += 1
+        if _is_public(a.get("src_ip")):
+            public += 1
+        if _has_location(a.get("src_geo")):
+            located += 1
+    counts = {"total": total, "public": public, "located": located}
+    if total == 0:
+        return "no_alerts", counts
+    if located:
+        return "ok", counts
+    if public == 0:
+        return "private_only", counts
+    return "no_geoip", counts
 
 
 def _flow(row: Dict[str, Any]) -> str:

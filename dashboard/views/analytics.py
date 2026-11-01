@@ -67,7 +67,16 @@ with tab_geo:
                            "severity": a.get("severity") or "low", "lat": float(lat), "lon": float(lon),
                            "color": SEVERITY_RGBA.get(a.get("severity") or "low", SEVERITY_RGBA["low"])})
     if not points:
-        st.info("No geolocated alerts (GeoIP is only available for public source addresses).")
+        kind, n = data.geo_status(alerts)
+        if kind == "no_alerts":
+            st.info("No alerts loaded for the selected period.")
+        elif kind == "private_only":
+            st.info(f"All {n['total']} alerts come from private or multicast addresses (LAN), "
+                    "which GeoIP cannot locate. The map fills only when traffic arrives from public IPs.")
+        else:
+            st.warning(f"{n['public']} of {n['total']} alerts have a public source address but no location: "
+                       "GeoIP is disabled or its database is missing. Set `GEOIP_DB_PATH` to a "
+                       "GeoLite2-City `.mmdb` file on the API and detector (see `.env.example`).")
     else:
         layer = pdk.Layer("ScatterplotLayer", pd.DataFrame(points), get_position="[lon, lat]",
                           get_fill_color="color", get_radius=250000, pickable=True)

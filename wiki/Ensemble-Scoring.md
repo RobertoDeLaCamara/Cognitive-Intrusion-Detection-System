@@ -14,7 +14,7 @@ The ensemble scorer combines the outputs of the five engines (supervised, Isolat
 | Rules | 25% (`WEIGHT_RULES`) |
 | Baseline | 15% (`WEIGHT_BASELINE`) |
 
-The five weights must sum to 1.0 (±0.01) — this is validated on startup. Invalid weights cause a `ConfigurationError`. (`.env.example` ships a different, also valid, set — supervised 0.35, iforest 0.25, lstm 0.15, rules 0.05, baseline 0.20. `docker-compose.yml` loads `.env.example` before `.env`, so containers use those values unless `.env` overrides them; bare `main.py` / `uvicorn` runs use the code defaults above.)
+The five weights must sum to 1.0 (±0.01) — this is validated on startup. Invalid weights cause a `ConfigurationError`. (`.env.example` ships a different, also valid, set — supervised 0.40, iforest 0.10, lstm 0.00, rules 0.20, baseline 0.30, because the shipped Isolation Forest / LSTM are synthetic demo models. `docker-compose.yml` loads `.env.example` before `.env`, so containers use those values unless `.env` overrides them; bare `main.py` / `uvicorn` runs use the code defaults above.)
 
 ## Weight Redistribution
 

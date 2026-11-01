@@ -4,7 +4,7 @@
 
 **Cognitive Network Defense System (CNDS)** is an open-source, production-ready network intrusion detection system (IDS) that fuses machine learning and rule-based analysis into a single real-time platform. It passively monitors network traffic, classifies threats with millisecond latency, enriches every alert with MITRE ATT&CK context, and exposes the results through a modern REST API and live dashboard.
 
-CNDS is designed for organizations that need enterprise-grade threat detection without the enterprise price tag, and for security engineers who want full transparency into how detections work.
+CNDS is designed for home labs and small networks that want transparent, self-hosted threat detection, and for security engineers who want full transparency into how detections work.
 
 ---
 
@@ -69,21 +69,21 @@ Traditional network IDS tools suffer from one or more of these limitations:
 
 | Feature | Snort/Suricata | Zeek | Commercial NDR | CNDS |
 |---|---|---|---|---|
-| ML-based detection | No | Partial | Yes | Yes |
+| ML-based detection | Limited | Partial | Yes | Yes (one supervised model; the unsupervised engines are demo or experimental) |
 | Signature-based rules | Yes | No | Yes | Yes |
-| Temporal/behavioral analysis | No | Partial | Yes | Yes |
+| Temporal/behavioral analysis | No | Partial | Yes | Experimental (baseline engine) |
 | MITRE ATT&CK enrichment | No | No | Yes | Yes |
 | JA3 TLS fingerprinting | Plugins | Yes | Yes | Yes |
 | REST API | No | No | Yes | Yes |
 | Open source | Yes | Yes | No | Yes |
 | Self-hosted | Yes | Yes | No | Yes |
 | SIEM integration | Yes | Yes | Yes | Yes |
-| Adaptive learning from feedback | No | No | Yes | Yes |
+| Adaptive learning from feedback | No | No | Yes | Partial (analyst labels are collected; retraining is manual) |
 | Digital twin / offline demo | No | No | No | Yes |
 | Per-engine score transparency | No | No | No | Yes |
 | Automated response (optional) | No | No | Yes (enterprise tier) | Yes |
 
-CNDS occupies the space between free signature-based tools (Snort/Suricata) and expensive commercial NDR platforms (Darktrace, ExtraHop, Vectra). It delivers ML-grade detection with the transparency and extensibility of open-source tooling.
+The other columns are generalisations from public product documentation, not a benchmark, and no head-to-head detection test has been run. CNDS sits between free signature-based tools (Snort/Suricata) and commercial NDR platforms (Darktrace, ExtraHop, Vectra): it adds ML scoring, per-engine score transparency and open-source extensibility to a rules engine, at home-lab maturity. Its unsupervised baseline is experimental and the Isolation Forest / LSTM models bundled for demos are synthetic.
 
 ---
 

@@ -78,3 +78,30 @@ def test_trends_frame_fills_missing_severities():
     df = data.trends_frame({"data": {"2026-10-22T10:00:00Z": {"total": 2, "by_severity": {"high": 2}}}})
     assert list(df.columns) == data.SEVERITIES and df.iloc[0]["high"] == 2 and df.iloc[0]["low"] == 0
     assert data.trends_frame(None).empty
+
+
+def _geo_alert(ip, geo=None):
+    return {"src_ip": ip, "src_geo": geo}
+
+
+def test_geo_status_no_alerts():
+    assert data.geo_status([])[0] == "no_alerts"
+
+
+def test_geo_status_private_only():
+    kind, n = data.geo_status([_geo_alert("192.168.1.189"), _geo_alert("224.0.0.251"), _geo_alert("10.0.0.2")])
+    assert kind == "private_only" and n == {"total": 3, "public": 0, "located": 0}
+
+
+def test_geo_status_public_without_location_means_geoip_off():
+    kind, n = data.geo_status([_geo_alert("8.8.8.8"), _geo_alert("192.168.1.5")])
+    assert kind == "no_geoip" and n["public"] == 1
+
+
+def test_geo_status_ok_when_something_is_located():
+    kind, n = data.geo_status([_geo_alert("8.8.8.8", {"country": "US", "lat": 37.4, "lon": -122.0})])
+    assert kind == "ok" and n["located"] == 1
+
+
+def test_geo_status_bad_ip_is_not_public():
+    assert data.geo_status([_geo_alert("not-an-ip")])[0] == "private_only"

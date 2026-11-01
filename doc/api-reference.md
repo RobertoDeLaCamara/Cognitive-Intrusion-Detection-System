@@ -10,7 +10,7 @@ At least one mechanism must be configured: the API refuses to start with neither
 
 | Mechanism | Env Var | Header / Param | Scope |
 |-----------|---------|----------------|-------|
-| API key (legacy) | `API_KEY` | `X-API-Key: <key>` | Every HTTP route except `/health`, `/docs`, `/openapi.json`, `/metrics`, `/api/auth/*` (`/ws/alerts` authenticates inside its own handler) |
+| API key (legacy) | `API_KEY` | `X-API-Key: <key>` | Every HTTP route except `/health`, `/docs`, `/openapi.json`, `/metrics`, `/api/auth/token` (`/api/auth/users*` too when JWT is on; with the key alone it needs the key) (`/ws/alerts` authenticates inside its own handler) |
 | JWT | `JWT_SECRET` | `Authorization: Bearer <token>` | Every route except `/health`, `/metrics` and `/api/auth/token` (role table below), plus the `/ws/alerts` `?token=` |
 
 ### JWT roles

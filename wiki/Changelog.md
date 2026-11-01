@@ -4,6 +4,9 @@
 
 ## [Unreleased]
 
+### Security
+- `/api/auth/users` was open in API-key-only mode: the key middleware skipped every `/api/auth*` path and `require_role` does nothing without `JWT_SECRET`. Only `/api/auth/token` is exempt now; `/api/auth/users*` needs `X-API-Key` unless JWT is on (then the admin role check guards it). Deployments with `API_KEY` alone were affected: check `GET /api/auth/users` for unknown accounts.
+
 ### Added
 - Baseline evaluation bench (`scripts/eval_baseline.py`): fits with the detector's own `fit_models()` on a chronological split of benign host vectors and reports false positives on the newest benign rows, recall and AUC for six simulated attacks (built with the real `HostExtractor`), score saturation and features that drift over time. `BASELINE_DUMP_DIR` (off by default) makes the collector write each window to disk so the bench can run on real traffic. `src/engines/baseline_scoring.py` now holds the score formulas shared by `BaselineEngine` and the bench (no behaviour change).
 - Suppression rules can be limited to a destination port (`dst_port`, Alembic `a8b9c0d1e2f3`). A narrow rule (`src_ip` or `dst_ip` plus `dst_port`) may last up to 365 days instead of 7. The API applies the migration at startup: recreate `api` before the detector.

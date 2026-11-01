@@ -12,6 +12,7 @@ from .database import init_db
 from .routers import alerts, predict
 from .routers.websocket import router as ws_router
 from .routers.auth import router as auth_router
+from .auth import is_enabled as jwt_auth_enabled
 from .routers.baseline import router as baseline_router
 from .routers.engines import router as engines_router
 from .routers.drift import router as drift_router
@@ -123,18 +124,37 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Paths the API key never guards: probes, docs, and the login endpoint itself.
+_KEY_EXEMPT_PATHS = ("/health", "/docs", "/openapi.json", "/metrics", "/ws/alerts", "/api/auth/token")
+
+
+def api_key_required(path: str, jwt_enabled: bool) -> bool:
+    """Whether a request to ``path`` must carry a valid X-API-Key.
+
+    ``/api/auth/users*`` used to be exempt unconditionally on the assumption that
+    JWT guards it, but ``require_role`` is a no-op when JWT is off, so in API-key-only
+    mode anyone could create or delete users. It is exempt now only when JWT is on.
+    """
+    if path in _KEY_EXEMPT_PATHS:
+        return False
+    if path.startswith("/api/auth") and jwt_enabled:
+        return False
+    return True
+
+
+def install_api_key_middleware(application: FastAPI, api_key: str) -> None:
+    @application.middleware("http")
+    async def auth_middleware(request: Request, call_next):
+        if api_key_required(request.url.path, jwt_auth_enabled()):
+            key = request.headers.get("X-API-Key", "")
+            if not hmac.compare_digest(key, api_key):
+                return JSONResponse(status_code=401, content={"detail": "Invalid API key"})
+        return await call_next(request)
+
+
 # Optional API-key auth middleware (legacy — use JWT for new deployments)
 if API_KEY:
-    @app.middleware("http")
-    async def auth_middleware(request: Request, call_next):
-        if request.url.path in ("/health", "/docs", "/openapi.json", "/metrics", "/ws/alerts"):
-            return await call_next(request)
-        if request.url.path.startswith("/api/auth"):
-            return await call_next(request)
-        key = request.headers.get("X-API-Key", "")
-        if not hmac.compare_digest(key, API_KEY):
-            return JSONResponse(status_code=401, content={"detail": "Invalid API key"})
-        return await call_next(request)
+    install_api_key_middleware(app, API_KEY)
 
 # Observability (Phase 7)
 setup_prometheus(app)

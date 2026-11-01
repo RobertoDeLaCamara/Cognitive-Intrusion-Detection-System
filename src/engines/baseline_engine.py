@@ -39,6 +39,7 @@ from ..unsupervised.artifact_schema import (
     SCALER_FILE,
     THRESHOLD_FILE,
 )
+from .baseline_scoring import combine_scores, iforest_score, lstm_score
 
 logger = logging.getLogger(__name__)
 
@@ -219,7 +220,7 @@ class BaselineEngine:
             # decision_function: negative = anomaly, positive = normal.
             # Sigmoid centred at 0 with steepness 5 maps to [0, 1].
             raw_if = float(iforest.decision_function(vec_s)[0])
-            s_if = float(1.0 / (1.0 + np.exp(5.0 * raw_if)))
+            s_if = iforest_score(raw_if)
 
             # ── LSTM branch (temporal anomaly) ─────────────────────────────
             s_lstm = 0.0
@@ -235,9 +236,9 @@ class BaselineEngine:
                 with torch.no_grad():
                     recon = lstm(x)
                 err = float(torch.mean((x - recon) ** 2).item())
-                s_lstm = min(err / max(threshold, 1e-9), 1.0)
+                s_lstm = lstm_score(err, threshold)
 
-            return float(np.clip(max(s_if, s_lstm), 0.0, 1.0))
+            return combine_scores(s_if, s_lstm)
 
         except Exception as e:
             logger.error("BaselineEngine.anomaly_score error for %s: %s", ip, e)

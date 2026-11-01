@@ -290,6 +290,9 @@ THREAT_INTEL_REFRESH_MINUTES = int(os.getenv("THREAT_INTEL_REFRESH_MINUTES", "60
 BASELINE_COLLECTION_ENABLED = os.getenv("BASELINE_COLLECTION_ENABLED", "true").lower() == "true"
 # Composite trigger for the first/next baseline training window. Defaults suit a
 # large network; a home LAN (~10 talkers) must lower the IP/vector floors or it never fires.
+# Optional copy of every collected window to disk for offline evaluation (empty = off).
+BASELINE_DUMP_DIR  = os.getenv("BASELINE_DUMP_DIR", "")
+BASELINE_DUMP_KEEP = int(os.getenv("BASELINE_DUMP_KEEP", "48"))  # newest N files, 0 = keep all
 BASELINE_MIN_VECTORS      = int(os.getenv("BASELINE_MIN_VECTORS", "50000"))
 BASELINE_MIN_SRC_IPS      = int(os.getenv("BASELINE_MIN_SRC_IPS", "20"))
 BASELINE_MIN_ELAPSED_SECS = float(os.getenv("BASELINE_MIN_ELAPSED_SECS", "1800"))

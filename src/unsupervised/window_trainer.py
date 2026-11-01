@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 from collections import defaultdict, deque
+from dataclasses import dataclass
 from typing import Callable, List, Optional, Sequence, Tuple
 
 import joblib
@@ -132,6 +133,146 @@ def _temporal_split(
     return X[tr], X[va], [hosts[i] for i in tr], [hosts[i] for i in va]
 
 
+@dataclass
+class FitResult:
+    """Everything ``fit_models`` produces; the same objects ``train_window`` persists."""
+
+    scaler: StandardScaler
+    iforest: IsolationForest
+    model: object                 # torch LSTMAutoencoder, eval mode
+    threshold: float              # LSTM validation-error percentile
+    seq_len: int
+    n_train_seq: int
+    n_val_seq: int
+    val_recon_mean: float
+    val_recon_std: float
+    n_train_rows: int
+    n_val_rows: int
+    n_features: int
+
+
+def fit_models(
+    X: np.ndarray,
+    hosts: Sequence[str],
+    ts: np.ndarray,
+    *,
+    val_fraction: float = 0.20,
+    seq_len: int = 20,
+    threshold_percentile: float = 99.0,
+    contamination: float = 0.01,
+    epochs: int = 20,
+    batch_size: int = 256,
+) -> Optional["FitResult"]:
+    """Fit scaler + IsolationForest + LSTM autoencoder on one window of finite host vectors.
+
+    Chronological split, per-host sequences. Returns ``None`` when the window cannot form
+    sequences on both sides. This is the single training routine: ``WindowTrainer.train_window``
+    persists its result and ``scripts/eval_baseline.py`` evaluates it, so the bench always
+    measures what ships.
+    """
+    import torch
+    import torch.nn as nn
+    import torch.optim as optim
+
+    # 2. Chronological train/val split (oldest rows train, newest validate).
+    X_train, X_val, hosts_train, hosts_val = _temporal_split(
+        X, hosts, ts, val_fraction
+    )
+
+    # 3. Scaler.
+    scaler = StandardScaler()
+    X_train_s = scaler.fit_transform(X_train).astype(np.float32)
+    X_val_s = scaler.transform(X_val).astype(np.float32)
+
+    # 4. IsolationForest.
+    iforest = IsolationForest(
+        n_estimators=200,
+        contamination=contamination,
+        n_jobs=-1,
+        random_state=42,
+    )
+    iforest.fit(X_train_s)
+
+    # 5. LSTM autoencoder.
+    n_features = X_train_s.shape[1]
+    seq_train = _to_host_sequences(X_train_s, hosts_train, seq_len)
+    seq_val = _to_host_sequences(X_val_s, hosts_val, seq_len)
+
+    if seq_train.shape[0] == 0 or seq_val.shape[0] == 0:
+        logger.warning(
+            "Not enough samples to form sequences (train=%d, val=%d) — skipping",
+            seq_train.shape[0],
+            seq_val.shape[0],
+        )
+        return None
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = LSTMAutoencoder(n_features=n_features).to(device)
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    criterion = nn.MSELoss()
+
+    try:
+        train_tensor = torch.from_numpy(seq_train).to(device)
+        val_tensor = torch.from_numpy(seq_val).to(device)
+    except (RuntimeError, Exception) as oom:
+        # CUDA OOM or similar — fall back to CPU so training is not lost.
+        logger.warning("GPU transfer failed (%s) — falling back to CPU", oom)
+        device = torch.device("cpu")
+        model = model.to(device)
+        train_tensor = torch.from_numpy(seq_train)
+        val_tensor = torch.from_numpy(seq_val)
+
+    model.train()
+    n_train_seq = train_tensor.shape[0]
+    for epoch in range(epochs):
+        perm = torch.randperm(n_train_seq, device=device)
+        epoch_loss = 0.0
+        n_batches = 0
+        for start in range(0, n_train_seq, batch_size):
+            idx = perm[start : start + batch_size]
+            batch = train_tensor[idx]
+            optimizer.zero_grad()
+            recon = model(batch)
+            loss = criterion(recon, batch)
+            loss.backward()
+            optimizer.step()
+            epoch_loss += float(loss.item())
+            n_batches += 1
+        if (epoch + 1) % 5 == 0:
+            logger.info(
+                "LSTM epoch %d/%d loss=%.6f",
+                epoch + 1,
+                epochs,
+                epoch_loss / max(n_batches, 1),
+            )
+
+    # 6. Threshold on validation reconstruction error.
+    model.eval()
+    with torch.no_grad():
+        val_recon = model(val_tensor)
+        # Per-sequence MSE (mean over seq_len and features).
+        per_seq = ((val_recon - val_tensor) ** 2).mean(dim=(1, 2)).cpu().numpy()
+    threshold = float(np.percentile(per_seq, threshold_percentile))
+    val_recon_mean = float(per_seq.mean())
+    val_recon_std = float(per_seq.std())
+
+
+    return FitResult(
+        scaler=scaler,
+        iforest=iforest,
+        model=model,
+        threshold=threshold,
+        seq_len=seq_len,
+        n_train_seq=int(seq_train.shape[0]),
+        n_val_seq=int(seq_val.shape[0]),
+        val_recon_mean=val_recon_mean,
+        val_recon_std=val_recon_std,
+        n_train_rows=int(len(X_train)),
+        n_val_rows=int(len(X_val)),
+        n_features=int(n_features),
+    )
+
+
 class WindowTrainer:
     def __init__(
         self,
@@ -202,8 +343,6 @@ class WindowTrainer:
     ) -> None:
         try:
             import torch
-            import torch.nn as nn
-            import torch.optim as optim
         except ImportError as exc:
             raise ImportError(
                 "torch is required for baseline window training. "
@@ -241,95 +380,26 @@ class WindowTrainer:
                 )
                 return
 
-        # 2. Chronological train/val split (oldest rows train, newest validate).
-        X_train, X_val, hosts_train, hosts_val = _temporal_split(
-            X, hosts, ts, self._val_fraction
-        )
-
-        # 3. Scaler.
-        scaler = StandardScaler()
-        X_train_s = scaler.fit_transform(X_train).astype(np.float32)
-        X_val_s = scaler.transform(X_val).astype(np.float32)
-
-        # 4. IsolationForest.
-        iforest = IsolationForest(
-            n_estimators=200,
+        fit = fit_models(
+            X, hosts, ts,
+            val_fraction=self._val_fraction,
+            seq_len=self._seq_len,
+            threshold_percentile=self._threshold_percentile,
             contamination=self._contamination,
-            n_jobs=-1,
-            random_state=42,
         )
-        iforest.fit(X_train_s)
-
-        # 5. LSTM autoencoder.
-        n_features = X_train_s.shape[1]
-        seq_train = _to_host_sequences(X_train_s, hosts_train, self._seq_len)
-        seq_val = _to_host_sequences(X_val_s, hosts_val, self._seq_len)
-
-        if seq_train.shape[0] == 0 or seq_val.shape[0] == 0:
-            logger.warning(
-                "Not enough samples to form sequences (train=%d, val=%d) — skipping",
-                seq_train.shape[0],
-                seq_val.shape[0],
-            )
+        if fit is None:
             return
-
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = LSTMAutoencoder(n_features=n_features).to(device)
-        optimizer = optim.Adam(model.parameters(), lr=1e-3)
-        criterion = nn.MSELoss()
-
-        batch_size = 256
-        epochs = 20
-        try:
-            train_tensor = torch.from_numpy(seq_train).to(device)
-            val_tensor = torch.from_numpy(seq_val).to(device)
-        except (RuntimeError, Exception) as oom:
-            # CUDA OOM or similar — fall back to CPU so training is not lost.
-            logger.warning("GPU transfer failed (%s) — falling back to CPU", oom)
-            device = torch.device("cpu")
-            model = model.to(device)
-            train_tensor = torch.from_numpy(seq_train)
-            val_tensor = torch.from_numpy(seq_val)
-
-        model.train()
-        n_train_seq = train_tensor.shape[0]
-        for epoch in range(epochs):
-            perm = torch.randperm(n_train_seq, device=device)
-            epoch_loss = 0.0
-            n_batches = 0
-            for start in range(0, n_train_seq, batch_size):
-                idx = perm[start : start + batch_size]
-                batch = train_tensor[idx]
-                optimizer.zero_grad()
-                recon = model(batch)
-                loss = criterion(recon, batch)
-                loss.backward()
-                optimizer.step()
-                epoch_loss += float(loss.item())
-                n_batches += 1
-            if (epoch + 1) % 5 == 0:
-                logger.info(
-                    "LSTM epoch %d/%d loss=%.6f",
-                    epoch + 1,
-                    epochs,
-                    epoch_loss / max(n_batches, 1),
-                )
-
-        # 6. Threshold on validation reconstruction error.
-        model.eval()
-        with torch.no_grad():
-            val_recon = model(val_tensor)
-            # Per-sequence MSE (mean over seq_len and features).
-            per_seq = ((val_recon - val_tensor) ** 2).mean(dim=(1, 2)).cpu().numpy()
-        threshold = float(np.percentile(per_seq, self._threshold_percentile))
-        val_recon_mean = float(per_seq.mean())
-        val_recon_std = float(per_seq.std())
+        scaler, iforest, model = fit.scaler, fit.iforest, fit.model
+        threshold = fit.threshold
+        val_recon_mean, val_recon_std = fit.val_recon_mean, fit.val_recon_std
+        seq_train_n, seq_val_n = fit.n_train_seq, fit.n_val_seq
+        n_features = fit.n_features
 
         # Training-result counts — kept local; not mutated into ProvenanceMetadata
         # (which describes the collection window, not the training outcome).
-        n_sequences = int(seq_train.shape[0] + seq_val.shape[0])
-        n_train_seq = int(seq_train.shape[0])
-        n_val_seq = int(seq_val.shape[0])
+        n_sequences = seq_train_n + seq_val_n
+        n_train_seq = seq_train_n
+        n_val_seq = seq_val_n
 
         logger.info(
             "Baseline trained: n=%d iforest✓ lstm_threshold_p%.1f=%.6f",

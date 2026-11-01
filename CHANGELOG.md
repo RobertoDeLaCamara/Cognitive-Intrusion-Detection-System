@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Baseline evaluation bench** (`scripts/eval_baseline.py`): fits with the detector's own `fit_models()` on a chronological split of benign host vectors and reports false positives on the newest benign rows, recall and AUC for six simulated attacks (built with the real `HostExtractor`), score saturation and features that drift over time. `BASELINE_DUMP_DIR` (off by default) makes the collector write each window to disk so the bench can run on real traffic. `src/engines/baseline_scoring.py` now holds the score formulas shared by `BaselineEngine` and the bench (no behaviour change).
 - **Suppression rules can be limited to a destination port** (`dst_port`, Alembic `a8b9c0d1e2f3`). A narrow rule (`src_ip` or `dst_ip` plus `dst_port`) may last up to 365 days instead of 7, so recurring monitoring traffic (e.g. a blackbox exporter probing a service) can be silenced without silencing the whole host. The API applies the migration at startup: recreate `api` before the detector.
 - **Baseline stability gate**: a retrained window is no longer promoted when its LSTM threshold is more than `BASELINE_THRESHOLD_MAX_RATIO` (3.0) times above/below the median of the last accepted windows; after `BASELINE_MAX_CONSECUTIVE_REJECTS` (3) rejections in a row the new level is accepted as a regime change. Seen on raspi-189 with 3000-vector windows: p99 thresholds of 0.32 and 8.93 for consecutive windows of the same network. Larger windows (`BASELINE_MIN_VECTORS`) also steady it.
 

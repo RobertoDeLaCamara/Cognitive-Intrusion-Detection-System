@@ -378,3 +378,26 @@ The window's elapsed time is measured in packet time, not wall-clock time. On a 
 ### Minimum window size
 
 `WindowTrainer.train_window()` silently skips windows with fewer than 1,000 samples (logs a `WARNING`). This guards against degenerate windows produced by very short captures or replay sessions. The composite trigger's `min_total_vectors=50_000` default makes this path unreachable in normal operation; it is a safety net for non-default configurations.
+
+---
+
+## Evaluation bench
+
+`scripts/eval_baseline.py` measures the baseline models offline, so a change to training can be judged by numbers instead of by watching alerts for a day.
+
+It fits with `fit_models()` (the routine `WindowTrainer` uses) on a chronological split of benign host vectors and scores rows with `src/engines/baseline_scoring.py` (the formulas `BaselineEngine` uses; `tests/unsupervised/test_bench_engine_parity.py` checks both give the same scores). It reports:
+
+- **Benign hold-out:** score quantiles, share of rows at or above 0.5 / 0.65 / 0.8 / 0.99 (false positives), share saturated at 1.0, and the false-positive rate of each branch (IsolationForest, LSTM).
+- **Attacks:** recall at the same thresholds and AUC against the hold-out for six simulated scenarios (`syn_flood`, `port_scan`, `udp_flood`, `ssh_bruteforce`, `dns_tunnel`, `slow_exfil`). They are built with the real `HostExtractor` and a pinned clock (`src/unsupervised/attack_sim.py`), so the vectors mean what the detector's vectors mean.
+- **Drifting features:** features whose mean in the newest 20 % of the benign data is at least 2x (or at most 0.5x) the oldest 20 %. `total_packets`, `total_bytes` and `session_duration` are cumulative since a host was first seen, so on stationary traffic they keep growing and a model fit on an older window sees newer normal traffic as unusual.
+
+```bash
+# Real traffic: set BASELINE_DUMP_DIR on the detector, let a few windows accumulate, then
+python scripts/eval_baseline.py --dump-dir /path/to/baseline-windows --output report.json
+
+# Smoke test of the bench itself (simulated benign hosts; says nothing about the model)
+python scripts/eval_baseline.py --simulate
+```
+
+`BASELINE_DUMP_DIR` (empty = off) makes the collector write each window to `window-<start>-<n>.npz` from the training thread, best effort, keeping the newest `BASELINE_DUMP_KEEP` files (default 48). Needs torch, so run it inside the cnds image. Simulated attacks are easy to separate from a simple simulated benign set; judge the model on real dumps.
+

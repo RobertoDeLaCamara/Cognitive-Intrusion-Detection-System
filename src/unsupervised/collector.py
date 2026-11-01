@@ -230,6 +230,23 @@ class BaselineCollector:
             progress_ratios=ratios,
         )
 
+    @staticmethod
+    def _maybe_dump(snapshot: List[CollectedSample], provenance: ProvenanceMetadata) -> None:
+        """Best-effort copy of the window to BASELINE_DUMP_DIR; never blocks training."""
+        from ..config import BASELINE_DUMP_DIR, BASELINE_DUMP_KEEP
+
+        if not BASELINE_DUMP_DIR:
+            return
+        try:
+            from .dump import dump_window
+
+            path = dump_window(
+                BASELINE_DUMP_DIR, snapshot, snapshot[0].ts_epoch, BASELINE_DUMP_KEEP
+            )
+            logger.info("Baseline window dumped to %s", path)
+        except Exception as e:  # noqa: BLE001 - evaluation aid, must not break training
+            logger.warning("Baseline window dump failed: %s", e)
+
     def _run_training(
         self,
         snapshot: List[CollectedSample],
@@ -239,6 +256,7 @@ class BaselineCollector:
             logger.info(
                 "Baseline window ready: n=%d reason=%s", len(snapshot), provenance.fire_reason
             )
+            self._maybe_dump(snapshot, provenance)
             self._on_window_ready(snapshot, provenance)
         except Exception as e:
             logger.exception("Baseline training failed: %s", e)

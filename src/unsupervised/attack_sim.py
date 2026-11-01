@@ -3,7 +3,7 @@
 Used by the evaluation bench to get labelled attack vectors without touching a network. Packets
 are built with scapy and fed to ``HostHistory`` with simulated timestamps; the extractor's clock
 (``time.time``) is pinned to the simulated time while a vector is computed, so the vectors have
-the same meaning as the ones the detector collects (cumulative counters included).
+the same meaning as the ones the detector collects (sliding-window volume features included).
 
 Each scenario returns ``(X, hosts, ts)`` with rows in time order: one vector after every
 ``flow_pkts`` packets of a source, which is roughly when the pipeline snapshots a host.

@@ -33,6 +33,8 @@ from ..engines.lstm_model import LSTMAutoencoder
 from ..unsupervised.artifact_schema import (
     ARTIFACT_ROOT,
     BASELINE_SEQ_LEN,
+    FEATURE_SCHEMA_FILE,
+    HOST_FEATURE_SCHEMA,
     IFOREST_FILE,
     LSTM_FILE,
     MODEL_NAME,
@@ -116,6 +118,20 @@ class BaselineEngine:
             with tempfile.TemporaryDirectory() as tmp:
                 client.download_artifacts(run_id, ARTIFACT_ROOT, tmp)
                 artifact_dir = os.path.join(tmp, ARTIFACT_ROOT)
+
+                try:
+                    with open(os.path.join(artifact_dir, FEATURE_SCHEMA_FILE)) as f:
+                        trained_schema = int(f.read().strip())
+                except (OSError, ValueError):
+                    trained_schema = 1  # artifacts from before the schema marker
+                if trained_schema != HOST_FEATURE_SCHEMA:
+                    logger.warning(
+                        "BaselineEngine: model v%s was trained on host-feature schema %d but the "
+                        "extractor produces schema %d — not loading it; the engine stays off until "
+                        "the next baseline window is trained",
+                        latest.version, trained_schema, HOST_FEATURE_SCHEMA,
+                    )
+                    return False
 
                 scaler = joblib.load(os.path.join(artifact_dir, SCALER_FILE))
                 iforest = joblib.load(os.path.join(artifact_dir, IFOREST_FILE))

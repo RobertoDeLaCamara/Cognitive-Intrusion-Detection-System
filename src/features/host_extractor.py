@@ -1,6 +1,7 @@
 """Per-IP host-level feature extractor (18 features).
 
-Aggregates packet statistics per source IP over a sliding history window.
+Aggregates packet statistics per source IP over a sliding history window (the last
+HOST_WINDOW_SIZE packets). Protocol ratios are still lifetime fractions.
 Adapted from cognitive-anomaly-detector.
 """
 
@@ -15,6 +16,7 @@ from scapy.all import IP, TCP, UDP, ICMP, Raw
 
 from ..config import HOST_WINDOW_SIZE, MAX_TRACKED_IPS, COMMON_PORTS
 from .utils import byte_entropy
+from ..unsupervised.artifact_schema import HOST_FEATURE_SCHEMA  # noqa: F401  (re-exported)
 
 HOST_FEATURE_NAMES = [
     # Statistical (6)
@@ -128,12 +130,19 @@ class HostExtractor:
 
     def _compute(self, h: HostHistory) -> np.ndarray:
         now = time.time()
-        duration = max(now - h.first_seen, 1e-3)
+        # Every volume/rate/duration feature is taken over the sliding window of the last
+        # HOST_WINDOW_SIZE packets, not over the host's lifetime: lifetime totals grow without
+        # bound on stationary traffic (x8 in 40 min on raspi-189), so a model trained on them
+        # is wrong an hour later. The span runs to ``now`` so an idle host's rate decays.
+        win_start = h.timestamps[0] if h.timestamps else h.first_seen
+        duration = max(now - win_start, 1e-3)
 
         # Statistical
         sizes = np.array(h.packet_sizes, dtype=float)
-        pkt_s = h.total_packets / duration
-        byt_s = h.total_bytes / duration
+        win_packets = float(len(sizes))
+        win_bytes = float(sizes.sum())
+        pkt_s = win_packets / duration
+        byt_s = win_bytes / duration
         avg_sz = float(sizes.mean()) if len(sizes) else 0.0
         var_sz = float(sizes.var()) if len(sizes) > 1 else 0.0
 
@@ -175,7 +184,7 @@ class HostExtractor:
 
         return np.array([
             pkt_s, byt_s, avg_sz, var_sz,
-            float(h.total_packets), float(h.total_bytes),
+            win_packets, win_bytes,
             iat_mean, iat_std, burst_rate, duration,
             tcp_r, udp_r, icmp_r,
             unique_ports, uncommon_ratio,

@@ -36,13 +36,18 @@ class TestAttackSim:
         X, _, _ = attack_sim.dns_tunnel(np.random.default_rng(1), seconds=20)
         assert X[-1, IDX["udp_ratio"]] == 1.0 and X[-1, IDX["avg_payload_entropy"]] > 6.0
 
-    def test_stationary_host_still_shows_cumulative_counters_growing(self):
-        """Documents why the bench flags total_packets / total_bytes / session_duration."""
-        X, _, ts = attack_sim.benign_hosts(np.random.default_rng(2), n_hosts=3, seconds=600)
+    def test_stationary_host_volume_features_do_not_drift(self):
+        """Volume features are windowed (schema 2): once each host's window is full they stay flat.
+
+        They used to grow x8 on stationary traffic. The first minutes are skipped because a host's
+        packet window is still filling up.
+        """
+        X, _, ts = attack_sim.benign_hosts(np.random.default_rng(2), n_hosts=3, seconds=3600)
+        mid = (ts > np.percentile(ts, 30)) & (ts < np.percentile(ts, 50))
         late = ts > np.percentile(ts, 80)
-        early = ts < np.percentile(ts, 20)
         for feat in ("total_packets", "total_bytes", "session_duration"):
-            assert X[late, IDX[feat]].mean() > 2 * X[early, IDX[feat]].mean(), feat
+            ratio = X[late, IDX[feat]].mean() / X[mid, IDX[feat]].mean()
+            assert 0.7 < ratio < 1.4, (feat, ratio)
 
     def test_deterministic_for_a_seed(self):
         a = attack_sim.port_scan(np.random.default_rng(5), seconds=5)[0]

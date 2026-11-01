@@ -31,6 +31,8 @@ from .artifact_schema import (
     IFOREST_FILE,
     LSTM_FILE,
     MODEL_NAME,
+    FEATURE_SCHEMA_FILE,
+    HOST_FEATURE_SCHEMA,
     PROVENANCE_FILE,
     SCALER_FILE,
     THRESHOLD_FILE,
@@ -480,6 +482,8 @@ class WindowTrainer:
                         )
                     with open(provenance_path, "w") as f:
                         json.dump(provenance.to_dict(), f, indent=2)
+                    with open(os.path.join(tmp, FEATURE_SCHEMA_FILE), "w") as f:
+                        f.write(str(HOST_FEATURE_SCHEMA))
 
                     mlflow.log_artifacts(tmp, artifact_path=ARTIFACT_ROOT)
 

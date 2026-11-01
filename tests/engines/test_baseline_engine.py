@@ -217,6 +217,7 @@ class TestLoadArtifactPaths:
         """joblib.load must be called with paths rooted under ARTIFACT_ROOT."""
         from src.unsupervised.artifact_schema import (
             ARTIFACT_ROOT, SCALER_FILE, IFOREST_FILE, LSTM_FILE, THRESHOLD_FILE,
+            FEATURE_SCHEMA_FILE, HOST_FEATURE_SCHEMA,
         )
 
         captured_paths = []
@@ -241,6 +242,8 @@ class TestLoadArtifactPaths:
             # threshold.txt
             with open(os.path.join(artifact_dir, THRESHOLD_FILE), "w") as fh:
                 fh.write("0.05\n")
+            with open(os.path.join(artifact_dir, FEATURE_SCHEMA_FILE), "w") as fh:
+                fh.write(str(HOST_FEATURE_SCHEMA))
             # joblib stubs handled by _fake_joblib_load; lstm by torch.load mock
 
         mock_client.download_artifacts.side_effect = _fake_download
@@ -274,6 +277,51 @@ class TestLoadArtifactPaths:
         basenames = {os.path.basename(p) for p in captured_paths}
         assert SCALER_FILE in basenames
         assert IFOREST_FILE in basenames
+
+
+class TestFeatureSchemaGuard:
+    """A model trained on other host-feature semantics must not be served."""
+
+    def _load_with_schema(self, schema_text):
+        from src.unsupervised.artifact_schema import ARTIFACT_ROOT, FEATURE_SCHEMA_FILE, THRESHOLD_FILE
+
+        version = MagicMock(run_id="abc", version="7")
+        client = MagicMock()
+        client.search_model_versions.return_value = [version]
+
+        def _download(run_id, artifact_path, tmp_dir):
+            d = os.path.join(tmp_dir, artifact_path)
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, THRESHOLD_FILE), "w") as fh:
+                fh.write("0.05\n")
+            if schema_text is not None:
+                with open(os.path.join(d, FEATURE_SCHEMA_FILE), "w") as fh:
+                    fh.write(schema_text)
+
+        client.download_artifacts.side_effect = _download
+        mlflow_mod = MagicMock()
+        mlflow_mod.tracking.MlflowClient.return_value = client
+        with patch("src.engines.baseline_engine.mlflow_registry") as reg, \
+             patch("joblib.load", side_effect=lambda p: _mock_scaler(N_FEATURES) if "scaler" in p else _mock_iforest()), \
+             patch("src.engines.baseline_engine.LSTMAutoencoder", MagicMock()), \
+             patch("torch.load", return_value={}):
+            reg.is_enabled.return_value = True
+            reg._get_mlflow.return_value = mlflow_mod
+            from src.engines.baseline_engine import BaselineEngine
+            return BaselineEngine()
+
+    def test_marker_missing_means_old_schema_and_is_refused(self):
+        assert not self._load_with_schema(None).is_available
+
+    def test_other_schema_is_refused(self):
+        assert not self._load_with_schema("1").is_available
+
+    def test_garbage_marker_is_refused(self):
+        assert not self._load_with_schema("abc").is_available
+
+    def test_current_schema_loads(self):
+        from src.unsupervised.artifact_schema import HOST_FEATURE_SCHEMA
+        assert self._load_with_schema(str(HOST_FEATURE_SCHEMA)).is_available
 
 
 # ---------------------------------------------------------------------------

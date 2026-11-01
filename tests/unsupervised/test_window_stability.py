@@ -37,7 +37,9 @@ def _make_samples(n: int, n_features: int = 18, seed: int = 42) -> list:
     for i, vec in enumerate(vectors):
         samples.append(CollectedSample(
             host_vec=vec,
-            src_ip=f"10.0.{i % 20}.{(i * 7) % 256}",
+            # 20 hosts with many flows each: the LSTM trains on per-host sequences, so a
+            # host needs at least seq_len vectors to contribute (as at inference).
+            src_ip=f"10.0.0.{i % 20}",
             dst_ip="192.168.1.1",
             dst_port=ports[i % len(ports)],
             protocol="TCP",

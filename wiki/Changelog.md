@@ -17,6 +17,7 @@
 - `baseline_progress` log lines and baseline metrics are emitted when the detector runs without `--api` (#67)
 
 ### Changed
+- Baseline LSTM trains on per-host sequences with a chronological split. `WindowTrainer` used to shuffle all rows and slide a window over the mix of hosts, while the engine scores one `seq_len` buffer per source IP, so the LSTM never saw the structure it is scored on and a random split leaked neighbouring rows into validation. Sequences are now built inside each host (`_to_host_sequences`) and the oldest 80 % of the window trains, the newest 20 % validates (`_temporal_split`). Hosts with fewer than `seq_len` vectors in a split contribute no sequence. The IsolationForest is unchanged apart from the split.
 - `hours` is bounded to 1–87600 (10 years) on `GET /api/alerts` and `GET /api/alerts/export`; larger values return 422 instead of 500 (#16)
 - Jenkinsfile pushes images only from `master`; PR builds get an advisory Claude review stage
 - `syn_scan` condition fixed (#49) and added to the default `CRITICAL_RULES` (#50)

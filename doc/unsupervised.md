@@ -177,7 +177,7 @@ Fits both models on a collected window and persists artifacts to MLflow. Called 
 | `val_fraction` | `0.20` | Fraction of vectors held out for validation |
 | `threshold_percentile` | `99.0` | Percentile of validation reconstruction errors used as LSTM anomaly threshold |
 | `iforest_contamination` | `0.01` | Expected anomaly fraction (passed to `IsolationForest`) |
-| `seq_len` | `20` | LSTM sequence length (sliding window over the scaled training vectors) |
+| `seq_len` | `20` | LSTM sequence length (consecutive vectors of one source IP) |
 
 **MLflow initialisation:** `mlflow_registry.init()` is called once at construction time (not per-window). This is intentional — `init()` strips proxy environment variables process-wide, and calling it from a background thread on every window would race with other threads that use the proxy for outbound connections.
 
@@ -198,10 +198,10 @@ Training pipeline, step by step:
 1. Rejects windows with fewer than 1,000 samples (logs a warning and returns).
 2. Stacks `host_vec` arrays into a single float32 matrix `X`.
 3. **Drops any rows containing NaN or Inf** (logs a WARNING with the count). If fewer than 1,000 finite rows remain, skips training. This prevents `StandardScaler.fit_transform()` from silently producing a poisoned scaler with `NaN` mean/scale.
-4. Splits `X` into train (80 %) and validation (20 %) sets with a fixed random seed.
+4. Splits `X` **chronologically**: rows are ordered by timestamp, the oldest 80 % train and the newest 20 % validate (`_temporal_split()`). A random split would put neighbouring rows of the same host on both sides and make the validation error optimistic.
 4. Fits `StandardScaler` on the training split; applies to both splits.
 5. Fits `IsolationForest` (200 estimators, `n_jobs=-1`) on the scaled training split.
-6. Constructs sliding-window sequences of length `seq_len` from the scaled splits using `_to_sequences()`. Skips training if either split produces zero sequences.
+6. Constructs sliding-window sequences of length `seq_len` **inside each source IP** (`_to_host_sequences()`), the same shape the engine scores at inference (one `seq_len` buffer per IP). A host with fewer than `seq_len` rows in a split contributes nothing. Skips training if either split produces zero sequences.
 7. Trains `LSTMAutoencoder` for 20 epochs (batch size 256, Adam lr=1e-3, MSE loss) on the training sequences. Uses CUDA if available, otherwise CPU.
 8. Computes per-sequence MSE on the validation sequences; sets `threshold` = 99th percentile.
 9. Writes `n_sequences`, `n_train`, `n_val` back to the `ProvenanceMetadata` object.

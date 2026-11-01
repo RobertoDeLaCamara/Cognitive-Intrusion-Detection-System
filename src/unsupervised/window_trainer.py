@@ -10,13 +10,12 @@ import os
 import tempfile
 import threading
 import time
-from collections import deque
-from typing import Callable, List, Optional
+from collections import defaultdict, deque
+from typing import Callable, List, Optional, Sequence, Tuple
 
 import joblib
 import numpy as np
 from sklearn.ensemble import IsolationForest
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
 from .. import mlflow_registry
@@ -91,6 +90,46 @@ def _to_sequences(X: np.ndarray, seq_len: int) -> np.ndarray:
     shape = (n - seq_len + 1, seq_len, f)
     strides = (X.strides[0], X.strides[0], X.strides[1])
     return np.lib.stride_tricks.as_strided(X, shape=shape, strides=strides).copy()
+
+
+def _to_host_sequences(X: np.ndarray, hosts: Sequence[str], seq_len: int) -> np.ndarray:
+    """Sliding-window sequences built inside each host's own rows.
+
+    ``X`` must be in time order. This mirrors inference, where the engine keeps one
+    ``seq_len`` buffer per source IP: a training sequence is ``seq_len`` consecutive
+    vectors of ONE host, never a mix of hosts. Hosts with fewer than ``seq_len`` rows
+    contribute nothing (the engine also returns no score until a buffer is full).
+    """
+    if X.ndim != 2:
+        raise ValueError(f"expected 2D input, got shape {X.shape}")
+    if len(hosts) != len(X):
+        raise ValueError(f"hosts ({len(hosts)}) and X ({len(X)}) must have the same length")
+    rows_by_host: dict = defaultdict(list)
+    for i, h in enumerate(hosts):
+        rows_by_host[h].append(i)
+    parts = [
+        _to_sequences(X[idx], seq_len)
+        for idx in rows_by_host.values()
+        if len(idx) >= seq_len
+    ]
+    if not parts:
+        return np.empty((0, seq_len, X.shape[1]), dtype=X.dtype)
+    return np.concatenate(parts, axis=0)
+
+
+def _temporal_split(
+    X: np.ndarray, hosts: Sequence[str], ts: np.ndarray, val_fraction: float
+) -> Tuple[np.ndarray, np.ndarray, List[str], List[str]]:
+    """Chronological split: the oldest ``1 - val_fraction`` of rows train, the newest validate.
+
+    A random split puts neighbouring rows of the same host on both sides, which makes the
+    validation error optimistic and the LSTM threshold unstable. Rows are ordered by
+    timestamp (stable), so equal timestamps keep their arrival order.
+    """
+    order = np.argsort(ts, kind="stable")
+    cut = int(len(order) * (1.0 - val_fraction))
+    tr, va = order[:cut], order[cut:]
+    return X[tr], X[va], [hosts[i] for i in tr], [hosts[i] for i in va]
 
 
 class WindowTrainer:
@@ -180,6 +219,8 @@ class WindowTrainer:
 
         # 1. Stack feature vectors.
         X = np.stack([s.host_vec for s in samples]).astype(np.float32)
+        hosts = [s.src_ip for s in samples]
+        ts = np.asarray([s.ts_epoch for s in samples], dtype=np.float64)
 
         # Drop NaN/Inf rows before fitting the scaler — StandardScaler propagates NaN
         # silently, producing a poisoned scaler whose mean_/scale_ are NaN.
@@ -190,16 +231,19 @@ class WindowTrainer:
                 "Baseline window: %d/%d samples contain NaN/Inf — dropping before training",
                 n_bad, len(X),
             )
-            X = X[~nan_mask]
+            keep = ~nan_mask
+            X = X[keep]
+            hosts = [h for h, k in zip(hosts, keep) if k]
+            ts = ts[keep]
             if len(X) < 1000:
                 logger.warning(
                     "After NaN purge, n=%d < 1000 — skipping training", len(X)
                 )
                 return
 
-        # 2. Train/val split.
-        X_train, X_val = train_test_split(
-            X, test_size=self._val_fraction, shuffle=True, random_state=42
+        # 2. Chronological train/val split (oldest rows train, newest validate).
+        X_train, X_val, hosts_train, hosts_val = _temporal_split(
+            X, hosts, ts, self._val_fraction
         )
 
         # 3. Scaler.
@@ -218,8 +262,8 @@ class WindowTrainer:
 
         # 5. LSTM autoencoder.
         n_features = X_train_s.shape[1]
-        seq_train = _to_sequences(X_train_s, self._seq_len)
-        seq_val = _to_sequences(X_val_s, self._seq_len)
+        seq_train = _to_host_sequences(X_train_s, hosts_train, self._seq_len)
+        seq_val = _to_host_sequences(X_val_s, hosts_val, self._seq_len)
 
         if seq_train.shape[0] == 0 or seq_val.shape[0] == 0:
             logger.warning(

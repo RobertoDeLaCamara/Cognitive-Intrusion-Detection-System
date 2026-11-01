@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - **Baseline stability gate**: a retrained window is no longer promoted when its LSTM threshold is more than `BASELINE_THRESHOLD_MAX_RATIO` (3.0) times above/below the median of the last accepted windows; after `BASELINE_MAX_CONSECUTIVE_REJECTS` (3) rejections in a row the new level is accepted as a regime change. Seen on raspi-189 with 3000-vector windows: p99 thresholds of 0.32 and 8.93 for consecutive windows of the same network. Larger windows (`BASELINE_MIN_VECTORS`) also steady it.
 
 ### Changed
+- **Baseline LSTM trains on per-host sequences with a chronological split.** `WindowTrainer` used to shuffle all rows and slide a window over the mix of hosts, while the engine scores one `seq_len` buffer per source IP, so the LSTM never saw the structure it is scored on and a random split leaked neighbouring rows into validation. Sequences are now built inside each host (`_to_host_sequences`) and the oldest 80 % of the window trains, the newest 20 % validates (`_temporal_split`). Hosts with fewer than `seq_len` vectors in a split contribute no sequence. The IsolationForest is unchanged apart from the split.
 - **Suppressed detector alerts are logged as `[SUPPRESSED]`** (`src=… | dst=… | dport=… | score=… | type=… | rule=#N`). The `[ALERT]` line is written at detection time, before suppression is evaluated, so it also covers alerts that are then suppressed; count `[SUPPRESSED]` to separate them.
 
 ### Security

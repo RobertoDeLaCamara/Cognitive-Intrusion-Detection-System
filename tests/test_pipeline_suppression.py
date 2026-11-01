@@ -108,3 +108,35 @@ class TestSuppressingRule:
         session.bind = None  # any query now raises
         rec, sc, sev = _args()
         assert pipeline._suppressing_rule(session, rec, sc, sev) is rule
+
+
+class TestSuppressedLogLine:
+    """A suppressed detector alert must be countable: "[SUPPRESSED] ... rule=#N" with the port."""
+
+    def test_suppressed_alert_is_logged_with_tag_port_and_rule(self, caplog):
+        import logging
+        from unittest.mock import patch
+        from sqlalchemy.pool import StaticPool
+        from src.api.models import Alert
+        from src.ensemble.scorer import EngineScores
+
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        Base.metadata.create_all(engine)
+        Session = sessionmaker(bind=engine)
+        with Session() as s:
+            s.add(SuppressionRule(src_ip="10.0.0.1", expires_at=utcnow() + timedelta(hours=1)))
+            s.commit()
+            rule_id = s.query(SuppressionRule).one().id
+        pipeline._suppress_cache, pipeline._suppress_ts = [], 0.0
+        flow = SimpleNamespace(src_ip="10.0.0.1", dst_ip="10.0.0.2", key=("10.0.0.1", "10.0.0.2", 40000, 3128, 6))
+        scores = EngineScores()
+        result = SimpleNamespace(score=0.8123)
+        item = (flow, scores, result, "medium", [], None, None)
+        with patch.object(pipeline, "_SessionLocal", Session), caplog.at_level(logging.INFO, logger="src.pipeline"):
+            pipeline._write_alert(item)
+        msgs = [r.getMessage() for r in caplog.records if "[SUPPRESSED]" in r.getMessage()]
+        assert len(msgs) == 1
+        assert "dport=3128" in msgs[0] and "score=0.812" in msgs[0] and f"rule=#{rule_id}" in msgs[0]
+        with Session() as s:
+            assert s.query(Alert).count() == 0
+        pipeline._suppress_cache, pipeline._suppress_ts = [], 0.0

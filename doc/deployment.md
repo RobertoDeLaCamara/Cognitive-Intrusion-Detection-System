@@ -133,11 +133,11 @@ MAX_TRACKED_IPS=5000            # LRU eviction ceiling for host state
 
 # ── Detection Ensemble ───────────────────────────────────────────────────
 # Values below are those of .env.example; the code defaults in src/config.py are 0.30 / 0.20 / 0.10 / 0.25 / 0.15
-WEIGHT_SUPERVISED=0.35
-WEIGHT_IFOREST=0.25
-WEIGHT_LSTM=0.15
-WEIGHT_RULES=0.05
-WEIGHT_BASELINE=0.20
+WEIGHT_SUPERVISED=0.40
+WEIGHT_IFOREST=0.10
+WEIGHT_LSTM=0.00
+WEIGHT_RULES=0.20
+WEIGHT_BASELINE=0.30
 ENSEMBLE_THRESHOLD=0.55         # Score above which is_anomaly=True
 CALIBRATION_TEMPERATURE=1.0     # Temperature scaling (1.0 = no-op)
 

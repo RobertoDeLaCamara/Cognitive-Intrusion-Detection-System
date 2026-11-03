@@ -1,6 +1,6 @@
 # Contributing to CNDS
 
-Thank you for your interest in contributing! This guide will help you get started.
+Thank you for your interest in contributing! This guide will help you get started. Please follow the [Code of Conduct](CODE_OF_CONDUCT.md), and report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
 
 ## Getting Started
 

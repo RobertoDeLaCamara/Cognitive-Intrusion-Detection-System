@@ -217,3 +217,13 @@ The four `BASELINE_MIN_*` variables are the trigger thresholds; all four must ho
 |---|---|---|
 | `POSTGRES_PASSWORD` | `docker-compose.yml` | Required; compose refuses to start without it |
 | `CNDS_API_URL` | `dashboard/app.py` | API base URL for the dashboard (default `http://localhost:8000`) |
+
+## Input Drift (supervised model)
+
+| Variable | Default | Description |
+|---|---|---|
+| `DRIFT_ENABLED` | `true` | Track live-vs-training flow-feature drift (`GET /api/drift-status`) |
+| `DRIFT_WINDOW_FLOWS` | `5000` | Flows per tumbling window |
+| `DRIFT_MIN_FLOWS` | `200` | Flows needed before a partial window is reported |
+| `DRIFT_FEATURE_Z` | `1.0` | Per-feature shift, in training standard deviations, that counts as drifted |
+| `DRIFT_WARN_FRACTION`, `DRIFT_CRIT_FRACTION` | `0.10`, `0.25` | Share of drifted features that gives the `warning` / `critical` verdict |

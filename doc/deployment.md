@@ -640,3 +640,22 @@ The Streamlit dashboard at `:8501` provides:
 4. Restart the service.
 
 Check `CHANGELOG.md` for breaking changes before upgrading major versions.
+
+## Operating Notes
+
+- **`[ALERT]` vs `[SUPPRESSED]`.** The detector logs `[ALERT]` when an alert is scored, *before* suppression rules are evaluated. Alerts then dropped by a rule are logged as `[SUPPRESSED] src=… | dst=… | dport=… | score=… | type=… | rule=#N`. Count `[SUPPRESSED]` to separate them: the number of `[ALERT]` lines overstates what reaches the database.
+- **Tune suppression rules narrowly.** Prefer `src_ip` / `dst_ip` together with `dst_port` (up to 365 days) over IP-wide rules (at most 7 days). Review the top `[SUPPRESSED]` flows after the first days: a monitoring probe or a proxy is the usual source.
+- **Baseline training takes time.** `GET /api/baseline/status` and the `baseline_progress` log line show which trigger threshold is the bottleneck. On a small LAN lower `BASELINE_MIN_SRC_IPS`; a retrain window that arrives with a very different LSTM threshold is held back by the stability gate (`BASELINE_THRESHOLD_MAX_RATIO`). Every detector restart empties the in-memory collection window.
+- **Memory.** The detector holds the collection window in RAM. The compose file limits it to 2 GB; on a small board watch `docker stats` after the first retrains.
+- **Threat-intel feeds are optional.** The IP feed needs `ABUSEIPDB_API_KEY`; without it the feed is skipped with one warning. The default JA3 list is a static abuse.ch file last updated in 2021.
+- **Labels feed tuning.** Mark alerts `tp` / `fp` (`PATCH /api/alerts/{id}`) and read `GET /api/feedback-stats` before changing weights or `ENSEMBLE_THRESHOLD`.
+
+## Upgrading to 2.0
+
+2.0 changes defaults for security; check these before upgrading a 1.x deployment:
+
+1. **Set `API_KEY` or `JWT_SECRET`.** The API exits at start-up without one (or `AUTH_DISABLED=true`, lab use only).
+2. **JWT deployments:** every client, including the dashboard and `scripts/demo_seed.py`, must send a token or `CNDS_API_KEY`.
+3. **Apply migrations before starting the detector:** recreate the `api` service first (it runs Alembic), then the detector.
+4. **Rebuild the image.** Dependencies are hash-pinned (`requirements-lock-*.txt`) and torch is 2.6.0.
+5. **Optional:** set `METRICS_TOKEN`, and `GUARDIAN_ALERT_SOURCES` if you relied on `/api/predict` alerts triggering the Guardian.

@@ -73,6 +73,14 @@ False-positive rate on the benign background: 0 of 389. Reading the table:
   each unremarkable by itself; SSH brute force and a DNS burst have no rule. Catching them
   depends on the host-level engines (Isolation Forest, LSTM, baseline), which this replay
   does not run on a fresh checkout. Run it again with `models/` populated before drawing conclusions.
+- **With the production image's full engines the picture flips, and is still not representative.**
+  Replaying the same suite in the detector image on the Raspberry Pi (network disabled, models mounted
+  read-only, the deployment's own `.env`, threshold 0.65) detects every class (recall 100%) but flags
+  **all 389 benign flows**. The cause is not detection quality: the Isolation Forest and LSTM files are
+  the synthetic-data demo models, and the replay has no baseline engine (weight 0.35 on that deployment), so
+  the scorer redistributes the missing weight onto the remaining engines and the demo Isolation Forest
+  dominates. A replay is only comparable with production once the baseline engine can be loaded into it;
+  until then, quote the rules-only numbers above and treat the full-engine run as a calibration warning.
 - `syn_flood` is detected in the replay but, as of this writing, not by the live detector on the
   Raspberry Pi 5 deployment (see "Known limitations" in the README). Detection logic is therefore
   not the cause; look at the capture-to-dispatch path.

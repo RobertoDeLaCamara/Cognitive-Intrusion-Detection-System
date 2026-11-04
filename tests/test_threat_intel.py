@@ -231,11 +231,40 @@ IP,Country,ASN,Last reported
 """
         mock_resp = type('MockResponse', (), {'raise_for_status': lambda self: None, 'text': mock_csv})()
         with patch("src.enrichment.threat_intel.ABUSEIPDB_URL", "https://api.abuseipdb.com/blacklist"):
+            with patch("src.enrichment.threat_intel.ABUSEIPDB_API_KEY", "test_key"):
+                with patch("requests.get", return_value=mock_resp):
+                    store = ThreatIntelStore()
+                    store._fetch_abuseipdb()
+                    assert "10.0.0.1" in store.malicious_ips
+                    assert len(store.malicious_ips) == 1
+
+    def test_fetch_abuseipdb_skipped_without_key(self):
+        """No API key: no request is made (the API would answer 401)."""
+        with patch("src.enrichment.threat_intel.ABUSEIPDB_URL", "https://api.abuseipdb.com/blacklist"):
+            with patch("src.enrichment.threat_intel.ABUSEIPDB_API_KEY", ""):
+                with patch("requests.get") as get:
+                    store = ThreatIntelStore()
+                    store._fetch_abuseipdb()
+                    store._fetch_abuseipdb()
+                    get.assert_not_called()
+                    assert store._warned_no_abuseipdb_key is True
+                    assert len(store.malicious_ips) == 0
+
+    def test_fetch_ja3_csv_feed(self):
+        """abuse.ch SSLBL style CSV: the hash is the first column, comments skipped."""
+        mock_feed = """# ja3_md5,Firstseen,Lastseen,Listingreason
+B386946A5A44D1DDCC843BC75336DFCE,2017-07-14 18:08:15,2019-07-27 20:42:54,Dridex
+8991a387e4cc841740f25d6f5139f92d,2017-07-14 19:02:03,2019-07-28 00:34:38,Adware
+"""
+        mock_resp = type('MockResponse', (), {'raise_for_status': lambda self: None, 'text': mock_feed})()
+        with patch("src.enrichment.threat_intel.MALICIOUS_JA3_URL", "https://example.test/ja3.csv"):
             with patch("requests.get", return_value=mock_resp):
                 store = ThreatIntelStore()
-                store._fetch_abuseipdb()
-                assert "10.0.0.1" in store.malicious_ips
-                assert len(store.malicious_ips) == 1
+                store._fetch_ja3_feeds()
+                assert store.malicious_ja3 == {
+                    "b386946a5a44d1ddcc843bc75336dfce",
+                    "8991a387e4cc841740f25d6f5139f92d",
+                }
 
     def test_fetch_ja3_success(self):
         """Test JA3 feed fetch parses lines correctly."""

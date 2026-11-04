@@ -4,10 +4,18 @@
 
 ## [Unreleased]
 
+### Changed
+- Baseline LSTM score no longer saturates at 1.0. `lstm_score` was `min(error / threshold, 1)`, so every window above the p99 validation threshold scored exactly 1.0. It is now `r / (1 + r)` with `r = error / threshold`: 0.5 at the threshold, 0.67 at 2x, 0.91 at 10x, never reaching 1.0. The score scale shifts (below the threshold it is lower than before), so `ENSEMBLE_THRESHOLD` and `WEIGHT_BASELINE` tuned against the old mapping need re-checking with `scripts/eval_baseline.py`. No model retrain is needed.
+
+## [2.0.0-rc.1] - 2026-11-04
+
+First pre-release since 1.2.1 (1.3.0 below was never tagged and is included here). **Contains breaking security changes**: see the Security section and "Upgrading to 2.0" in `doc/deployment.md`.
+
 ### Security
 - `/api/auth/users` was open in API-key-only mode: the key middleware skipped every `/api/auth*` path and `require_role` does nothing without `JWT_SECRET`. Only `/api/auth/token` is exempt now; `/api/auth/users*` needs `X-API-Key` unless JWT is on (then the admin role check guards it). Deployments with `API_KEY` alone were affected: check `GET /api/auth/users` for unknown accounts.
 
 ### Added
+- `SECURITY.md` and `CODE_OF_CONDUCT.md`: how to report a vulnerability privately (GitHub security advisories), the supported versions, and the trust boundaries that define scope (mandatory auth, trusted MLflow registry, raw-socket capture, Guardian whitelist, secrets).
 - `geoip2` is installed in the image (hashed locks regenerated with every other pin held). GeoIP enrichment stays off until `GEOIP_DB_PATH` points at a `.mmdb` City database (GeoLite2 or DB-IP Lite).
 - Baseline evaluation bench (`scripts/eval_baseline.py`): fits with the detector's own `fit_models()` on a chronological split of benign host vectors and reports false positives on the newest benign rows, recall and AUC for six simulated attacks (built with the real `HostExtractor`), score saturation and features that drift over time. `BASELINE_DUMP_DIR` (off by default) makes the collector write each window to disk so the bench can run on real traffic. `src/engines/baseline_scoring.py` now holds the score formulas shared by `BaselineEngine` and the bench (no behaviour change).
 - Suppression rules can be limited to a destination port (`dst_port`, Alembic `a8b9c0d1e2f3`). A narrow rule (`src_ip` or `dst_ip` plus `dst_port`) may last up to 365 days instead of 7. The API applies the migration at startup: recreate `api` before the detector.
@@ -22,7 +30,9 @@
 - `baseline_progress` log lines and baseline metrics are emitted when the detector runs without `--api` (#67)
 
 ### Changed
-- Baseline LSTM score no longer saturates at 1.0. `lstm_score` was `min(error / threshold, 1)`, so every window above the p99 validation threshold scored exactly 1.0. It is now `r / (1 + r)` with `r = error / threshold`: 0.5 at the threshold, 0.67 at 2x, 0.91 at 10x, never reaching 1.0. The score scale shifts (below the threshold it is lower than before), so `ENSEMBLE_THRESHOLD` and `WEIGHT_BASELINE` tuned against the old mapping need re-checking with `scripts/eval_baseline.py`. No model retrain is needed.
+- **Detector `mem_limit` 1.5g → 2g** in `docker-compose.yml` (1.32 GiB used two days after deploy on a Pi 5).
+- **Docs:** `doc/deployment.md` / wiki `Deployment` gain "Operating Notes" (`[ALERT]` vs `[SUPPRESSED]`, narrow suppression rules, baseline training, memory) and "Upgrading to 2.0"; `DRIFT_MIN_FLOWS` documented; `SECURITY.md` lists supported versions.
+- Honest defaults and status. `.env.example` (which `docker-compose.yml` loads before `.env`) no longer gives 40 % of the ensemble to the synthetic demo Isolation Forest / LSTM: weights are now supervised 0.40, iforest 0.10, lstm 0.00, rules 0.20, baseline 0.30. The README has a "Project status" section (AGPL v3, no official release yet, what is solid, demo-only or experimental), its engine table lists the baseline engine and flags the demo models as synthetic, and `doc/product.md` no longer claims enterprise-grade detection or full parity with commercial NDR (competitor cells are marked as generalisations; baseline and feedback learning are marked experimental/partial). Deployments that set their own `WEIGHT_*` in `.env` are unaffected.
 - Host volume features are windowed instead of cumulative (host-feature schema 2). `total_packets`, `total_bytes`, `session_duration`, `packets_per_sec` and `bytes_per_sec` were totals since a host was first seen, so on stationary traffic they grew x8.5 in about an hour and the baseline LSTM, trained on one hour, scored the next as unusual (16 % of benign rows above 0.65 on the first raspi-189 window, all from the LSTM). They are now computed over the host's last `HOST_WINDOW_SIZE` packets. Models carry `feature_schema.txt`; `BaselineEngine` ignores any model trained on another schema, so after deploying it stays off until one new window is trained (about an hour at the current thresholds). The legacy demo IsolationForest/LSTM read the same 18 features and see the new values too.
 - Baseline LSTM trains on per-host sequences with a chronological split. `WindowTrainer` used to shuffle all rows and slide a window over the mix of hosts, while the engine scores one `seq_len` buffer per source IP, so the LSTM never saw the structure it is scored on and a random split leaked neighbouring rows into validation. Sequences are now built inside each host (`_to_host_sequences`) and the oldest 80 % of the window trains, the newest 20 % validates (`_temporal_split`). Hosts with fewer than `seq_len` vectors in a split contribute no sequence. The IsolationForest is unchanged apart from the split.
 - `hours` is bounded to 1–87600 (10 years) on `GET /api/alerts` and `GET /api/alerts/export`; larger values return 422 instead of 500 (#16)
@@ -34,9 +44,10 @@
 - Baseline registered with `MlflowClient.create_model_version`, compatible with a 3.x client against a 2.x MLflow server (#70)
 
 ### Fixed
+- **Threat-intel feeds no longer fail every hour** — the default JA3 feed is now the abuse.ch SSLBL CSV (the previous URL returned 404), CSV feeds (hash in the first column) are accepted, and the AbuseIPDB fetch is skipped with one warning when `ABUSEIPDB_API_KEY` is empty (the API answers 401 without a key).
 - Payload-pattern hits and JA3 fingerprints are attributed to their own flow; `payload_matches`, ports and protocol are persisted on capture-pipeline alerts; `sql_injection` / `command_injection` regexes no longer match binary noise
 
-## [1.3.0] - 2026-09-14
+## [1.3.0] - 2026-09-14 (never tagged; shipped in 2.0.0-rc.1)
 
 ### Added
 - Read-only MCP server (`src/mcp_server/`, nine tools, enforced read-only at the DB engine, no enforcement tools)

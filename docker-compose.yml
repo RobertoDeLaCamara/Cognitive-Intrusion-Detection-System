@@ -94,7 +94,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
-    mem_limit: 1.5g
+    # 1.5g was ~90% used on a Pi 5 (8 GB) once the baseline retrains; leave headroom to avoid an OOM kill
+    mem_limit: 2g
     cpus: 2.0
     restart: unless-stopped
 

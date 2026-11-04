@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from src.version import __version__
 from fastapi.responses import JSONResponse
 
 from .database import init_db
@@ -113,7 +114,7 @@ async def _periodic_cleanup(interval: int = 300):
 app = FastAPI(
     title="Cognitive Network Defense System API",
     description="Multi-engine network defense: supervised + unsupervised anomaly detection + rule-based heuristics",
-    version="1.0.0",
+    version=__version__,
     lifespan=lifespan,
 )
 

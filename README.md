@@ -4,6 +4,19 @@
 
 ---
 
+## Project status
+
+CNDS is at **2.0.0 release candidate** (pre-release): usable on a home LAN, not yet declared stable. It is licensed under the [GNU AGPL v3](LICENSE). What to expect today:
+
+- **Solid:** the rules, and the supervised engine (FT-Transformer trained on UNSW-NB15, F1 macro 0.62 on its test split: one useful signal, not a verdict).
+- **Demo only:** the Isolation Forest and LSTM files that `scripts/generate_demo_models.py` produces are trained on **synthetic** data and say nothing about your network. Do not rely on them; the shipped `.env.example` gives them little or no weight.
+- **Experimental:** the **baseline engine** (`src/unsupervised`) learns your own traffic and is the intended replacement for the demo models, but it is still being validated: it needs a training window of tens of thousands of flows before it scores anything, and on the one real window evaluated so far a large share of benign traffic scored high. Treat its alerts as hints.
+- **Not yet measured:** detection recall. The false-positive rate was tuned on a live Raspberry Pi 5 deployment (daily alerts fell from hundreds to a few dozen after suppression rules and a higher `ENSEMBLE_THRESHOLD`), but no true positive has been labelled on that deployment yet, so there is no recall or precision figure to quote. `cnds-red-team` is the planned way to produce one.
+- **Optional feeds:** the AbuseIPDB feed needs an API key; the default JA3 list is a static abuse.ch file last updated in 2021.
+- **Home-lab scale:** developed and run on a small LAN. It has not been load-tested on large networks or against live adversarial traffic.
+
+---
+
 ## Architecture
 
 ```
@@ -47,12 +60,13 @@
 |---|---|---|---|
 | **Supervised (preferred)** | 76 CICFlowMeter flow features | FT-Transformer (PyTorch, ~2.4M params) — Optuna-tuned, F1 macro 0.6197 on UNSW-NB15 test split | 10 attack classes: Benign, Analysis, Backdoor, DoS, Exploits, Fuzzers, Generic, Reconnaissance, Shellcode, Worms |
 | **Supervised (fallback)** | 76 CICFlowMeter flow features (+ 10 payload features if retrained) | Random Forest (sklearn Pipeline) | Same 10 attack classes; activates only when no FT-T checkpoint is present |
-| **Isolation Forest** | 18 per-IP host features | IsolationForest + StandardScaler | Novel / zero-day volumetric anomalies |
-| **LSTM Autoencoder** | 18-feature time-series per IP | PyTorch sequence AE | Slow attacks, temporal behaviour drift |
+| **Isolation Forest** | 18 per-IP host features | IsolationForest + StandardScaler. The bundled generator makes a **synthetic demo model** | Novel volumetric anomalies, once fitted on real traffic |
+| **LSTM Autoencoder** | 18-feature time-series per IP | PyTorch sequence AE. The bundled generator makes a **synthetic demo model** | Temporal behaviour drift, once fitted on real traffic |
+| **Baseline (experimental)** | The same 18 host features | IsolationForest + LSTM Autoencoder trained live on your own traffic (`src/unsupervised`) | Deviations from what this network normally does |
 | **Rules** | Flow metadata + payload bytes + JA3 hashes | Threshold rules | ICMP floods, SYN scans, SQLi, XSS, LFI, large payloads, asymmetric upload, malicious TLS fingerprints |
 | **Threat Intelligence** | IPs, JA3 hashes, domains | External feeds (AbuseIPDB, JA3 blacklists, MISP) | Known-bad IPs, malicious JA3 fingerprints, threat intel domains |
 
-Default ensemble weights (`src/config.py`): Supervised 30 %, Isolation Forest 20 %, Rules 25 %, Baseline 15 %, LSTM 10 %. The shipped `.env.example` sets different values, see Configuration.
+Default ensemble weights (`src/config.py`): Supervised 30 %, Isolation Forest 20 %, Rules 25 %, Baseline 15 %, LSTM 10 %. The shipped `.env.example` sets different values (supervised 40 %, Isolation Forest 10 %, LSTM 0 %, Rules 20 %, Baseline 30 %) because the demo Isolation Forest / LSTM are synthetic; see Configuration.
 Any missing engine has its weight redistributed proportionally across the active engines.
 Payload regex rules (SQL injection, XSS, path traversal and the rest) are skipped on payloads that look encrypted or compressed: a TLS record header at the start, or a sample of at least 256 bytes with Shannon entropy of 7.0 bits/byte or more. Without this, rare chance matches inside bulk TLS or backup transfers surfaced as `CRITICAL_RULES` alerts (#68). Plaintext attacks are unaffected.
 Rules carries a deliberately high weight so a deterministic signature match is actually felt in the blend; in addition, any rule listed in `CRITICAL_RULES` forces an alert regardless of how the weighted engines vote.
@@ -128,7 +142,7 @@ CNDS can enrich detection with indicators of compromise (IOCs) from external thr
 | Feed | Environment Variable | Description |
 |------|---------------------|-------------|
 | [AbuseIPDB](https://www.abuseipdb.com/) | `ABUSEIPDB_URL`, `ABUSEIPDB_API_KEY` | CSV blacklist of malicious IPs |
-| JA3 hash lists | `MALICIOUS_JA3_URL` | Raw URL with one malicious JA3 hash per line |
+| JA3 hash lists | `MALICIOUS_JA3_URL` | URL of a JA3 list: one hash per line, or CSV with the hash in the first column (default: abuse.ch SSLBL, a static list last updated in 2021) |
 | [MISP](https://www.misp-project.org/) | `MISP_URL`, `MISP_API_KEY` | Pull IP/domain indicators from your MISP instance |
 
 Feeds are refreshed every `THREAT_INTEL_REFRESH_MINUTES` (default: 60) in a background thread. No network calls are made on the detection hot path — all lookups hit an in-memory set. If a feed is unreachable, the existing data is preserved and a warning is logged.
@@ -138,7 +152,7 @@ Feeds are refreshed every `THREAT_INTEL_REFRESH_MINUTES` (default: 60) in a back
 # .env
 ABUSEIPDB_URL=https://api.abuseipdb.com/api/v2/blacklist
 ABUSEIPDB_API_KEY=your-key-here
-MALICIOUS_JA3_URL=https://raw.githubusercontent.com/strangerealintel/ja3-fingerprints/main/ja3-hashes.txt
+MALICIOUS_JA3_URL=https://sslbl.abuse.ch/blacklist/ja3_fingerprints.csv
 THREAT_INTEL_REFRESH_MINUTES=60
 ```
 
@@ -486,7 +500,7 @@ pytest tests/test_flow_extractor.py -v
 
 Copy `.env.example` to `.env` and adjust as needed.
 
-**Where `.env` is read.** `docker-compose.yml` loads `.env.example` and then `.env` as `env_file` for `api`, `detector` and `demo-seed`. The Python code itself does not load `.env` (there is no `python-dotenv` call in `src/`), so for a bare `main.py` / `uvicorn` run export the variables yourself (`uvicorn ... --env-file .env` works for the API-only command; for `sudo main.py` use `set -a; . ./.env; set +a; sudo -E venv/bin/python main.py`). Because compose loads `.env.example` first, the containers run with the weights written there (supervised 0.35, iforest 0.25, lstm 0.15, rules 0.05, baseline 0.20) unless `.env` overrides them; the table below lists the defaults of `src/config.py`, which apply to bare runs.
+**Where `.env` is read.** `docker-compose.yml` loads `.env.example` and then `.env` as `env_file` for `api`, `detector` and `demo-seed`. The Python code itself does not load `.env` (there is no `python-dotenv` call in `src/`), so for a bare `main.py` / `uvicorn` run export the variables yourself (`uvicorn ... --env-file .env` works for the API-only command; for `sudo main.py` use `set -a; . ./.env; set +a; sudo -E venv/bin/python main.py`). Because compose loads `.env.example` first, the containers run with the weights written there (supervised 0.40, iforest 0.10, lstm 0.00, rules 0.20, baseline 0.30) unless `.env` overrides them; the table below lists the defaults of `src/config.py`, which apply to bare runs.
 
 **Note:** Configuration is validated on startup. Invalid settings (e.g., weights not summing to 1.0) will cause a `ConfigurationError`.
 
@@ -558,7 +572,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `BASELINE_THRESHOLD_MAX_RATIO` | `3.0` | Stability gate: a trained window is not promoted when its LSTM threshold is more than this factor above/below the median of the last accepted windows (`0` disables) |
 | `BASELINE_THRESHOLD_REF_WINDOWS` | `5` | Stability gate: how many accepted thresholds the median is taken over (in-process, reset on restart) |
 | `BASELINE_MAX_CONSECUTIVE_REJECTS` | `3` | Stability gate: after this many rejections in a row the new level is accepted as a regime change |
-| `DRIFT_ENABLED` | `true` | Track live-vs-training flow-feature drift (`GET /api/drift-status`); `DRIFT_WINDOW_FLOWS`, `DRIFT_FEATURE_Z`, `DRIFT_WARN_FRACTION`, `DRIFT_CRIT_FRACTION` tune it |
+| `DRIFT_ENABLED` | `true` | Track live-vs-training flow-feature drift (`GET /api/drift-status`); `DRIFT_WINDOW_FLOWS`, `DRIFT_MIN_FLOWS` (default 200: flows before a partial window is reported), `DRIFT_FEATURE_Z`, `DRIFT_WARN_FRACTION`, `DRIFT_CRIT_FRACTION` tune it |
 | `PROMETHEUS_ENABLED` | `false` | Enable Prometheus metrics at `/metrics` |
 | `METRICS_TOKEN` | _(empty)_ | When set, `/metrics` requires `Authorization: Bearer <token>`; empty keeps it public |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | _(empty)_ | OpenTelemetry OTLP endpoint |
@@ -590,7 +604,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `BASELINE_DRIFT_WARN` / `BASELINE_DRIFT_CRIT` | `0.30` / `0.60` | Drift-score thresholds for the `warning` / `critical` verdicts (below `WARN` it is `nominal`) in `/api/baseline/status` |
 | `ABUSEIPDB_URL` | _(empty)_ | AbuseIPDB blacklist URL; empty disables IP feed |
 | `ABUSEIPDB_API_KEY` | _(empty)_ | AbuseIPDB API key |
-| `MALICIOUS_JA3_URL` | _(empty)_ | URL to fetch known-malicious JA3 hashes (one per line) |
+| `MALICIOUS_JA3_URL` | _(empty)_ | URL to fetch known-malicious JA3 hashes (one per line, or CSV with the hash first) |
 | `MISP_URL` | _(empty)_ | MISP instance URL; empty disables MISP feed |
 | `MISP_API_KEY` | _(empty)_ | MISP API key |
 | `THREAT_INTEL_REFRESH_MINUTES` | `60` | How often to refresh threat intel feeds (minutes) |

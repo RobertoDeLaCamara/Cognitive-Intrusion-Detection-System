@@ -6,7 +6,7 @@ to enrich detection with known-bad indicators.
 
 Supported feeds (configurable via env):
   - ABUSEIPDB_URL: AbuseIPDB blocklist (CSV of malicious IPs)
-  - MALICIOUS_JA3_URL: URL to a raw JA3 hash list (one per line)
+  - MALICIOUS_JA3_URL: URL to a JA3 hash list (one hash per line, or CSV with the hash first)
   - MISP_URL / MISP_API_KEY: MISP instance for custom IOC pulls
 
 Feeds are refreshed every THREAT_INTEL_REFRESH_MINUTES (default: 60).
@@ -38,6 +38,7 @@ class ThreatIntelStore:
     """In-memory store of threat intelligence indicators with automatic refresh."""
     malicious_ips: Set[str] = field(default_factory=set)
     malicious_ja3: Set[str] = field(default_factory=set)
+    _warned_no_abuseipdb_key: bool = False
     malicious_domains: Set[str] = field(default_factory=set)
     last_refresh: float = 0.0
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -96,8 +97,16 @@ class ThreatIntelStore:
 
     def _fetch_abuseipdb(self) -> None:
         """Fetch IP blocklist from AbuseIPDB blacklist CSV."""
+        if not ABUSEIPDB_API_KEY:
+            if not self._warned_no_abuseipdb_key:
+                logger.warning(
+                    "ABUSEIPDB_URL is set but ABUSEIPDB_API_KEY is empty — "
+                    "skipping the AbuseIPDB feed (the API answers 401 without a key)"
+                )
+                self._warned_no_abuseipdb_key = True
+            return
         try:
-            headers = {"Key": ABUSEIPDB_API_KEY} if ABUSEIPDB_API_KEY else {}
+            headers = {"Key": ABUSEIPDB_API_KEY}
             resp = requests.get(ABUSEIPDB_URL, headers=headers, timeout=15)
             resp.raise_for_status()
             ips = set()
@@ -126,7 +135,10 @@ class ThreatIntelStore:
                 line = line.strip()
                 if not line or line.startswith("#"):
                     continue
-                ja3_set.add(line)
+                # Accept plain "hash" lines and CSV feeds ("hash,first_seen,...")
+                ja3_hash = line.split(",")[0].strip().lower()
+                if ja3_hash:
+                    ja3_set.add(ja3_hash)
             if ja3_set:
                 self.malicious_ja3 = ja3_set
                 logger.info("JA3 feed: loaded %d malicious hashes", len(ja3_set))

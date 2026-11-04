@@ -28,7 +28,7 @@ from .queries import QueryError
 logger = logging.getLogger(__name__)
 
 SERVER_NAME = "cnds"
-SERVER_VERSION = "1.0.0"
+from src.version import __version__ as SERVER_VERSION
 
 INSTRUCTIONS = """\
 Read-only access to a Cognitive Network Defense System (CNDS) sensor: a \

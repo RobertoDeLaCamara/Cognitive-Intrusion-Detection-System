@@ -17,8 +17,9 @@ the live detector, then compares the verdicts with ground truth:
 
 Not covered:
 
-- The live **baseline engine** and **threat-intel** boosts need state that only exists on a
-  running detector.
+- **Threat-intel** boosts, per-`(src_ip, attack_type)` dedup and suppression rules are not simulated.
+- The **baseline engine** is used when `MLFLOW_TRACKING_URI` points at the MLflow that holds the live-trained
+  model; without it the scorer redistributes its weight and scores are not comparable with a deployment that has it.
 - Only the engines whose model files are present are used; the report lists them. The
   Isolation Forest and LSTM in the repo are demo models, and `models/unified/` (FT-Transformer)
   is gitignored, so a fresh checkout replays with the rules and the bundled RF-lite model only.
@@ -73,14 +74,17 @@ False-positive rate on the benign background: 0 of 389. Reading the table:
   each unremarkable by itself; SSH brute force and a DNS burst have no rule. Catching them
   depends on the host-level engines (Isolation Forest, LSTM, baseline), which this replay
   does not run on a fresh checkout. Run it again with `models/` populated before drawing conclusions.
-- **With the production image's full engines the picture flips, and is still not representative.**
-  Replaying the same suite in the detector image on the Raspberry Pi (network disabled, models mounted
-  read-only, the deployment's own `.env`, threshold 0.65) detects every class (recall 100%) but flags
-  **all 389 benign flows**. The cause is not detection quality: the Isolation Forest and LSTM files are
-  the synthetic-data demo models, and the replay has no baseline engine (weight 0.35 on that deployment), so
-  the scorer redistributes the missing weight onto the remaining engines and the demo Isolation Forest
-  dominates. A replay is only comparable with production once the baseline engine can be loaded into it;
-  until then, quote the rules-only numbers above and treat the full-engine run as a calibration warning.
+- **Full production engines (measured on the Raspberry Pi deployment).** Replaying the same suite in the
+  detector image on the Pi (models mounted read-only, the deployment's own `.env`, threshold 0.65, baseline
+  model v28 loaded from MLflow) gives: sql_injection, xss and syn_flood detected; **port_scan (200 flows),
+  ssh_bruteforce (40) and dns_burst (300) not detected**; 0 of 389 benign flows flagged. The per-engine
+  tables explain it. The baseline and the LSTM do react (mean 0.95-1.00 on those three classes, against
+  0.83 and 0.71 on benign), but with the production weights (baseline 0.35, LSTM 0) their signal reaches at most
+  about 0.45 once the supervised model votes "Benign" (score 0.00), well under the 0.65 threshold.
+  The ablation confirms that dropping any engine other than the supervised one changes nothing.
+  Caveat: the baseline was trained on the Pi's real network, so the synthetic benign hosts are unfamiliar to
+  it (0.83 on average) and its separation here is small; the suite cannot tell a missing capability from an
+  out-of-distribution test set. Use a capture from the deployment's own LAN for the false-positive side.
 - `syn_flood` is detected in the replay but, as of this writing, not by the live detector on the
   Raspberry Pi 5 deployment (see "Known limitations" in the README). Detection logic is therefore
   not the cause; look at the capture-to-dispatch path.

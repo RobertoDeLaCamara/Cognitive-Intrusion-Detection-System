@@ -21,8 +21,16 @@ def iforest_score(raw_decision):
 
 
 def lstm_score(recon_error, threshold: float):
-    """Reconstruction error relative to the validation threshold, clipped to 1.0."""
-    return _out(np.minimum(np.asarray(recon_error, dtype=float) / max(threshold, 1e-9), 1.0))
+    """Reconstruction error relative to the validation threshold, mapped to [0, 1).
+
+    With ``r = error / threshold`` the score is ``r / (1 + r)``: 0.5 exactly at the threshold (the
+    same boundary convention as :func:`iforest_score`), 0.67 at twice the threshold, 0.91 at ten
+    times. It is monotone and never saturates, so an error 100x above the threshold still ranks
+    above one that only just crossed it. The previous ``min(r, 1)`` gave 1.0 to everything at or
+    above the threshold.
+    """
+    r = np.maximum(np.asarray(recon_error, dtype=float), 0.0) / max(threshold, 1e-9)
+    return _out(r / (1.0 + r))
 
 
 def combine_scores(s_iforest, s_lstm):

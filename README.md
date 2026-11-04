@@ -6,11 +6,13 @@
 
 ## Project status
 
-CNDS is under active development and has not had an official release yet. It is licensed under the [GNU AGPL v3](LICENSE). What to expect today:
+CNDS is at **2.0.0 release candidate** (pre-release): usable on a home LAN, not yet declared stable. It is licensed under the [GNU AGPL v3](LICENSE). What to expect today:
 
 - **Solid:** the rules, and the supervised engine (FT-Transformer trained on UNSW-NB15, F1 macro 0.62 on its test split: one useful signal, not a verdict).
 - **Demo only:** the Isolation Forest and LSTM files that `scripts/generate_demo_models.py` produces are trained on **synthetic** data and say nothing about your network. Do not rely on them; the shipped `.env.example` gives them little or no weight.
 - **Experimental:** the **baseline engine** (`src/unsupervised`) learns your own traffic and is the intended replacement for the demo models, but it is still being validated: it needs a training window of tens of thousands of flows before it scores anything, and on the one real window evaluated so far a large share of benign traffic scored high. Treat its alerts as hints.
+- **Not yet measured:** detection recall. The false-positive rate was tuned on a live Raspberry Pi 5 deployment (daily alerts fell from hundreds to a few dozen after suppression rules and a higher `ENSEMBLE_THRESHOLD`), but no true positive has been labelled on that deployment yet, so there is no recall or precision figure to quote. `cnds-red-team` is the planned way to produce one.
+- **Optional feeds:** the AbuseIPDB feed needs an API key; the default JA3 list is a static abuse.ch file last updated in 2021.
 - **Home-lab scale:** developed and run on a small LAN. It has not been load-tested on large networks or against live adversarial traffic.
 
 ---
@@ -140,7 +142,7 @@ CNDS can enrich detection with indicators of compromise (IOCs) from external thr
 | Feed | Environment Variable | Description |
 |------|---------------------|-------------|
 | [AbuseIPDB](https://www.abuseipdb.com/) | `ABUSEIPDB_URL`, `ABUSEIPDB_API_KEY` | CSV blacklist of malicious IPs |
-| JA3 hash lists | `MALICIOUS_JA3_URL` | Raw URL with one malicious JA3 hash per line |
+| JA3 hash lists | `MALICIOUS_JA3_URL` | URL of a JA3 list: one hash per line, or CSV with the hash in the first column (default: abuse.ch SSLBL, a static list last updated in 2021) |
 | [MISP](https://www.misp-project.org/) | `MISP_URL`, `MISP_API_KEY` | Pull IP/domain indicators from your MISP instance |
 
 Feeds are refreshed every `THREAT_INTEL_REFRESH_MINUTES` (default: 60) in a background thread. No network calls are made on the detection hot path — all lookups hit an in-memory set. If a feed is unreachable, the existing data is preserved and a warning is logged.
@@ -150,7 +152,7 @@ Feeds are refreshed every `THREAT_INTEL_REFRESH_MINUTES` (default: 60) in a back
 # .env
 ABUSEIPDB_URL=https://api.abuseipdb.com/api/v2/blacklist
 ABUSEIPDB_API_KEY=your-key-here
-MALICIOUS_JA3_URL=https://raw.githubusercontent.com/strangerealintel/ja3-fingerprints/main/ja3-hashes.txt
+MALICIOUS_JA3_URL=https://sslbl.abuse.ch/blacklist/ja3_fingerprints.csv
 THREAT_INTEL_REFRESH_MINUTES=60
 ```
 
@@ -570,7 +572,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `BASELINE_THRESHOLD_MAX_RATIO` | `3.0` | Stability gate: a trained window is not promoted when its LSTM threshold is more than this factor above/below the median of the last accepted windows (`0` disables) |
 | `BASELINE_THRESHOLD_REF_WINDOWS` | `5` | Stability gate: how many accepted thresholds the median is taken over (in-process, reset on restart) |
 | `BASELINE_MAX_CONSECUTIVE_REJECTS` | `3` | Stability gate: after this many rejections in a row the new level is accepted as a regime change |
-| `DRIFT_ENABLED` | `true` | Track live-vs-training flow-feature drift (`GET /api/drift-status`); `DRIFT_WINDOW_FLOWS`, `DRIFT_FEATURE_Z`, `DRIFT_WARN_FRACTION`, `DRIFT_CRIT_FRACTION` tune it |
+| `DRIFT_ENABLED` | `true` | Track live-vs-training flow-feature drift (`GET /api/drift-status`); `DRIFT_WINDOW_FLOWS`, `DRIFT_MIN_FLOWS` (default 200: flows before a partial window is reported), `DRIFT_FEATURE_Z`, `DRIFT_WARN_FRACTION`, `DRIFT_CRIT_FRACTION` tune it |
 | `PROMETHEUS_ENABLED` | `false` | Enable Prometheus metrics at `/metrics` |
 | `METRICS_TOKEN` | _(empty)_ | When set, `/metrics` requires `Authorization: Bearer <token>`; empty keeps it public |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | _(empty)_ | OpenTelemetry OTLP endpoint |
@@ -602,7 +604,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `BASELINE_DRIFT_WARN` / `BASELINE_DRIFT_CRIT` | `0.30` / `0.60` | Drift-score thresholds for the `warning` / `critical` verdicts (below `WARN` it is `nominal`) in `/api/baseline/status` |
 | `ABUSEIPDB_URL` | _(empty)_ | AbuseIPDB blacklist URL; empty disables IP feed |
 | `ABUSEIPDB_API_KEY` | _(empty)_ | AbuseIPDB API key |
-| `MALICIOUS_JA3_URL` | _(empty)_ | URL to fetch known-malicious JA3 hashes (one per line) |
+| `MALICIOUS_JA3_URL` | _(empty)_ | URL to fetch known-malicious JA3 hashes (one per line, or CSV with the hash first) |
 | `MISP_URL` | _(empty)_ | MISP instance URL; empty disables MISP feed |
 | `MISP_API_KEY` | _(empty)_ | MISP API key |
 | `THREAT_INTEL_REFRESH_MINUTES` | `60` | How often to refresh threat intel feeds (minutes) |

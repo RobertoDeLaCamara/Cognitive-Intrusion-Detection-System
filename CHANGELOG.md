@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.0.0-rc.1] - 2026-11-04
+
+First pre-release since 1.2.1 (1.3.0 below was never tagged and is included here). **Contains breaking security changes**: see the Security section and "Upgrading to 2.0" in `doc/deployment.md`.
+
 ### Security
 - **`/api/auth/users` was open in API-key-only mode.** The key middleware skipped every `/api/auth*` path and `require_role` does nothing without `JWT_SECRET`, so with only `API_KEY` set anyone could list, create (admin included) and delete users without a key. Only `/api/auth/token` is exempt now; `/api/auth/users*` is exempt only when JWT is on (the admin role check guards it) and needs `X-API-Key` otherwise. Deployments running with `API_KEY` alone were affected; no credentials leak (password hashes are not returned), but an attacker could create an admin user, so check `GET /api/auth/users` for unknown accounts.
 
@@ -15,6 +19,8 @@ All notable changes to this project will be documented in this file.
 - **Baseline stability gate**: a retrained window is no longer promoted when its LSTM threshold is more than `BASELINE_THRESHOLD_MAX_RATIO` (3.0) times above/below the median of the last accepted windows; after `BASELINE_MAX_CONSECUTIVE_REJECTS` (3) rejections in a row the new level is accepted as a regime change. Seen on raspi-189 with 3000-vector windows: p99 thresholds of 0.32 and 8.93 for consecutive windows of the same network. Larger windows (`BASELINE_MIN_VECTORS`) also steady it.
 
 ### Changed
+- **Detector `mem_limit` 1.5g → 2g** in `docker-compose.yml` (1.32 GiB used two days after deploy on a Pi 5).
+- **Docs:** `doc/deployment.md` / wiki `Deployment` gain "Operating Notes" (`[ALERT]` vs `[SUPPRESSED]`, narrow suppression rules, baseline training, memory) and "Upgrading to 2.0"; `DRIFT_MIN_FLOWS` documented; `SECURITY.md` lists supported versions.
 - **Honest defaults and status.** `.env.example` (which `docker-compose.yml` loads before `.env`) no longer gives 40 % of the ensemble to the synthetic demo Isolation Forest / LSTM: weights are now supervised 0.40, iforest 0.10, lstm 0.00, rules 0.20, baseline 0.30. The README has a "Project status" section (AGPL v3, no official release yet, what is solid, demo-only or experimental), its engine table lists the baseline engine and flags the demo models as synthetic, and `doc/product.md` no longer claims enterprise-grade detection or full parity with commercial NDR (competitor cells are marked as generalisations; baseline and feedback learning are marked experimental/partial). Deployments that set their own `WEIGHT_*` in `.env` are unaffected.
 - **Host volume features are windowed instead of cumulative (host-feature schema 2).** `total_packets`, `total_bytes`, `session_duration`, `packets_per_sec` and `bytes_per_sec` were totals since a host was first seen, so on stationary traffic they grew x8.5 in about an hour and the baseline LSTM, trained on one hour, scored the next as unusual (16 % of benign rows above 0.65 on the first raspi-189 window, all from the LSTM). They are now computed over the host's last `HOST_WINDOW_SIZE` packets. Models carry `feature_schema.txt`; `BaselineEngine` ignores any model trained on another schema, so after deploying it stays off until one new window is trained (about an hour at the current thresholds). The legacy demo IsolationForest/LSTM read the same 18 features and see the new values too.
 - **Dashboard Geography tab says why it is empty**: no alerts, only private/multicast sources (nothing to locate), or public sources without a location (GeoIP disabled or database missing, with the setting to fix it). It used to show one generic line.
@@ -72,10 +78,11 @@ All notable changes to this project will be documented in this file.
 - **Jenkinsfile** — images are pushed to the registry only from `master` (or the legacy single-branch job); other branches build and test only. A new advisory "Claude PR review" stage posts a review on the Gitea PR and never fails the build.
 
 ### Fixed
+- **Threat-intel feeds no longer fail every hour** — the default JA3 feed is now the abuse.ch SSLBL CSV (the previous URL returned 404), CSV feeds (hash in the first column) are accepted, and the AbuseIPDB fetch is skipped with one warning when `ABUSEIPDB_API_KEY` is empty (the API answers 401 without a key).
 - **Payload and JA3 attribution** — payload pattern hits and the TLS ClientHello JA3 fingerprint are now attached to their own flow instead of whichever flow from the same host expired next; `payload_matches`, ports and protocol are persisted on alerts written by the capture pipeline.
 - **`sql_injection` and `command_injection` payload regexes** no longer match binary noise.
 
-## [1.3.0] - 2026-09-14
+## [1.3.0] - 2026-09-14 (never tagged; shipped in 2.0.0-rc.1)
 
 ### Added
 - **Read-only MCP server (`src/mcp_server/`)** — exposes the alert store to [Model Context Protocol](https://modelcontextprotocol.io) clients (Claude Code, Claude Desktop, any MCP-compatible agent) over stdio, so an analyst can triage conversationally instead of paging through alert JSON. Opt-in and out of process: the protocol SDK lives in a separate `requirements-mcp.txt` and nothing in the detector, API or dashboard imports it. Nine tools: `list_alerts`, `get_alert`, `get_ip_profile`, `alert_trends`, `get_stats`, `list_incidents`, `list_mitigation_actions`, `list_suppression_rules`, `get_detection_config`.

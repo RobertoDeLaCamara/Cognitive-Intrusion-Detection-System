@@ -2,7 +2,11 @@
 
 ## Supported versions
 
-CNDS has not had an official release yet. Only the current `master` branch receives security fixes. Once releases exist, this section will list the supported ones.
+| Version | Supported |
+|---|---|
+| 2.0.x (including release candidates) | Yes |
+| `master` | Yes |
+| 1.x | No: upgrade to 2.0 (see the "Upgrading to 2.0" section of `doc/deployment.md`) |
 
 ## Reporting a vulnerability
 

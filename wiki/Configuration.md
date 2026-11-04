@@ -168,8 +168,8 @@ Variables marked _reserved_ are defined in `src/config.py` but no runtime code r
 | Variable | Default | Description |
 |---|---|---|
 | `ABUSEIPDB_URL` | _(empty)_ | AbuseIPDB blacklist URL; empty disables the IP feed |
-| `ABUSEIPDB_API_KEY` | _(empty)_ | AbuseIPDB API key |
-| `MALICIOUS_JA3_URL` | _(empty)_ | URL of a known-bad JA3 hash list (one per line) |
+| `ABUSEIPDB_API_KEY` | _(empty)_ | AbuseIPDB API key. **Required** for the IP feed: without it the feed is skipped with one warning (the API answers 401) |
+| `MALICIOUS_JA3_URL` | _(empty)_ | URL of a known-bad JA3 hash list (one hash per line, or CSV with the hash first; `.env.example` uses the abuse.ch SSLBL CSV, a static list last updated in 2021) |
 | `MISP_URL`, `MISP_API_KEY` | _(empty)_ | MISP instance and key |
 | `THREAT_INTEL_REFRESH_MINUTES` | `60` | Refresh interval |
 
@@ -217,3 +217,13 @@ The four `BASELINE_MIN_*` variables are the trigger thresholds; all four must ho
 |---|---|---|
 | `POSTGRES_PASSWORD` | `docker-compose.yml` | Required; compose refuses to start without it |
 | `CNDS_API_URL` | `dashboard/app.py` | API base URL for the dashboard (default `http://localhost:8000`) |
+
+## Input Drift (supervised model)
+
+| Variable | Default | Description |
+|---|---|---|
+| `DRIFT_ENABLED` | `true` | Track live-vs-training flow-feature drift (`GET /api/drift-status`) |
+| `DRIFT_WINDOW_FLOWS` | `5000` | Flows per tumbling window |
+| `DRIFT_MIN_FLOWS` | `200` | Flows needed before a partial window is reported |
+| `DRIFT_FEATURE_Z` | `1.0` | Per-feature shift, in training standard deviations, that counts as drifted |
+| `DRIFT_WARN_FRACTION`, `DRIFT_CRIT_FRACTION` | `0.10`, `0.25` | Share of drifted features that gives the `warning` / `critical` verdict |

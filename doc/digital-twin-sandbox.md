@@ -169,21 +169,28 @@ python scripts/pcap_replay.py demo/traffic/nas_sqli.pcap [more.pcap ...] \
 {
   "files": {
     "demo/traffic/nas_sqli.pcap": {
-      "metrics": {"total_flows": 1, "tp": 0, "fp": 0, "tn": 0, "fn": 0, "precision": 0.0, "recall": 0.0, "f1": 0.0, "accuracy": 0.0},
+      "metrics": {"total_flows": 1, "accuracy": 0.0, "f1": 0.0, "tp": 0, "fp": 0, "tn": 1, "fn": 0, "precision": 0.0, "recall": 0.0, "fp_rate": 0.0},
+      "per_class": {},
       "predictions": [
-        {"flow_key": "10.0.0.1-192.168.1.60-55000-5000-6", "src_ip": "10.0.0.1", "dst_ip": "192.168.1.60",
-         "ensemble_score": 1.0, "is_anomaly": true, "attack_type": "BENIGN",
+        {"flow_key": "10.0.0.1-192.168.1.60-55000-5000-6", "src_ip": "10.0.0.1", "dst_ip": "192.168.1.60", "dst_port": 5000,
+         "ensemble_score": 1.0, "is_anomaly": true, "attack_type": "BENIGN", "true_label": "BENIGN",
          "active_engines": ["supervised", "isolation_forest", "rules"],
          "triggered_rules": ["payload:sql_injection"]}
       ]
     }
   },
-  "aggregate": {"total_flows": 1, "tp": 0, "fp": 0, "tn": 0, "fn": 0, "precision": 0.0, "recall": 0.0, "f1": 0.0, "accuracy": 0.0},
+  "aggregate": {"total_flows": 1, "tp": 0, "fp": 1, "tn": 0, "fn": 0, "...": "..."},
+  "per_class": {},
+  "threshold_sweep": {"0.5": {"recall": 0.0, "fp_rate": 1.0}, "0.65": {}, "0.8": {}},
+  "threshold": 0.55,
   "engines": {"supervised": true, "isolation_forest": true, "lstm": false, "rules": true}
 }
 ```
 
-Confusion-matrix metrics are non-zero only when `--labels` is supplied.
+Without `--labels` or `--attacks` every flow counts as `BENIGN`, so a flagged flow shows up as a false
+positive and recall is 0. Supply ground truth (`--labels` per flow, `--attacks` per attacker and time
+window) and add `--report report.md` for a per-class Markdown summary. See
+[evaluation.md](evaluation.md) for the method and its limits.
 
 This is the primary tool for **offline PCAP evaluation** against real-world capture files, penetration test captures, or CTF challenge traffic.
 

@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Recall per attack class from a PCAP replay.** `scripts/pcap_replay.py` scores flows by the packets' capture time as they time out, attributes payload hits to their own flow, matches ground truth per flow (`--labels`, either direction) or per attacker and time window (`--attacks`, new), and reports recall per class, the benign false-positive rate, the rules that fired and a threshold sweep (`--report report.md`). The old replay accumulated payload hits per source host, so every later flow of an attacker looked like the attack. New `scripts/make_labelled_pcap.py` builds a synthetic labelled suite (benign background plus port scan, SYN flood, SQL injection, XSS, SSH brute force, DNS burst); method, limits and the current result are in `doc/evaluation.md` (wiki: Evaluation).
+- `FlowExtractor.process_packet`, `FlowExtractor.collect_expired` and `HostExtractor.process_packet` / `extract_features` accept an optional capture time (default: wall clock, so live capture is unchanged).
+
+### Fixed
+- Docs showed `pcap_replay.py` flags that do not exist (`--pcap`, `--output-features`, `--model-path`, `--ground-truth`); corrected, and the output format in `doc/digital-twin-sandbox.md` matches the new script.
+
 ## [2.0.0-rc.1] - 2026-11-04
 
 First pre-release since 1.2.1 (1.3.0 below was never tagged and is included here). **Contains breaking security changes**: see the Security section and "Upgrading to 2.0" in `doc/deployment.md`.

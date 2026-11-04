@@ -76,3 +76,25 @@ def test_flow_labels_match_either_direction():
     labels = {"1.1.1.1-2.2.2.2-1234-80-6": "Web Attack"}
     assert rp.true_label(("2.2.2.2", "1.1.1.1", 80, 1234, 6), 0.0, 0.0, labels, None) == "Web Attack"
     assert rp.true_label(("9.9.9.9", "1.1.1.1", 80, 1234, 6), 0.0, 0.0, labels, None) == "BENIGN"
+
+
+def test_baseline_engine_is_scored_like_the_pipeline(monkeypatch):
+    rp = _load("pcap_replay")
+
+    class Stub:
+        is_available = True
+        def __init__(self): self.updated = []
+        def update(self, ip, vec): self.updated.append(ip)
+        def anomaly_score(self, ip, vec): return 0.9
+
+    stub = Stub()
+    monkeypatch.setattr(rp, "baseline", stub)
+
+    class Rec:
+        key = ("10.0.0.1", "10.0.0.2", 1234, 80, 6)
+        src_ip = "10.0.0.1"
+
+    import numpy as np
+    pred = rp.run_detection(Rec(), None, np.zeros(18, dtype=np.float32), [])
+    assert stub.updated == ["10.0.0.1"]
+    assert "baseline" in pred["active_engines"]

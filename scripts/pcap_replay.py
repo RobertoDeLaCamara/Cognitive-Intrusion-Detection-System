@@ -15,9 +15,10 @@ Ground truth, either or both:
              attack traffic when the attacker is the flow's initiator (its first packet's
              source) and the flow starts inside the window. Everything unmatched is BENIGN.
 
-Not covered: the live baseline engine and threat-intel boosts (they depend on state that
-only exists on a running detector), and the IF/LSTM files shipped in the repo are demo
-models, so the report lists which engines were actually available.
+The baseline engine is used when MLFLOW_TRACKING_URI points at the MLflow holding the
+live-trained model (it is then the same model the detector serves). Not covered: threat-intel
+boosts, dedup and suppression. The IF/LSTM files shipped in the repo are demo models, so the
+report lists which engines were actually available.
 
 Usage:
     python scripts/pcap_replay.py capture.pcap --attacks attacks.csv --report report.md
@@ -41,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.features.flow_extractor import FlowExtractor
 from src.features.host_extractor import HostExtractor
 from src.features.payload_analyzer import analyze_payload
-from src.engines.registry import supervised, iforest, lstm, rules, ensemble
+from src.engines.registry import supervised, iforest, lstm, baseline, rules, ensemble
 from src.ensemble.scorer import EngineScores
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -236,6 +237,12 @@ def run_detection(record, flow_vec, host_vec, payload_matches) -> dict:
         lstm.update(record.key[0], host_vec)
         scores.lstm = lstm.anomaly_score(record.key[0])
 
+    # Baseline engine (live-trained model loaded from MLflow when MLFLOW_TRACKING_URI is set),
+    # fed in the same order as src/pipeline.py: update the ring buffer, then score.
+    if host_vec is not None and baseline.is_available:
+        baseline.update(record.key[0], host_vec)
+        scores.baseline = baseline.anomaly_score(record.key[0], host_vec)
+
     if flow_vec is not None:
         rule_score, triggered = rules.evaluate(record, flow_vec, payload_matches)
         scores.rules = rule_score
@@ -307,14 +314,23 @@ def replay_pcap(pcap_path: str, labels=None, attacks=None) -> EvalResult:
 
 def engines_available() -> dict:
     return {"supervised": supervised.is_available, "isolation_forest": iforest.is_available,
-            "lstm": lstm.is_available, "rules": True}
+            "lstm": lstm.is_available, "baseline": baseline.is_available, "rules": True}
 
 
 def markdown_report(agg: EvalResult, files: List[str], threshold: float) -> str:
     lines = ["# CNDS detection coverage (PCAP replay)", "",
              f"Files: {', '.join(files)}", f"Ensemble threshold: {threshold}", "",
              "Engines available: " + ", ".join(f"{k}={'yes' if v else 'no'}" for k, v in engines_available().items()),
-             "", "Not covered: live baseline engine and threat-intel boosts.", ""]
+             ""]
+    info = baseline.get_info()
+    if info["available"]:
+        lines += [f"Baseline model: version {info['version']} (LSTM threshold {info['threshold']:.3f}). "
+                  "It was trained on the live network it came from, not on this capture.", ""]
+    else:
+        lines += ["Baseline engine not loaded (set MLFLOW_TRACKING_URI to the MLflow that holds "
+                  "`cnds-unsupervised-baseline`). Without it the scorer redistributes its weight "
+                  "onto the other engines, so scores are NOT comparable with a deployment that has it.", ""]
+    lines += ["Not covered: threat-intel boosts, per-(src, type) dedup, suppression rules.", ""]
     lines += ["## Recall per attack class", "", "| Class | Flows | Detected | Recall | Rules that fired |", "|---|---|---|---|---|"]
     for label, d in agg.per_class().items():
         rules_txt = ", ".join(f"{r} ({n})" for r, n in d["top_rules"].items()) or "none"

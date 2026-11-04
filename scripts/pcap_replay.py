@@ -31,7 +31,7 @@ import json
 import logging
 import sys
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -41,7 +41,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.features.flow_extractor import FlowExtractor
 from src.features.host_extractor import HostExtractor
-from src.features.payload_analyzer import analyze_payload
+from src.features.payload_analyzer import analyze_payload, extract_payload_features
+from src.labels import is_benign
 from src.engines.registry import supervised, iforest, lstm, baseline, rules, ensemble
 from src.ensemble.scorer import EngineScores
 
@@ -49,6 +50,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 BENIGN = "BENIGN"
+ENGINE_FIELDS = ("supervised", "isolation_forest", "lstm", "baseline", "rules")
 SWEEP = (0.5, 0.65, 0.8)
 EXPIRE_EVERY_S = 10.0  # how often (capture time) timed-out flows are collected
 
@@ -222,11 +224,14 @@ def run_detection(record, flow_vec, host_vec, payload_matches) -> dict:
     """Run all engines on one flow and return the prediction dict."""
     scores = EngineScores()
 
+    # Same calls as the live dispatcher/pipeline: payload features go to the supervised engine,
+    # and benign labels are recognised by src.labels.is_benign ("Benign", "BENIGN", ...).
+    payload_features = extract_payload_features(record.fwd_payloads)
     if flow_vec is not None and supervised.is_available:
-        result = supervised.predict(flow_vec)
+        result = supervised.predict(flow_vec, payload_features)
         if result:
             label, conf = result
-            scores.supervised = 0.0 if label == "BENIGN" else conf
+            scores.supervised = 0.0 if is_benign(label) else conf
             scores.attack_type = label
             scores.supervised_confidence = conf
 
@@ -249,7 +254,20 @@ def run_detection(record, flow_vec, host_vec, payload_matches) -> dict:
         scores.triggered_rules = triggered
 
     result = ensemble.score(scores)
+
+    # Ablation: the same flow scored with one engine switched off (None = "no opinion", so the
+    # scorer redistributes its weight). Shows which engine pushes a flow over the threshold.
+    ablation = {}
+    for name in ENGINE_FIELDS:
+        if getattr(scores, name) is None:
+            continue
+        r = ensemble.score(replace(scores, **{name: None}))
+        ablation[name] = {"score": round(r.score, 4), "is_anomaly": bool(r.is_anomaly)}
+
     return {
+        "engine_scores": {n: (None if getattr(scores, n) is None else round(float(getattr(scores, n)), 4))
+                          for n in ENGINE_FIELDS},
+        "ablation": ablation,
         "flow_key": flow_key_str(record.key),
         "src_ip": record.key[0],
         "dst_ip": record.key[1],
@@ -336,6 +354,30 @@ def markdown_report(agg: EvalResult, files: List[str], threshold: float) -> str:
         rules_txt = ", ".join(f"{r} ({n})" for r, n in d["top_rules"].items()) or "none"
         lines.append(f"| {label} | {d['flows']} | {d['detected']} | {d['recall']:.0%} | {rules_txt} |")
     _tp, fp, tn, _fn = agg._counts()
+    lines += ["", "## Mean engine score per class", "",
+              "| Class | " + " | ".join(ENGINE_FIELDS) + " |", "|---|" + "---|" * len(ENGINE_FIELDS)]
+    for label in ["BENIGN"] + list(agg.per_class()):
+        rows = [p for p in agg.predictions if p["true_label"] == label]
+        cells = []
+        for n in ENGINE_FIELDS:
+            vals = [p["engine_scores"][n] for p in rows if p["engine_scores"][n] is not None]
+            cells.append(f"{sum(vals) / len(vals):.2f}" if vals else "-")
+        lines.append(f"| {label} | " + " | ".join(cells) + " |")
+    lines += ["", "## Ablation: switch one engine off", "",
+              "Flows flagged when the engine is removed and its weight redistributed "
+              "(a large drop in false positives points at the engine producing them).", "",
+              "| Engine removed | Benign flagged | Attack recall |", "|---|---|---|"]
+    ben = [p for p in agg.predictions if p["true_label"] == BENIGN]
+    att = [p for p in agg.predictions if p["true_label"] != BENIGN]
+    base_fp = sum(p["is_anomaly"] for p in ben)
+    base_tp = sum(p["is_anomaly"] for p in att)
+    lines.append(f"| none (baseline run) | {base_fp}/{len(ben)} | {base_tp}/{len(att)} |")
+    for n in ENGINE_FIELDS:
+        if not any(n in p["ablation"] for p in agg.predictions):
+            continue
+        fp_n = sum(p["ablation"].get(n, {"is_anomaly": p["is_anomaly"]})["is_anomaly"] for p in ben)
+        tp_n = sum(p["ablation"].get(n, {"is_anomaly": p["is_anomaly"]})["is_anomaly"] for p in att)
+        lines.append(f"| {n} | {fp_n}/{len(ben)} | {tp_n}/{len(att)} |")
     lines += ["", "## Benign traffic", "",
               f"{fp + tn} benign flows, {fp} flagged (false-positive rate {fp / max(fp + tn, 1):.1%}).", "",
               "## Threshold sweep (score >= threshold)", "",

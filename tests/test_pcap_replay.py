@@ -89,12 +89,38 @@ def test_baseline_engine_is_scored_like_the_pipeline(monkeypatch):
 
     stub = Stub()
     monkeypatch.setattr(rp, "baseline", stub)
+    monkeypatch.setattr(rp, "rules", type("R", (), {"evaluate": staticmethod(lambda *a, **k: (0.0, []))})())
 
     class Rec:
         key = ("10.0.0.1", "10.0.0.2", 1234, 80, 6)
         src_ip = "10.0.0.1"
+        fwd_payloads = []
 
     import numpy as np
     pred = rp.run_detection(Rec(), None, np.zeros(18, dtype=np.float32), [])
     assert stub.updated == ["10.0.0.1"]
     assert "baseline" in pred["active_engines"]
+
+
+@pytest.mark.parametrize("label", ["Benign", "BENIGN", "benign"])
+def test_benign_label_of_any_casing_scores_zero(monkeypatch, label):
+    """The FT-Transformer answers "Benign"; comparing with "BENIGN" scored every flow as an attack."""
+    rp = _load("pcap_replay")
+
+    class Sup:
+        is_available = True
+        def predict(self, vec, payload=None): return label, 0.99
+
+    monkeypatch.setattr(rp, "supervised", Sup())
+    monkeypatch.setattr(rp, "iforest", type("X", (), {"is_available": False})())
+    monkeypatch.setattr(rp, "lstm", type("X", (), {"is_available": False})())
+    monkeypatch.setattr(rp, "baseline", type("X", (), {"is_available": False})())
+    monkeypatch.setattr(rp, "rules", type("R", (), {"evaluate": staticmethod(lambda *a, **k: (0.0, []))})())
+
+    class Rec:
+        key = ("10.0.0.1", "10.0.0.2", 1234, 80, 6)
+        fwd_payloads = []
+
+    import numpy as np
+    pred = rp.run_detection(Rec(), np.zeros(76, dtype=np.float32), None, [])
+    assert pred["engine_scores"]["supervised"] == 0.0

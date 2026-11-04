@@ -168,8 +168,8 @@ Variables marked _reserved_ are defined in `src/config.py` but no runtime code r
 | Variable | Default | Description |
 |---|---|---|
 | `ABUSEIPDB_URL` | _(empty)_ | AbuseIPDB blacklist URL; empty disables the IP feed |
-| `ABUSEIPDB_API_KEY` | _(empty)_ | AbuseIPDB API key |
-| `MALICIOUS_JA3_URL` | _(empty)_ | URL of a known-bad JA3 hash list (one per line) |
+| `ABUSEIPDB_API_KEY` | _(empty)_ | AbuseIPDB API key. **Required** for the IP feed: without it the feed is skipped with one warning (the API answers 401) |
+| `MALICIOUS_JA3_URL` | _(empty)_ | URL of a known-bad JA3 hash list (one hash per line, or CSV with the hash first; `.env.example` uses the abuse.ch SSLBL CSV, a static list last updated in 2021) |
 | `MISP_URL`, `MISP_API_KEY` | _(empty)_ | MISP instance and key |
 | `THREAT_INTEL_REFRESH_MINUTES` | `60` | Refresh interval |
 

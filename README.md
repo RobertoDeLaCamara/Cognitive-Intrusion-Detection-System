@@ -140,7 +140,7 @@ CNDS can enrich detection with indicators of compromise (IOCs) from external thr
 | Feed | Environment Variable | Description |
 |------|---------------------|-------------|
 | [AbuseIPDB](https://www.abuseipdb.com/) | `ABUSEIPDB_URL`, `ABUSEIPDB_API_KEY` | CSV blacklist of malicious IPs |
-| JA3 hash lists | `MALICIOUS_JA3_URL` | Raw URL with one malicious JA3 hash per line |
+| JA3 hash lists | `MALICIOUS_JA3_URL` | URL of a JA3 list: one hash per line, or CSV with the hash in the first column (default: abuse.ch SSLBL, a static list last updated in 2021) |
 | [MISP](https://www.misp-project.org/) | `MISP_URL`, `MISP_API_KEY` | Pull IP/domain indicators from your MISP instance |
 
 Feeds are refreshed every `THREAT_INTEL_REFRESH_MINUTES` (default: 60) in a background thread. No network calls are made on the detection hot path — all lookups hit an in-memory set. If a feed is unreachable, the existing data is preserved and a warning is logged.
@@ -150,7 +150,7 @@ Feeds are refreshed every `THREAT_INTEL_REFRESH_MINUTES` (default: 60) in a back
 # .env
 ABUSEIPDB_URL=https://api.abuseipdb.com/api/v2/blacklist
 ABUSEIPDB_API_KEY=your-key-here
-MALICIOUS_JA3_URL=https://raw.githubusercontent.com/strangerealintel/ja3-fingerprints/main/ja3-hashes.txt
+MALICIOUS_JA3_URL=https://sslbl.abuse.ch/blacklist/ja3_fingerprints.csv
 THREAT_INTEL_REFRESH_MINUTES=60
 ```
 
@@ -602,7 +602,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `BASELINE_DRIFT_WARN` / `BASELINE_DRIFT_CRIT` | `0.30` / `0.60` | Drift-score thresholds for the `warning` / `critical` verdicts (below `WARN` it is `nominal`) in `/api/baseline/status` |
 | `ABUSEIPDB_URL` | _(empty)_ | AbuseIPDB blacklist URL; empty disables IP feed |
 | `ABUSEIPDB_API_KEY` | _(empty)_ | AbuseIPDB API key |
-| `MALICIOUS_JA3_URL` | _(empty)_ | URL to fetch known-malicious JA3 hashes (one per line) |
+| `MALICIOUS_JA3_URL` | _(empty)_ | URL to fetch known-malicious JA3 hashes (one per line, or CSV with the hash first) |
 | `MISP_URL` | _(empty)_ | MISP instance URL; empty disables MISP feed |
 | `MISP_API_KEY` | _(empty)_ | MISP API key |
 | `THREAT_INTEL_REFRESH_MINUTES` | `60` | How often to refresh threat intel feeds (minutes) |

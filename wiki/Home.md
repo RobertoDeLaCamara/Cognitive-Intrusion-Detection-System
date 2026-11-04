@@ -40,7 +40,7 @@ uvicorn src.api.main:app --port 8000   # API only
 3. [Detection Engines](Detection-Engines.md), [Ensemble Scoring](Ensemble-Scoring.md), [Feature Extraction](Feature-Extraction.md), [ML Pipeline](ML-Pipeline.md)
 4. [API Reference](API-Reference.md) and [REST API](REST-API.md)
 5. [Alert Enrichment](Alert-Enrichment.md), [Enrichment and SIEM Integration](Enrichment-and-SIEM.md), [SIEM Integration](SIEM-Integration.md), [MITRE ATT&CK Mapping](MITRE-ATT&CK-Mapping.md)
-6. [Development Guide](Development-Guide.md), [Testing](Testing.md), [CI/CD Pipeline](CI-CD-Pipeline.md), [Contributing](Contributing.md), [Changelog](Changelog.md)
+6. [Development Guide](Development-Guide.md), [Testing](Testing.md), [Measuring detection coverage](Evaluation.md), [CI/CD Pipeline](CI-CD-Pipeline.md), [Contributing](Contributing.md), [Changelog](Changelog.md)
 
 ## Key Layout
 

@@ -386,7 +386,7 @@ This is distinct from the IP allowlist (which skips all detection from an IP) â€
 4. Review detection rates per scenario, false positive counts, and MITRE technique coverage.
 5. Use `scripts/pcap_replay.py` for custom PCAP evaluation:
    ```bash
-   python scripts/pcap_replay.py --pcap captures/lab_traffic.pcap --output results.json
+   python scripts/pcap_replay.py captures/lab_traffic.pcap --output results.json
    ```
 
 See [digital-twin-sandbox.md](digital-twin-sandbox.md) for the full demo documentation.

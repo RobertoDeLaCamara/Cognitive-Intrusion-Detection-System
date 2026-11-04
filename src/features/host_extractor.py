@@ -90,18 +90,19 @@ class HostExtractor:
         self._data: Dict[str, HostHistory] = defaultdict(HostHistory)
         self._lock = threading.RLock()
 
-    def process_packet(self, packet) -> Optional[str]:
+    def process_packet(self, packet, timestamp: Optional[float] = None) -> Optional[str]:
         if IP not in packet:
             return None
         src = packet[IP].src
-        ts = time.time()
+        ts = time.time() if timestamp is None else timestamp
         with self._lock:
             if len(self._data) >= MAX_TRACKED_IPS and src not in self._data:
                 self._evict_least_active()
             self._data[src].add_packet(packet, ts)
         return src
 
-    def extract_features(self, ip: str) -> Optional[np.ndarray]:
+    def extract_features(self, ip: str, now: Optional[float] = None) -> Optional[np.ndarray]:
+        """Host feature vector; *now* (default wall clock) is the end of the rate window (replay passes capture time)."""
         with self._lock:
             if ip not in self._data:
                 return None
@@ -124,12 +125,12 @@ class HostExtractor:
             )
 
         try:
-            return self._compute(snapshot)
+            return self._compute(snapshot, now)
         except Exception:
             return None
 
-    def _compute(self, h: HostHistory) -> np.ndarray:
-        now = time.time()
+    def _compute(self, h: HostHistory, now: Optional[float] = None) -> np.ndarray:
+        now = time.time() if now is None else now
         # Every volume/rate/duration feature is taken over the sliding window of the last
         # HOST_WINDOW_SIZE packets, not over the host's lifetime: lifetime totals grow without
         # bound on stationary traffic (x8 in 40 min on raspi-189), so a model trained on them

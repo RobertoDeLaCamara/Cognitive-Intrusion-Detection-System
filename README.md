@@ -12,6 +12,7 @@ CNDS is at **2.0.0 release candidate** (pre-release): usable on a home LAN, not 
 - **Demo only:** the Isolation Forest and LSTM files that `scripts/generate_demo_models.py` produces are trained on **synthetic** data and say nothing about your network. Do not rely on them; the shipped `.env.example` gives them little or no weight.
 - **Experimental:** the **baseline engine** (`src/unsupervised`) learns your own traffic and is the intended replacement for the demo models, but it is still being validated: it needs a training window of tens of thousands of flows before it scores anything, and on the one real window evaluated so far a large share of benign traffic scored high. Treat its alerts as hints.
 - **Not yet measured:** detection recall. The false-positive rate was tuned on a live Raspberry Pi 5 deployment (daily alerts fell from hundreds to a few dozen after suppression rules and a higher `ENSEMBLE_THRESHOLD`), but no true positive has been labelled on that deployment yet, so there is no recall or precision figure to quote. `cnds-red-team` is the planned way to produce one.
+- **Known detection gaps** (found with the synthetic replay suite on the Raspberry Pi deployment, see [`doc/evaluation.md`](doc/evaluation.md)): network scans (many ports from one host), SSH brute force and DNS query bursts are **not** alerted on today. SQL injection, XSS and single-flow SYN floods are (signature rules). The behavioural engines do react to the first three, but the blend with the supervised model's "Benign" vote keeps the score under the alert threshold. A raw-socket SYN flood is detected in replay but did not produce an alert from the live detector in tests on 2026-10-21; the cause is not found yet.
 - **Optional feeds:** the AbuseIPDB feed needs an API key; the default JA3 list is a static abuse.ch file last updated in 2021.
 - **Home-lab scale:** developed and run on a small LAN. It has not been load-tested on large networks or against live adversarial traffic.
 
@@ -455,7 +456,11 @@ curl "http://localhost:8000/api/alerts/export?format=csv&severity=high&hours=24"
 
 ```bash
 python scripts/pcap_replay.py data/test.pcap --labels data/labels.csv --output results.json
+# or with attacker/time-window ground truth and a per-class Markdown report
+python scripts/pcap_replay.py capture.pcap --attacks attacks.csv --report report.md
 ```
+
+See [`doc/evaluation.md`](doc/evaluation.md) for how to measure recall per attack class, what the replay does not cover, and the synthetic suite (`scripts/make_labelled_pcap.py`).
 
 ---
 

@@ -341,8 +341,12 @@ class FlowExtractor:
         # Min-heap of (last_time, flow_key) for efficient expiry
         self._expiry_heap: List[Tuple[float, FlowKey]] = []
 
-    def process_packet(self, packet) -> Optional[Tuple[FlowKey, bool]]:
-        """Add *packet* to its flow; return ``(flow_key, is_forward)``, or None if not IP."""
+    def process_packet(self, packet, timestamp: Optional[float] = None) -> Optional[Tuple[FlowKey, bool]]:
+        """Add *packet* to its flow; return ``(flow_key, is_forward)``, or None if not IP.
+
+        *timestamp* defaults to the wall clock (live capture). Offline replay passes the
+        packet's own capture time so durations, rates and inter-arrival times are real.
+        """
         if IP not in packet:
             return None
         ip = packet[IP]
@@ -357,7 +361,7 @@ class FlowExtractor:
 
         fwd_key = (src, dst, sport, dport, proto)
         rev_key = (dst, src, dport, sport, proto)
-        ts = time.time()
+        ts = time.time() if timestamp is None else timestamp
 
         with self._lock:
             if fwd_key in self._flows:
@@ -374,10 +378,10 @@ class FlowExtractor:
                 heapq.heappush(self._expiry_heap, (ts, fwd_key))
         return fwd_key, True
 
-    def collect_expired(self) -> List[Tuple[FlowRecord, np.ndarray]]:
-        """Return (record, features) for flows that have timed out."""
+    def collect_expired(self, now: Optional[float] = None) -> List[Tuple[FlowRecord, np.ndarray]]:
+        """Return (record, features) for flows that have timed out as of *now* (default: wall clock)."""
         import heapq
-        now = time.time()
+        now = time.time() if now is None else now
         cutoff = now - FLOW_TIMEOUT
         expired_records = []
 

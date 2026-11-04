@@ -1036,7 +1036,7 @@ python scripts/retrain_with_payload.py \
 sudo tcpdump -i eth0 -w baseline_normal.pcap -G 3600 -W 1
 
 # O usar el replay script con PCAPs etiquetados como BENIGN
-python scripts/pcap_replay.py --pcap baseline_normal.pcap --output-features baseline_features.json
+python scripts/pcap_replay.py baseline_normal.pcap --output baseline_replay.json   # sin --labels/--attacks todo el tráfico cuenta como BENIGN
 ```
 
 **Paso 2: Extraer host features del baseline**
@@ -1253,7 +1253,7 @@ python scripts/retrain_with_payload.py \
     --test-size 0.2
 
 # Validar el nuevo modelo antes de reemplazar el existente
-python scripts/pcap_replay.py --pcap test_attacks.pcap --model-path models/rf_model_v2.joblib
+python scripts/pcap_replay.py test_attacks.pcap --attacks attacks.csv --report report.md   # el modelo se toma de models/ (ver doc/evaluation.md)
 
 # Si la validación es satisfactoria, activar:
 # En .env: RF_MODEL_FILE=rf_model_v2.joblib
@@ -1379,10 +1379,10 @@ class EvalResult:
 
 ```bash
 # Reproducir un PCAP conocido y comparar contra ground truth
-python scripts/pcap_replay.py \
-    --pcap test_attacks.pcap \
-    --output results.json \
-    --ground-truth labels.csv    # CSV con columnas: flow_key, is_attack (0/1)
+python scripts/pcap_replay.py test_attacks.pcap \
+    --output results.json --report report.md \
+    --labels labels.csv          # src_ip,dst_ip,src_port,dst_port,protocol,label
+# o --attacks attacks.csv (label,src_ip,dst_ip,dst_port,start,end); ver doc/evaluation.md
 ```
 
 ### Evaluación con el digital twin

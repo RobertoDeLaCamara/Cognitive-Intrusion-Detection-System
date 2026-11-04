@@ -15,7 +15,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from scapy.all import IP, TCP, UDP, ICMP, Raw
+from scapy.all import IP, TCP, UDP, ICMP, Raw, Padding
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,23 @@ FLOW_FEATURE_NAMES = [
 ]
 
 FlowKey = Tuple[str, str, int, int, int]  # src_ip, dst_ip, sport, dport, proto
+
+
+def _l4_payload(packet, l4) -> bytes:
+    """Application bytes carried by *l4* (TCP/UDP), without Ethernet frame padding.
+
+    The NIC pads frames shorter than 60 bytes (every bare SYN, ACK, RST: 54 bytes) and Scapy
+    exposes the padding as a trailing ``Padding`` layer, so ``bytes(l4.payload)`` of a SYN is
+    six zero bytes. Counting those as data made every small packet a "data packet" on a real
+    capture (``fwd_act_data_pkts`` of a 40-SYN flood was 40), which kept ``syn_scan`` from ever
+    firing live although it fires on pcaps without padding.
+    """
+    data = bytes(l4.payload)
+    if Padding in packet:
+        pad = len(packet[Padding].load)
+        if pad:
+            data = data[:-pad] if pad < len(data) else b""
+    return data
 
 
 @dataclass
@@ -194,14 +211,16 @@ class FlowRecord:
                     self.init_bwd_win = tcp.window
 
             # Payload data
-            if is_forward and tcp.payload and len(bytes(tcp.payload)) > 0:
-                self.fwd_act_data_pkts += 1
-                if len(self.fwd_payloads) < MAX_PAYLOAD_SAMPLES:
-                    self.fwd_payloads.append(bytes(tcp.payload)[:PAYLOAD_SAMPLE_BYTES])
+            if is_forward:
+                tcp_payload = _l4_payload(packet, tcp)
+                if tcp_payload:
+                    self.fwd_act_data_pkts += 1
+                    if len(self.fwd_payloads) < MAX_PAYLOAD_SAMPLES:
+                        self.fwd_payloads.append(tcp_payload[:PAYLOAD_SAMPLE_BYTES])
 
         # UDP payload capture
         if UDP in packet and is_forward:
-            udp_payload = bytes(packet[UDP].payload) if packet[UDP].payload else b""
+            udp_payload = _l4_payload(packet, packet[UDP])
             if udp_payload:
                 self.fwd_act_data_pkts += 1
                 if len(self.fwd_payloads) < MAX_PAYLOAD_SAMPLES:

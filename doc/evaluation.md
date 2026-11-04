@@ -85,9 +85,11 @@ False-positive rate on the benign background: 0 of 389. Reading the table:
   Caveat: the baseline was trained on the Pi's real network, so the synthetic benign hosts are unfamiliar to
   it (0.83 on average) and its separation here is small; the suite cannot tell a missing capability from an
   out-of-distribution test set. Use a capture from the deployment's own LAN for the false-positive side.
-- `syn_flood` is detected in the replay but, as of this writing, not by the live detector on the
-  Raspberry Pi 5 deployment (see "Known limitations" in the README). Detection logic is therefore
-  not the cause; look at the capture-to-dispatch path.
+- `syn_flood` was detected in the replay but not by the live detector on the Raspberry Pi 5. The cause was
+  Ethernet frame padding counted as TCP payload (a bare SYN is padded to 60 bytes), so `fwd_act_data_pkts`
+  was 40 instead of 0 and `syn_scan` never fired on a real capture. Fixed in `FlowRecord` (`_l4_payload`); a
+  pcap taken from a real NIC carries the same padding, a synthetic one does not, which is one more reason to
+  validate on a capture you did not write.
 
 ## 2. A capture you did not write (the number worth quoting)
 

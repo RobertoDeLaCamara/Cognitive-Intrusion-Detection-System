@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Baseline LSTM score no longer saturates at 1.0.** `lstm_score` was `min(error / threshold, 1)`, so every window above the p99 validation threshold scored exactly 1.0 (1 % of benign hold-out rows on the first raspi-189 windows, and every anomaly alike). It is now `r / (1 + r)` with `r = error / threshold`: 0.5 at the threshold (the convention `iforest_score` already uses), 0.67 at 2x, 0.91 at 10x, never reaching 1.0, so a strong anomaly ranks above a marginal one. **Score scale shifts:** below the threshold the score is lower than before (e.g. 0.65 used to mean 65 % of the threshold, now it means 1.86x), so `ENSEMBLE_THRESHOLD` and `WEIGHT_BASELINE` tuned against the old mapping need re-checking with `scripts/eval_baseline.py`. The offline bench shares the formula. No model retrain is needed.
+
 ## [2.0.0-rc.1] - 2026-11-04
 
 First pre-release since 1.2.1 (1.3.0 below was never tagged and is included here). **Contains breaking security changes**: see the Security section and "Upgrading to 2.0" in `doc/deployment.md`.

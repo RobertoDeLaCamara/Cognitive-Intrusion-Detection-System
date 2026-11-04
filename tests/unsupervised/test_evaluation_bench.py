@@ -13,10 +13,20 @@ class TestScoringFormulas:
         assert iforest_score(0.0) == pytest.approx(0.5)
         assert iforest_score(-0.2) > iforest_score(0.0) > iforest_score(0.2)
 
-    def test_lstm_score_clips_at_one_from_the_threshold_up(self):
-        assert lstm_score(0.5, 1.0) == pytest.approx(0.5)
-        assert lstm_score(1.0, 1.0) == 1.0
-        assert lstm_score(50.0, 1.0) == 1.0   # no gradation above the threshold
+    def test_lstm_score_is_half_at_the_threshold(self):
+        assert lstm_score(1.0, 1.0) == pytest.approx(0.5)
+        assert lstm_score(2.0, 2.0) == pytest.approx(0.5)   # relative to the threshold, not absolute
+        assert lstm_score(0.0, 1.0) == 0.0
+
+    def test_lstm_score_keeps_grading_above_the_threshold(self):
+        s = [lstm_score(e, 1.0) for e in (1.0, 2.0, 10.0, 100.0)]
+        assert s == sorted(s) and len(set(s)) == 4          # strictly increasing, no plateau
+        assert s[1] == pytest.approx(2 / 3) and s[2] == pytest.approx(10 / 11)
+        assert all(v < 1.0 for v in s)
+
+    def test_lstm_score_tolerates_degenerate_input(self):
+        assert lstm_score(-1.0, 1.0) == 0.0                 # a negative error cannot lower the score below 0
+        assert 0.0 < lstm_score(1.0, 0.0) < 1.0             # zero threshold does not divide by zero
 
     def test_array_and_scalar_agree(self):
         raw = np.array([-0.3, 0.0, 0.4])

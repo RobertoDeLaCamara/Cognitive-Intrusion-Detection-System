@@ -55,7 +55,7 @@ async def is_suppressed(alert: Alert, db: AsyncSession) -> bool:
 _SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "critical": 3}
 
 
-def rule_matches(rule, src_ip, dst_ip, attack_type, severity, dst_port=None) -> bool:
+def rule_matches(rule, src_ip, dst_ip, attack_type, severity, dst_port=None, src_port=None) -> bool:
     """True if ``rule`` covers an alert with these fields (unset rule fields match anything)."""
     if rule.src_ip and rule.src_ip != src_ip:
         return False
@@ -63,6 +63,9 @@ def rule_matches(rule, src_ip, dst_ip, attack_type, severity, dst_port=None) -> 
         return False
     rule_port = getattr(rule, "dst_port", None)
     if rule_port is not None and rule_port != dst_port:
+        return False
+    rule_src_port = getattr(rule, "src_port", None)
+    if rule_src_port is not None and rule_src_port != src_port:
         return False
     if rule.attack_type and rule.attack_type != attack_type:
         return False
@@ -79,7 +82,7 @@ async def find_suppressing_rule(alert: Alert, db: AsyncSession) -> Optional[Supp
 
     for rule in _cache:
         if rule_matches(rule, alert.src_ip, alert.dst_ip, alert.attack_type, alert.severity,
-                        getattr(alert, "dst_port", None)):
+                        getattr(alert, "dst_port", None), getattr(alert, "src_port", None)):
             logger.debug("Alert suppressed by rule #%d: %s", rule.id, rule.reason)
             return rule
     return None

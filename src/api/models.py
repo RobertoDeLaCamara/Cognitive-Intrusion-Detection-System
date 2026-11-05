@@ -98,6 +98,7 @@ class SuppressionRule(Base):
     id          = Column(Integer, primary_key=True, index=True)
     src_ip      = Column(String(45), nullable=True)
     dst_ip      = Column(String(45), nullable=True)
+    src_port    = Column(Integer, nullable=True)
     dst_port    = Column(Integer, nullable=True)
     attack_type = Column(String(100), nullable=True)
     min_severity = Column(String(20), nullable=True)

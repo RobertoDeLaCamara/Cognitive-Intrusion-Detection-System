@@ -34,6 +34,17 @@ class TestRuleMatchesPort:
         assert rule_matches(r, "10.0.0.1", "10.0.0.2", None, "low", 443)
         assert rule_matches(r, "10.0.0.1", "10.0.0.2", None, "low", None)
 
+    def test_src_port_rule_matches_replies_of_a_service(self):
+        r = _rule(src_ip="10.0.0.2", dst_ip="10.0.0.1", src_port=3128)
+        assert rule_matches(r, "10.0.0.2", "10.0.0.1", None, "critical", 51922, 3128)
+        assert not rule_matches(r, "10.0.0.2", "10.0.0.1", None, "critical", 51922, 8080)
+        assert not rule_matches(r, "10.0.0.2", "10.0.0.1", None, "critical", 51922, None)
+
+    def test_rule_without_src_port_ignores_it(self):
+        r = _rule(src_ip="10.0.0.2", dst_port=51922)
+        assert rule_matches(r, "10.0.0.2", "10.0.0.1", None, "low", 51922, 3128)
+        assert rule_matches(r, "10.0.0.2", "10.0.0.1", None, "low", 51922)
+
     def test_legacy_rule_object_without_dst_port_attribute(self):
         assert rule_matches(_rule(src_ip="a"), "a", "b", None, "low", 80)
 
@@ -140,3 +151,16 @@ class TestSuppressedLogLine:
         with Session() as s:
             assert s.query(Alert).count() == 0
         pipeline._suppress_cache, pipeline._suppress_ts = [], 0.0
+
+
+class TestSrcPortRuleInPipeline:
+    def test_reply_flow_is_suppressed_only_for_the_service_source_port(self, session):
+        session.add(SuppressionRule(src_ip="10.0.0.2", dst_ip="10.0.0.1", src_port=3128,
+                                    expires_at=utcnow() + timedelta(hours=1)))
+        session.commit()
+        sc = SimpleNamespace(attack_type="Exploits")
+        # FlowRecord.key = (src_ip, dst_ip, src_port, dst_port, protocol)
+        reply = SimpleNamespace(src_ip="10.0.0.2", dst_ip="10.0.0.1", key=("10.0.0.2", "10.0.0.1", 3128, 51922, 6))
+        other = SimpleNamespace(src_ip="10.0.0.2", dst_ip="10.0.0.1", key=("10.0.0.2", "10.0.0.1", 22, 51922, 6))
+        assert pipeline._suppressing_rule(session, reply, sc, "critical") is not None
+        assert pipeline._suppressing_rule(session, other, sc, "critical") is None

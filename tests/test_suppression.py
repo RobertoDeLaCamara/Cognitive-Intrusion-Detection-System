@@ -310,7 +310,7 @@ def test_schema_rejects_rule_without_condition():
 
 @pytest.mark.parametrize("field, value", [
     ("src_ip", "10.0.0.1"), ("dst_ip", "10.0.0.2"),
-    ("attack_type", "DDoS"), ("min_severity", "medium"), ("dst_port", 3128),
+    ("attack_type", "DDoS"), ("min_severity", "medium"), ("dst_port", 3128), ("src_port", 3128),
 ])
 def test_schema_accepts_each_single_condition(field, value):
     from src.api.schemas import SuppressionRuleCreate
@@ -339,3 +339,15 @@ def test_schema_rejects_out_of_range_port_and_duration():
             SuppressionRuleCreate(src_ip="10.0.0.1", dst_port=bad)
     with pytest.raises(ValidationError):
         SuppressionRuleCreate(src_ip="10.0.0.1", dst_port=53, duration_minutes=525601)
+
+
+def test_schema_src_port_makes_a_long_rule_narrow():
+    from pydantic import ValidationError
+    from src.api.schemas import SuppressionRuleCreate
+
+    ok = SuppressionRuleCreate(src_ip="10.0.0.2", src_port=3128, duration_minutes=525600)
+    assert ok.src_port == 3128
+    with pytest.raises(ValidationError, match="narrow rule"):
+        SuppressionRuleCreate(src_port=3128, duration_minutes=20000)
+    with pytest.raises(ValidationError):
+        SuppressionRuleCreate(src_ip="10.0.0.2", src_port=70000)

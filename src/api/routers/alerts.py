@@ -349,6 +349,7 @@ async def create_suppression_rule(
     rule = SuppressionRule(
         src_ip=body.src_ip,
         dst_ip=body.dst_ip,
+        src_port=body.src_port,
         dst_port=body.dst_port,
         attack_type=body.attack_type,
         min_severity=body.min_severity,

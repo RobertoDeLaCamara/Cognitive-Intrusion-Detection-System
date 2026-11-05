@@ -206,7 +206,7 @@ def _suppressing_rule(session, record, scores, severity):
         _suppress_ts = time.time()
     for rule in _suppress_cache:
         if rule_matches(rule, record.src_ip, record.dst_ip, scores.attack_type, severity,
-                        record.key[3] or None):
+                        record.key[3] or None, record.key[2] or None):
             return rule
     return None
 

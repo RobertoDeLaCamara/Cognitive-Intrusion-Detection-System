@@ -9,6 +9,8 @@ dist/
 build/
 .pytest_cache/
 .coverage
+coverage.json
+coverage.xml
 htmlcov/
 
 # Model files (large binaries — train locally or pull from MLflow).

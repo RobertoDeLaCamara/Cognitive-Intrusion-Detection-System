@@ -15,14 +15,13 @@ import threading
 from collections import OrderedDict
 from typing import Callable, Optional
 
-from ..features.flow_extractor import FlowExtractor, FlowKey, FlowRecord
+from ..features.flow_extractor import FlowExtractor, FlowKey
 from ..features.host_extractor import HostExtractor
 from ..features.payload_analyzer import analyze_payload, extract_payload_features
 from ..features.ja3 import extract_ja3, is_malicious_ja3
 from ..enrichment.dns_logger import extract_dns_query
 from ..config import MAX_ACTIVE_FLOWS
 
-import numpy as np
 
 logger = logging.getLogger(__name__)
 

@@ -11,7 +11,7 @@ import numpy as np
 from ..features.flow_extractor import FlowRecord, FLOW_FEATURE_NAMES
 from ..config import (
     ICMP_FLOOD_THRESHOLD, PORT_SCAN_THRESHOLD,
-    LARGE_PAYLOAD_BYTES, RATE_SPIKE_MULTIPLIER,
+    LARGE_PAYLOAD_BYTES,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,8 +46,6 @@ class RulesEngine:
 
         n_fwd = len(record.fwd_lengths)
         n_bwd = len(record.bwd_lengths)
-        duration = max(record.last_time - record.start_time, 1e-6)
-        fwd_rate = n_fwd / duration
 
         # 1. ICMP flood
         if proto == PROTO_ICMP and n_fwd > ICMP_FLOOD_THRESHOLD:

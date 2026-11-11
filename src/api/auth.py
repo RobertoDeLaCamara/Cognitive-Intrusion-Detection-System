@@ -64,7 +64,7 @@ def decode_token(token: str) -> dict:
 async def authenticate_user(db: AsyncSession, username: str, password: str):
     """Validate credentials against user store."""
     from .models import User
-    result = await db.execute(select(User).where(User.username == username, User.is_active == True))
+    result = await db.execute(select(User).where(User.username == username, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
     if user and verify_password(password, user.password_hash):
         return user

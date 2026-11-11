@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **CI lint is now blocking.** The Jenkins Lint stage runs `ruff check src/` (pinned ruff 0.15.7, rules in the new `ruff.toml`) and fails the build on any finding; it used to run `flake8 ... || true`, which never failed. The 45 existing findings in `src/` are fixed: unused imports and variables removed, imports moved to the top of their module, `== True/False` in SQLAlchemy filters replaced by `.is_()`. No behaviour change.
+
 ## [2.0.0-rc.2] - 2026-11-06
 
 Second pre-release. **Upgrade note:** this release adds Alembic migration `b9c0d1e2f3a4` (`suppression_rules.src_port`): recreate `api` (it applies the migration) before the detector. The Ethernet-padding fix changes flow features, so the live baseline drifts until it retrains (hourly by default). Fixes #91 (live detector silent on a raw-socket SYN flood).

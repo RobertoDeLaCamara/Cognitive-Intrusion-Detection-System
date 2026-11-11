@@ -131,14 +131,14 @@ python scripts/pcap_replay.py captures/attack_sample.pcap --output results.json
 ## Code Quality
 
 ```bash
-# Lint
-flake8 src/ --max-line-length=120
+# Lint (rules in ruff.toml)
+ruff check src/
 
 # Security audit
 safety check -r requirements.txt
 
-# Rough CI equivalent (Jenkins runs flake8 and safety as advisory, `|| true`)
-flake8 src/ --max-line-length=120 && safety check -r requirements.txt && pytest tests/ -v --cov=src
+# Rough CI equivalent (Jenkins fails on ruff findings; safety is advisory, `|| true`)
+ruff check src/ && safety check -r requirements.txt && pytest tests/ -v --cov=src
 ```
 
 ## CI/CD Pipeline (Jenkins)
@@ -148,7 +148,7 @@ Defined in `Jenkinsfile`:
 1. **Checkout**
 2. **Build Image** — `docker build`, tagged `<build number>` on master or `<branch>-<build>` elsewhere
 3. **Code Quality** (parallel, advisory — both end in `|| true`):
-   - `flake8` lint (max-line-length 120)
+   - `ruff` lint (blocking, rules in `ruff.toml`)
    - `safety` dependency audit
 4. **Run Tests** — `pytest tests/` inside the image with JUnit XML + coverage
 5. **SonarQube Analysis** — Static analysis push (project key `cnds`)

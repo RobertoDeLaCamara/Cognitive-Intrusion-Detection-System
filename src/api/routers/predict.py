@@ -9,7 +9,7 @@ import numpy as np
 
 from ..auth import require_role
 from ..database import get_db
-from ..models import Alert, SeverityLevel
+from ..models import Alert
 from ..schemas import PredictRequest, PredictResponse, EngineScoresOut
 from .websocket import broadcast_alert
 from ..metrics import inc_alert, inc_suppressed, observe_ensemble_score

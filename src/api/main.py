@@ -178,7 +178,6 @@ app.include_router(feedback_router)
 
 @app.get("/health")
 async def health():
-    from ..capture.packet_capture import PacketProcessor
     capture_stats = getattr(app.state, "capture_stats", None)
     return {
         "status": "ok",

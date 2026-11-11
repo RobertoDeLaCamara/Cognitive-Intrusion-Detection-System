@@ -7,7 +7,7 @@ with notes containing 'false positive') to adjust engine weights.
 import logging
 from typing import Dict, Optional
 
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..api.models import Alert

@@ -4,8 +4,14 @@ FROM python:3.11-slim AS base
 # Defaults to amd64 for classic `docker build` (current CI path, no --platform).
 ARG TARGETARCH=amd64
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpcap-dev gcc g++ \
+# Runtime needs only the libpcap shared library. On amd64 and arm64 every dependency in the
+# lock files installs from a prebuilt wheel, so no compiler goes into the image (it was
+# ~250 MB of gcc/g++ and headers). Other architectures install requirements.txt unlocked
+# and may have to build from source, so they still get the toolchain.
+RUN apt-get update && apt-get install -y --no-install-recommends libpcap0.8 \
+    && if [ "$TARGETARCH" != "amd64" ] && [ "$TARGETARCH" != "arm64" ]; then \
+        apt-get install -y --no-install-recommends libpcap-dev gcc g++ ; \
+    fi \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

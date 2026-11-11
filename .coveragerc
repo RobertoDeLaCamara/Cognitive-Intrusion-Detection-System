@@ -1,0 +1,5 @@
+# relative_files makes coverage.xml use paths relative to the repo root (<source>src</source>)
+# instead of the absolute path inside the test container (/app/src), which the SonarQube
+# scanner could not resolve: it ignored the coverage of every file.
+[run]
+relative_files = True

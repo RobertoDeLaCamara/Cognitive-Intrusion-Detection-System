@@ -5,7 +5,11 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **CI fails below 75 % test coverage.** The Run Tests stage passes `--cov-fail-under=75` (CI measured 76 % when the gate was added). The gate is in the Jenkinsfile only: a local run without torch skips the FT-Transformer tests and measures about 74 %.
 - **CI lint is now blocking.** The Jenkins Lint stage runs `ruff check src/` (pinned ruff 0.15.7, rules in the new `ruff.toml`) and fails the build on any finding; it used to run `flake8 ... || true`, which never failed. The 45 existing findings in `src/` are fixed: unused imports and variables removed, imports moved to the top of their module, `== True/False` in SQLAlchemy filters replaced by `.is_()`. No behaviour change.
+
+### Fixed
+- **SonarQube ignored the coverage report.** `coverage.xml` carried the absolute source path of the test container (`/app/src`), which the scanner could not resolve, so it dropped the coverage of every file ("Cannot resolve 101 file paths"). The new `.coveragerc` sets `relative_files = True`, so the report uses paths relative to the repo root.
 
 ## [2.0.0-rc.2] - 2026-11-06
 

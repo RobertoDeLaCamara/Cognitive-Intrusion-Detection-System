@@ -10,8 +10,10 @@ import logging
 from fastapi import APIRouter, Depends, Query
 
 from ..auth import require_role
+from ...failure_streak import FailureStreak
 
 logger = logging.getLogger(__name__)
+_drift_streak = FailureStreak(logger, "Drift computation for the baseline status endpoint")
 router = APIRouter(
     prefix="/api/baseline",
     tags=["baseline"],
@@ -97,8 +99,9 @@ def baseline_status():
                         "distinct_src_ips_ratio": round(report.distinct_src_ips_ratio, 4),
                         "top_ports_jaccard": round(report.top_ports_jaccard, 4),
                     }
+                _drift_streak.ok()
             except Exception as exc:
-                logger.debug("Drift computation failed: %s", exc)
+                _drift_streak.failed(exc)
 
     return {
         "collector": collector_out,

@@ -13,6 +13,7 @@ from typing import Callable, Optional
 from fastapi import FastAPI, Request, Response
 
 from ..config import PROMETHEUS_ENABLED, OTEL_EXPORTER_ENDPOINT, METRICS_TOKEN
+from ..failure_streak import FailureStreak
 
 logger = logging.getLogger(__name__)
 
@@ -205,7 +206,8 @@ def start_baseline_scrape(
     """
     def _loop():
         last_log_ts = 0.0
-        drift_failing = False
+        drift_streak = FailureStreak(logger, "baseline drift computation")
+        scrape_streak = FailureStreak(logger, "baseline metrics scrape")
         while True:
             time.sleep(scrape_interval)
             try:
@@ -228,15 +230,9 @@ def start_baseline_scrape(
                         last_prov = history[-1].get("provenance")
                         report = compute_drift(snapshot, last_prov)
                         drift_score = report.drift_score if report is not None else None
-                        drift_failing = False
+                        drift_streak.ok()
                     except Exception as exc:
-                        # Warn once per failure streak: this loop runs every few seconds.
-                        if not drift_failing:
-                            logger.warning(
-                                "baseline drift computation failed, drift metric not updated: %s",
-                                exc, exc_info=True,
-                            )
-                            drift_failing = True
+                        drift_streak.failed(exc)
 
                 update_baseline_metrics(snapshot, engine_info, drift_score, windows_trained)
 
@@ -264,8 +260,10 @@ def start_baseline_scrape(
                             worst,
                             f"{drift_score:.3f}" if drift_score is not None else "n/a",
                         )
+                scrape_streak.ok()
             except Exception as exc:
-                logger.debug("baseline_scrape error: %s", exc)
+                # The gauges keep their last value while this fails.
+                scrape_streak.failed(exc)
 
     t = threading.Thread(target=_loop, name="baseline-scrape", daemon=True)
     t.start()

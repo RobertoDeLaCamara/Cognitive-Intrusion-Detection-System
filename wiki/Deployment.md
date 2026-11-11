@@ -33,7 +33,7 @@ The detector container runs as `root` with `network_mode: host` because Scapy re
 
 ## Database Migrations
 
-CNDS uses [Alembic](https://alembic.sqlalchemy.org/) for schema versioning. On startup, the API automatically runs pending migrations (falling back to `create_all` for in-memory test databases).
+CNDS uses [Alembic](https://alembic.sqlalchemy.org/) for schema versioning. On startup, the API automatically runs pending migrations (falling back to `create_all` for in-memory test databases). If a migration fails on a database that already carries an Alembic revision, the API logs the error and refuses to start, so it never serves on a schema that is behind the code (ADR 0004). A database whose tables were created by `create_all` (for example by the detector, before the API ever ran) has no revision: there the API still starts, logs an error and asks you to adopt the database with `alembic stamp <revision>`.
 
 ```bash
 # Generate a new migration after changing models

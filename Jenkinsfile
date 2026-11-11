@@ -9,7 +9,10 @@ pipeline {
 
     environment {
         REGISTRY   = "192.168.1.147:5000"
-        IMAGE_NAME = "cnds"
+        // Two images from one Dockerfile: IMAGE_NAME is the API/detector (stage "base"),
+        // DASHBOARD_IMAGE adds the Streamlit dependencies on top of it (stage "dashboard").
+        IMAGE_NAME      = "cnds"
+        DASHBOARD_IMAGE = "cnds-dashboard"
         // Multibranch: master (or the legacy single-branch job, BRANCH_NAME unset) keeps the
         // build-number tag; other branches/PRs get "<branch>-<build>" and are never pushed.
         IMAGE_TAG  = "${(env.BRANCH_NAME == null || env.BRANCH_NAME == 'master') ? env.BUILD_NUMBER : env.BRANCH_NAME.replaceAll('[^A-Za-z0-9_.-]', '-') + '-' + env.BUILD_NUMBER}"
@@ -26,8 +29,12 @@ pipeline {
 
         stage('Build Image') {
             steps {
-                echo 'Building Docker image...'
-                sh "docker build -t ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} ."
+                echo 'Building Docker images...'
+                // Without --target, docker builds the last stage of the Dockerfile (dashboard),
+                // so "cnds" used to be the dashboard image. Name each stage explicitly.
+                sh "docker build --target base -t ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} ."
+                // Reuses every layer of the build above; only the dashboard dependencies are new.
+                sh "docker build --target dashboard -t ${REGISTRY}/${DASHBOARD_IMAGE}:${IMAGE_TAG} ."
             }
         }
 
@@ -58,11 +65,13 @@ pipeline {
             steps {
                 script {
                     try {
+                        // The suite runs in the dashboard image: it is the API image plus the
+                        // dashboard dependencies, so it covers the tests of both.
                         sh """
                         docker run --name test-cnds-${IMAGE_TAG} \
                             --user root \
                             -e DATABASE_URL=sqlite+aiosqlite:////tmp/test.db \
-                            ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} \
+                            ${REGISTRY}/${DASHBOARD_IMAGE}:${IMAGE_TAG} \
                             python -m pytest tests/ -v \
                                 --junitxml=test-results.xml \
                                 --cov=src \
@@ -155,14 +164,18 @@ pipeline {
             // Watchtower on Magua pulls :latest, so a PR build must never push it.
             when { expression { env.BRANCH_NAME == null || env.BRANCH_NAME == 'master' } }
             steps {
-                echo "Pushing image to ${REGISTRY}..."
+                echo "Pushing images to ${REGISTRY}..."
                 sh "docker tag ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} ${REGISTRY}/${IMAGE_NAME}:latest"
+                sh "docker tag ${REGISTRY}/${DASHBOARD_IMAGE}:${IMAGE_TAG} ${REGISTRY}/${DASHBOARD_IMAGE}:latest"
                 // The registry on Magua can need longer than the Docker client's 30 s response-header
                 // timeout to commit a big layer. The client gives up, but the registry still finishes,
                 // so an immediate retry re-uploads the same layer and times out again. Wait between
                 // attempts so the next one finds the layer already present.
                 retry(4) { sh "docker push ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} || { sleep 90; exit 1; }" }
                 retry(4) { sh "docker push ${REGISTRY}/${IMAGE_NAME}:latest || { sleep 90; exit 1; }" }
+                // The dashboard image shares all its layers with the one above except the last.
+                retry(4) { sh "docker push ${REGISTRY}/${DASHBOARD_IMAGE}:${IMAGE_TAG} || { sleep 90; exit 1; }" }
+                retry(4) { sh "docker push ${REGISTRY}/${DASHBOARD_IMAGE}:latest || { sleep 90; exit 1; }" }
             }
         }
 
@@ -192,6 +205,7 @@ pipeline {
         always {
             sh 'rm -f test-results.xml coverage.xml || true'
             sh "docker rmi ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} || true"
+            sh "docker rmi ${REGISTRY}/${DASHBOARD_IMAGE}:${IMAGE_TAG} || true"
             sh "docker volume rm cnds-sonar-${IMAGE_TAG} || true"
             cleanWs()
         }

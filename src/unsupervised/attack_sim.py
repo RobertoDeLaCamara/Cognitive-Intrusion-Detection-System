@@ -138,7 +138,10 @@ def benign_hosts(rng, n_hosts=8, t0=1_700_000_000.0, seconds=1800) -> Rows:
                 t += float(rng.exponential(3.0))
                 pk.append((t, _udp(src, "192.168.1.1", 53, _payload(rng, int(rng.integers(30, 70)), False))))
         x, hh, tt = vectors_from_packets(pk, src, flow_pkts=5)
-        rows_x.append(x); rows_h += hh; rows_t.append(tt)
-    X = np.vstack(rows_x); ts = np.concatenate(rows_t)
+        rows_x.append(x)
+        rows_h += hh
+        rows_t.append(tt)
+    X = np.vstack(rows_x)
+    ts = np.concatenate(rows_t)
     order = np.argsort(ts, kind="stable")
     return X[order], [rows_h[i] for i in order], ts[order]

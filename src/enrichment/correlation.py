@@ -1,14 +1,13 @@
 """Alert correlation — groups related alerts into auto-incidents (Phase 8)."""
 
 import logging
-from collections import defaultdict
 from datetime import timedelta
 from typing import Optional
 
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..api.models import Alert, Incident, SeverityLevel, IncidentStatus
+from ..api.models import Alert, Incident, IncidentStatus
 from ..config import CORRELATION_WINDOW_SECS, CORRELATION_THRESHOLD
 from ..timeutils import utcnow
 

@@ -21,7 +21,6 @@ import logging
 from typing import Optional, Set, Tuple
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from starlette.websockets import WebSocketState
 
 from ..auth import is_enabled as jwt_enabled, decode_token
 from ...config import API_KEY

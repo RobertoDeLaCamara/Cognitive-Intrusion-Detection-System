@@ -4,13 +4,12 @@ Single capture loop dispatches packets to a bounded queue consumed
 by worker threads — keeps the Scapy callback non-blocking.
 """
 
-import os
 import queue
 import threading
 import logging
 from typing import Callable, Optional
 
-from scapy.all import sniff, conf
+from scapy.all import sniff
 
 from ..config import PACKET_WORKERS, PACKET_QUEUE_SIZE, CAPTURE_INTERFACE
 

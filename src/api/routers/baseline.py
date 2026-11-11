@@ -6,7 +6,6 @@ GET /api/baseline/windows — rolling history of trained windows (last 20).
 """
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 

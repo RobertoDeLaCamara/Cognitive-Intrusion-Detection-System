@@ -308,11 +308,10 @@ async def update_incident(incident_id: int, body: IncidentUpdate, db: AsyncSessi
 
 @router.get("/stats", dependencies=[_READ])
 async def stats(db: AsyncSession = Depends(get_db)):
-    from sqlalchemy import func, case
     result = await db.execute(
         select(
             func.count(Alert.id).label("total"),
-            func.count(case((Alert.acknowledged == False, 1))).label("unacked"),
+            func.count(case((Alert.acknowledged.is_(False), 1))).label("unacked"),
             *[
                 func.count(case((Alert.severity == sev, 1))).label(sev.value)
                 for sev in SeverityLevel

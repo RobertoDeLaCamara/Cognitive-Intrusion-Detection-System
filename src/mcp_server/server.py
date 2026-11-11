@@ -24,11 +24,11 @@ from typing import Any
 from . import db as mcp_db
 from . import tools as mcp_tools
 from .queries import QueryError
+from src.version import __version__ as SERVER_VERSION
 
 logger = logging.getLogger(__name__)
 
 SERVER_NAME = "cnds"
-from src.version import __version__ as SERVER_VERSION
 
 INSTRUCTIONS = """\
 Read-only access to a Cognitive Network Defense System (CNDS) sensor: a \

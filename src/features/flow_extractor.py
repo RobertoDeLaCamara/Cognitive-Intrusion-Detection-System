@@ -11,18 +11,16 @@ import time
 import logging
 import threading
 import numpy as np
-from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
-from scapy.all import IP, TCP, UDP, ICMP, Raw, Padding
-
-logger = logging.getLogger(__name__)
+from scapy.all import IP, TCP, UDP, Padding
 
 from ..config import (
-    FLOW_TIMEOUT, MAX_ACTIVE_FLOWS, ACTIVE_IDLE_THRESH, COMMON_PORTS,
-    MAX_PAYLOAD_SAMPLES, PAYLOAD_SAMPLE_BYTES,
+    FLOW_TIMEOUT, MAX_ACTIVE_FLOWS, ACTIVE_IDLE_THRESH, MAX_PAYLOAD_SAMPLES, PAYLOAD_SAMPLE_BYTES,
 )
+
+logger = logging.getLogger(__name__)
 
 # 76 feature names matching ML-IDS PredictionRequest fields
 FLOW_FEATURE_NAMES = [
@@ -137,7 +135,6 @@ class FlowRecord:
     def add_packet(self, packet, timestamp: float, is_forward: bool) -> None:
         pkt_len = len(packet)
         ip = packet[IP]
-        proto = ip.proto
 
         if self.start_time == 0.0:
             self.start_time = timestamp

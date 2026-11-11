@@ -1,5 +1,6 @@
 """Configuration for the Cognitive Network Defense System (CNDS)."""
 
+import json as _json
 import os
 import sys
 import logging
@@ -116,7 +117,6 @@ CRITICAL_RULES = set(
 # ── Per-attack-type weight overrides (Phase 4) ───────────────────────────────
 # JSON string mapping attack type → {engine: weight}
 # Example: '{"DoS": {"supervised": 0.6, "rules": 0.2}, "PortScan": {"rules": 0.5}}'
-import json as _json
 ATTACK_TYPE_WEIGHTS = _json.loads(os.getenv("ATTACK_TYPE_WEIGHTS", "{}"))
 
 # Confidence calibration: Platt scaling temperature (>1 = softer, <1 = sharper)

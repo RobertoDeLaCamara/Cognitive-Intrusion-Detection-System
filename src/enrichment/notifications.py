@@ -1,6 +1,5 @@
 """Webhook/Slack/Telegram notifications for critical alerts (Phase 8)."""
 
-import json
 import logging
 from typing import Dict
 

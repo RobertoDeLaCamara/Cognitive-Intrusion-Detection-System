@@ -8,7 +8,6 @@ import logging
 import os
 import threading
 import numpy as np
-from typing import Optional
 
 
 from ..config import IF_MODEL_PATH, IF_SCALER_PATH, MLFLOW_REGISTRY_NAME

@@ -1,0 +1,12 @@
+# Lint configuration. CI runs `ruff check src/` and fails the build on any finding
+# (see the Lint stage in the Jenkinsfile). Run the same command before pushing.
+line-length = 120
+target-version = "py311"
+
+[lint]
+# Ruff defaults: pycodestyle errors (E4, E7, E9) and pyflakes (F).
+select = ["E4", "E7", "E9", "F"]
+
+[lint.per-file-ignores]
+# mlflow_registry.init() has to run before the engine modules are imported.
+"src/engines/registry.py" = ["E402"]

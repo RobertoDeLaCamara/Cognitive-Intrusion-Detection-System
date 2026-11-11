@@ -10,7 +10,6 @@ import os
 import threading
 import numpy as np
 from collections import defaultdict, deque
-from typing import Optional
 
 from ..config import LSTM_MODEL_PATH, LSTM_CONFIG_PATH, MAX_TRACKED_IPS
 from .. import mlflow_registry

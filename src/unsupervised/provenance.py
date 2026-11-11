@@ -1,9 +1,8 @@
 """Provenance metadata describing a single baseline training window."""
 
 from collections import Counter
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
-from typing import List
 
 from .triggers import _shannon_entropy_bits
 

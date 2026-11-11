@@ -9,7 +9,7 @@ Known-malicious JA3 hashes can be loaded from a file or set via config.
 import hashlib
 import struct
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from scapy.all import TCP, Raw
 
@@ -50,7 +50,6 @@ def _parse_client_hello(data: bytes) -> Optional[Dict]:
     if content_type != _TLS_HANDSHAKE:
         return None
 
-    tls_version = struct.unpack("!H", data[1:3])[0]
     record_len = struct.unpack("!H", data[3:5])[0]
     payload = data[5:5 + record_len]
 

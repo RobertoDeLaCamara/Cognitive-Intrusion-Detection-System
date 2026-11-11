@@ -14,6 +14,7 @@ from typing import Callable, List, Optional
 
 import numpy as np
 
+from ..failure_streak import FailureStreak
 from .provenance import ProvenanceMetadata
 from .triggers import CompositeTrigger, TriggerState, _shannon_entropy_bits
 
@@ -70,6 +71,8 @@ class BaselineCollector:
         self._window_start_ts: float = time.time()
         self._training_in_flight: bool = False
         self._dropped_while_training: int = 0
+        # A record the collector cannot read never reaches the training window.
+        self._extract_streak = FailureStreak(logger, "BaselineCollector field extraction")
 
     # ── hot path ────────────────────────────────────────────────────────────
     def observe(self, record, host_vec: np.ndarray) -> None:
@@ -99,11 +102,9 @@ class BaselineCollector:
             else:
                 ts_epoch = time.time()
         except Exception as exc:
-            logger.debug(
-                "BaselineCollector.observe: field extraction failed (%s) — skipping record",
-                exc,
-            )
+            self._extract_streak.failed(exc)
             return
+        self._extract_streak.ok()
 
         sample = CollectedSample(
             host_vec=np.asarray(host_vec, dtype=np.float32),

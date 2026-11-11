@@ -5,6 +5,7 @@ HOST_WINDOW_SIZE packets). Protocol ratios are still lifetime fractions.
 Adapted from cognitive-anomaly-detector.
 """
 
+import logging
 import time
 import threading
 import numpy as np
@@ -16,7 +17,10 @@ from scapy.all import IP, TCP, UDP, ICMP, Raw
 
 from ..config import HOST_WINDOW_SIZE, MAX_TRACKED_IPS, COMMON_PORTS
 from .utils import byte_entropy
+from ..failure_streak import FailureStreak
 from ..unsupervised.artifact_schema import HOST_FEATURE_SCHEMA  # noqa: F401  (re-exported)
+
+logger = logging.getLogger(__name__)
 
 HOST_FEATURE_NAMES = [
     # Statistical (6)
@@ -89,6 +93,8 @@ class HostExtractor:
     def __init__(self):
         self._data: Dict[str, HostHistory] = defaultdict(HostHistory)
         self._lock = threading.RLock()
+        # Without a host vector the IsolationForest, LSTM and baseline engines do not score.
+        self._compute_streak = FailureStreak(logger, "Host feature extraction")
 
     def process_packet(self, packet, timestamp: Optional[float] = None) -> Optional[str]:
         if IP not in packet:
@@ -125,9 +131,12 @@ class HostExtractor:
             )
 
         try:
-            return self._compute(snapshot, now)
-        except Exception:
+            vec = self._compute(snapshot, now)
+        except Exception as exc:
+            self._compute_streak.failed(exc)
             return None
+        self._compute_streak.ok()
+        return vec
 
     def _compute(self, h: HostHistory, now: Optional[float] = None) -> np.ndarray:
         now = time.time() if now is None else now

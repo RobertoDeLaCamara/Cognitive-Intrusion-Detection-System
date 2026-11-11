@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Tests for the Guardian loops and the packet capture layer.** `tests/test_guardian_loops.py` runs `guardian_loop` and `guardian_expiry_loop` against an in-memory database (block, skip conditions, circuit breaker, backend failures, expiry); `tests/test_packet_capture.py` covers the worker pool and the Scapy sniff wrapper without capturing packets. `src/guardian/engine.py` goes from 40 % to 98 % coverage and `src/capture/packet_capture.py` from 0 % to 100 %.
+
 ### Changed
 - **CI fails below 75 % test coverage.** The Run Tests stage passes `--cov-fail-under=75` (CI measured 76 % when the gate was added). The gate is in the Jenkinsfile only: a local run without torch skips the FT-Transformer tests and measures about 74 %.
 - **CI lint is now blocking.** The Jenkins Lint stage runs `ruff check src/` (pinned ruff 0.15.7, rules in the new `ruff.toml`) and fails the build on any finding; it used to run `flake8 ... || true`, which never failed. The 45 existing findings in `src/` are fixed: unused imports and variables removed, imports moved to the top of their module, `== True/False` in SQLAlchemy filters replaced by `.is_()`. No behaviour change.

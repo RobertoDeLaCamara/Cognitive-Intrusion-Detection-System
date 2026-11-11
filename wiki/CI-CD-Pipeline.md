@@ -16,7 +16,7 @@ Builds the Docker image `192.168.1.147:5000/cnds:<tag>`. On `master` (or the leg
 - **Security** — `safety check -r requirements.txt` (advisory: `|| true`)
 
 ### 4. Run Tests
-Runs `python -m pytest tests/ -v` inside the image (with `DATABASE_URL` pointing at a temporary SQLite file), producing JUnit XML and `coverage.xml`; both are collected and the coverage report is archived.
+Runs `python -m pytest tests/ -v` inside the image (with `DATABASE_URL` pointing at a temporary SQLite file), producing JUnit XML and `coverage.xml`; both are collected and the coverage report is archived. The stage fails if total coverage of `src` is below 75 % (`--cov-fail-under=75`; CI measured 76 % when the gate was added).
 
 ### 5. SonarQube Analysis
 Pushes static analysis and coverage to SonarQube (project key `cnds`, sources `src`, tests `tests`, Python 3.11). Settings are in `sonar-project.properties` and the stage arguments.

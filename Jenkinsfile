@@ -68,6 +68,7 @@ pipeline {
                                 --cov=src \
                                 --cov-report=xml:coverage.xml \
                                 --cov-report=term-missing \
+                                --cov-fail-under=75 \
                                 --disable-warnings
                         """
                     } finally {

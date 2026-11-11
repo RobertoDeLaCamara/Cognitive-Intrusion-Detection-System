@@ -150,7 +150,7 @@ Defined in `Jenkinsfile`:
 3. **Code Quality** (parallel, advisory — both end in `|| true`):
    - `ruff` lint (blocking, rules in `ruff.toml`)
    - `safety` dependency audit
-4. **Run Tests** — `pytest tests/` inside the image with JUnit XML + coverage
+4. **Run Tests** — `pytest tests/` inside the image with JUnit XML + coverage (fails below 75 % total coverage)
 5. **SonarQube Analysis** — Static analysis push (project key `cnds`)
 6. **Claude PR review (advisory)** — pull requests only; posts a review on the Gitea PR, never fails the build
 7. **Push to Registry** — `192.168.1.147:5000/cnds:<build>` and `:latest`, only from `master` (or the legacy single-branch job)

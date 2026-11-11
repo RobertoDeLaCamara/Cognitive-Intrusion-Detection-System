@@ -103,12 +103,12 @@ async def _periodic_cleanup(interval: int = 300):
                 if deleted:
                     logger.info("Cleaned %d expired suppression rules", deleted)
         except Exception as e:
-            logger.debug("Suppression cleanup error: %s", e)
+            logger.warning("Suppression cleanup error: %s", e)
         try:
             from .rate_limit import prune_inactive
             await prune_inactive()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Rate limiter prune error: %s", e)
 
 
 app = FastAPI(

@@ -54,8 +54,8 @@ def _register_baseline(mlflow, run_id: str, artifact_uri: str) -> None:
     client = mlflow.tracking.MlflowClient()
     try:
         client.create_registered_model(MODEL_NAME)
-    except Exception:  # already exists (or a race): create_model_version will tell
-        pass
+    except Exception as exc:  # already exists (or a race): create_model_version will tell
+        logger.debug("create_registered_model(%s) skipped: %s", MODEL_NAME, exc)
     client.create_model_version(
         name=MODEL_NAME,
         source=f"{artifact_uri.rstrip('/')}/{ARTIFACT_ROOT}",

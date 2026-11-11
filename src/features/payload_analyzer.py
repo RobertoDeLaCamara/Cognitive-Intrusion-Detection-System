@@ -97,11 +97,8 @@ def analyze_payload(packet) -> List[str]:
         return []
     matches = []
     for name, pattern in _PATTERNS:
-        try:
-            if pattern.search(sample):
-                matches.append(name)
-        except Exception:
-            pass
+        if pattern.search(sample):
+            matches.append(name)
     return matches
 
 
@@ -136,12 +133,8 @@ def extract_payload_features(payloads: List[bytes]) -> np.ndarray:
     for payload in payloads:
         sample = payload[:4096]
         for name, pattern in _PATTERNS:
-            if name not in matched_set:
-                try:
-                    if pattern.search(sample):
-                        matched_set.add(name)
-                except Exception:
-                    pass
+            if name not in matched_set and pattern.search(sample):
+                matched_set.add(name)
 
     # Indices 0-5: binary flags per pattern
     for i, name in enumerate(PATTERN_NAMES):

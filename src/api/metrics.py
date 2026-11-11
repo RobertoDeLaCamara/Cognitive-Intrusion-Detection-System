@@ -176,8 +176,9 @@ def update_baseline_metrics(snapshot, engine_info: dict, drift_score: Optional[f
         try:
             ts = datetime.datetime.fromisoformat(engine_info["last_reload_iso"]).timestamp()
             _baseline_last_reload_ts.set(ts)
-        except Exception:
-            pass
+        except (TypeError, ValueError) as exc:
+            # Malformed timestamp: the gauge keeps its previous value.
+            logger.debug("baseline last_reload_iso not parseable: %s", exc)
     if drift_score is not None and _baseline_drift_score is not None:
         _baseline_drift_score.set(drift_score)
 
@@ -204,6 +205,7 @@ def start_baseline_scrape(
     """
     def _loop():
         last_log_ts = 0.0
+        drift_failing = False
         while True:
             time.sleep(scrape_interval)
             try:
@@ -226,8 +228,15 @@ def start_baseline_scrape(
                         last_prov = history[-1].get("provenance")
                         report = compute_drift(snapshot, last_prov)
                         drift_score = report.drift_score if report is not None else None
-                    except Exception:
-                        pass
+                        drift_failing = False
+                    except Exception as exc:
+                        # Warn once per failure streak: this loop runs every few seconds.
+                        if not drift_failing:
+                            logger.warning(
+                                "baseline drift computation failed, drift metric not updated: %s",
+                                exc, exc_info=True,
+                            )
+                            drift_failing = True
 
                 update_baseline_metrics(snapshot, engine_info, drift_score, windows_trained)
 

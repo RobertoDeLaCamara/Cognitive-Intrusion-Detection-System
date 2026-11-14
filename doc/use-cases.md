@@ -55,8 +55,8 @@ This document describes operational scenarios for CNDS across different deployme
 **Signal chain:**
 
 1. Attacker begins HTTP flood at 5,000 requests/second against web server `10.0.0.5`.
-2. **Rules Engine fires immediately**: `packet_rate > ICMP_FLOOD_THRESHOLD` within the first few seconds.
-3. **Isolation Forest score spikes**: `byte_rate` and `packet_rate` features diverge sharply from the baseline distribution. Score: 0.89.
+2. **Rules Engine fires immediately**: the flow carries more than `ICMP_FLOOD_THRESHOLD` forward ICMP packets (rule `icmp_flood`, evaluated when the flow expires).
+3. **Isolation Forest score spikes**: `bytes_per_sec` and `packets_per_sec` features diverge sharply from the baseline distribution. Score: 0.89.
 4. **Supervised engine labels** the flow: "DoS Hulk" at 0.87 confidence (high forward packet counts, IAT drops to near-zero).
 5. **LSTM score** is moderate (0.55) — not enough sequence history yet for the new source IP.
 6. **Ensemble**: `0.40×0.87 + 0.30×0.89 + 0.20×0.55 + 0.10×1.0 = 0.82` → `critical` severity.
@@ -95,7 +95,7 @@ This document describes operational scenarios for CNDS across different deployme
 
 1. Attacker runs `hydra -t 4 -l root -P rockyou.txt ssh://192.168.1.20`.
 2. **Supervised engine**: "SSH-Patator" label at 0.81 confidence. The feature pattern — many short bidirectional flows to port 22 with consistent byte sizes — matches the training data.
-3. **Isolation Forest**: Elevated `packet_rate` and `unique_ports = 1` (all traffic to port 22) produces an anomaly score of 0.67.
+3. **Isolation Forest**: Elevated `packets_per_sec` and `unique_ports = 1` (all traffic to port 22) produces an anomaly score of 0.67.
 4. **LSTM**: Repeated short-duration flows over time create an unusual temporal pattern. Score: 0.73 after 20 flows.
 5. **Rules Engine**: No rule fires (threshold counts target faster attacks).
 6. **Ensemble**: `0.40×0.81 + 0.30×0.67 + 0.20×0.73 + 0.10×0.0 = 0.67` → `medium`.
@@ -136,7 +136,7 @@ This illustrates the **tuning knobs** available: the system can be made more or 
 **Signal chain:**
 
 1. Attacker sends `GET /login?user=admin' OR '1'='1 HTTP/1.1` to port 443.
-2. **Payload Analyzer**: SQLi pattern regex matches. `payload_features[0] = 1.0`. Triggered rule: `payload_sqli`.
+2. **Payload Analyzer**: SQLi pattern regex matches. `payload_features[0] = 1.0`. Triggered rule: `payload:sql_injection`.
 3. **Rules Engine fires**: `any(payload_features[0:6]) == 1` → rules_score = 1.0.
 4. **Supervised engine**: "Web Attack – SQL Injection" at 0.79 confidence.
 5. **JA3 fingerprint** stored: fingerprint identifies the HTTP client (curl, sqlmap, etc.).
@@ -159,7 +159,7 @@ This illustrates the **tuning knobs** available: the system can be made more or 
 1. Workstation connects to `203.0.113.5:443` via TLS.
 2. **JA3 fingerprinter** extracts ClientHello fields.
 3. JA3 hash `a0e9f5d64349fb13191bc781f81f42e1` matches an entry in `MALICIOUS_JA3_FILE` (e.g., from SSLBL or custom threat intel feed).
-4. **Rules Engine fires**: `ja3_malicious` rule. rules_score = 1.0.
+4. **Rules Engine fires**: `malicious_ja3` rule. rules_score = 1.0.
 5. Even if supervised and IF scores are low (traffic volume looks benign), the rules engine weight (10%) pushes the ensemble above threshold.
 6. Alert: `triggered_rules: ["malicious_ja3"]`, `ja3_hash: "a0e9f5d..."`, `ja3_string: "771,49195..."`.
 7. Analyst can use the JA3 string to identify the specific TLS implementation (e.g., known Cobalt Strike profile, Metasploit default).
@@ -220,10 +220,10 @@ This mode runs the API without `--api` flag equivalent, using `uvicorn src.api.m
 **Workflow:**
 
 1. `GET /api/incidents?status=open` — retrieves all open incidents.
-2. `GET /api/incidents/7` — fetches incident with all linked alerts.
+2. There is no `GET /api/incidents/{id}`: read the incident from the list above and its alerts with `GET /api/alerts?src_ip=10.0.0.99` (each alert carries `incident_id`).
 3. Analyst reviews alert timeline: 8 alerts from `10.0.0.99` over 10 minutes, mix of PortScan and SSH-Patator types.
 4. Analyst updates incident: `PATCH /api/incidents/7` `{status: "investigating", assigned_to: "alice", notes: "Possible external attacker testing perimeter"}`.
-5. Analyst creates a suppression rule for the IP while investigation continues (if authorized): `POST /api/suppression-rules` with `src_ip: "10.0.0.99"`, `min_severity: "low"`, `expires_at: "+24h"`, `reason: "Under investigation — suppressing low-severity alerts"`.
+5. Analyst creates a suppression rule for the IP while investigation continues (if authorized): `POST /api/suppression-rules` with `src_ip: "10.0.0.99"`, `min_severity: "low"`, `duration_minutes: 1440` (the server computes `expires_at`), `reason: "Under investigation — suppressing low-severity alerts"`.
 6. After firewall block is confirmed, analyst resolves: `PATCH /api/incidents/7` `{status: "resolved", notes: "Blocked at perimeter firewall. No lateral movement detected."}`.
 7. Export alert history: `GET /api/alerts/export?format=csv&hours=48` for post-incident report.
 
@@ -322,12 +322,12 @@ Alternatively, add a suppression rule for the NAS IP to achieve the same effect 
 
 **Setup:**
 
-1. Copy `siem/splunk/inputs.conf` to Splunk forwarder config. Configure `SPLUNK_HEC_URL` and `SPLUNK_HEC_TOKEN` in CNDS `.env`.
+1. Copy `siem/splunk/inputs.conf` to Splunk forwarder config. CNDS has no HEC-specific settings: put the collector URL in `WEBHOOK_URLS`, behind a relay that adds the `Authorization: Splunk <token>` header and the `event` wrapper (CNDS sends neither).
 2. Copy `siem/splunk/props.conf` to Splunk for field extractions.
 3. Import `siem/splunk/savedsearches.conf` for pre-built correlation searches.
 
 **Data flow:**
-- CNDS fires webhook to Splunk HEC on every alert.
+- CNDS posts a JSON summary to each `WEBHOOK_URLS` entry for alerts persisted through `POST /api/predict` whose severity reaches `NOTIFY_MIN_SEVERITY`; alerts written by the live detector are not pushed, so pull them with `GET /api/alerts/export` or the syslog forwarder.
 - Splunk parses `mitre_techniques`, `engine_scores`, `severity`, `src_geo` as indexed fields.
 - Pre-built searches: "Critical alerts last 24h", "Top attacking IPs", "MITRE technique heatmap".
 
@@ -339,8 +339,9 @@ Alternatively, add a suppression rule for the NAS IP to achieve the same effect 
 | `dst_ip` | `dest` |
 | `attack_type` | `signature` |
 | `severity` | `severity` |
-| `mitre_techniques[].id` | `mitre_technique_id` |
-| `src_geo.country` | `src_country` |
+| `src_port` / `dst_port` | `src_port` / `dest_port` |
+
+`props.conf` defines no alias for `mitre_techniques` or `src_geo`; with `KV_MODE = json` Splunk extracts them under their JSON paths (`mitre_techniques{}.id`, `src_geo.country`).
 
 ---
 

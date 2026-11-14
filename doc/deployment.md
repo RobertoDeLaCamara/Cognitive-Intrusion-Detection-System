@@ -421,21 +421,21 @@ Restart the `api` container (the guardian's background tasks run inside the API 
 3. Set in `.env`:
 ```bash
 WEBHOOK_URLS=https://splunk-hec-host:8088/services/collector/event
-# Use Authorization header in webhook config for HEC token
 ```
 
-See `siem/splunk/README.md` for full Splunk setup.
+CNDS posts a plain JSON summary with no `Authorization` header and no HEC `event` wrapper, and there is no setting to add them: a direct push to HEC needs a relay in front that adds the token. See `siem/README.md` and `wiki/SIEM-Integration.md`.
 
 ### Elastic
 
-1. Run the Logstash pipeline in `siem/elastic/logstash-pipeline.conf`.
-2. Apply the index template: `curl -X PUT http://elastic:9200/_index_template/cnds-alerts -d @siem/elastic/index-template.json`.
+1. Run the Logstash pipeline in `siem/elastic/logstash_cnds.conf`.
+2. Apply the index template: `curl -X PUT http://elastic:9200/_index_template/cnds-alerts -H 'Content-Type: application/json' -d @siem/elastic/index_template.json`.
 3. Stream logs via Filebeat or push via webhook.
 
 ### CEF Syslog (QRadar / ArcSight / Sentinel)
 
 ```bash
-python siem/syslog/forwarder.py --listen-port 5514 --target-host siem-server --target-port 514
+python siem/syslog/forwarder.py --syslog-host siem-server --syslog-port 514 --syslog-proto udp
+# it polls GET /api/alerts on --cnds-url (default http://localhost:8000) every --poll-interval seconds
 ```
 
 ---
@@ -521,13 +521,11 @@ For systemd deployments, logs go to journald by default.
 
 ## Periodic Cleanup
 
-The API server runs a periodic cleanup task (configurable interval) that:
-1. Removes alerts older than `ALERT_RETENTION_DAYS` (default: 90 days).
-2. Deletes expired suppression rules.
-3. Prunes DNS log entries beyond retention window.
-4. Rebuilds SQLite WAL checkpoint (SQLite only).
+The API server runs a periodic cleanup task every 5 minutes that:
+1. Deletes expired suppression rules.
+2. Prunes inactive clients from the in-memory rate limiter.
 
-This task runs in the background and requires no external cron setup.
+There is no alert retention: alerts are never deleted automatically, and no `ALERT_RETENTION_DAYS` setting exists. Prune the `alerts` table yourself if it has to stay bounded. The DNS log is held in memory and bounded by `MAX_TRACKED_IPS`.
 
 ---
 
@@ -605,11 +603,13 @@ pytest tests/ --cov=src --cov-report=html
 
 | Metric | Normal Range | Action if Exceeded |
 |---|---|---|
-| `cnds_packets_dropped_total` | 0 | Increase `PACKET_WORKERS` or `PACKET_QUEUE_SIZE` |
-| `cnds_active_flows` | < `MAX_ACTIVE_FLOWS` | Reduce `FLOW_TIMEOUT` or increase limit |
-| `cnds_engine_latency_seconds{engine="lstm"}` | < 10ms | Check GPU availability; reduce `LSTM_SEQ_LEN` |
-| `http_request_duration_seconds{endpoint="/api/alerts"}` | < 200ms | Add DB indexes; switch to PostgreSQL |
+| `dropped_packets` in `capture_stats` of `GET /health` (only with `main.py --api`; not a Prometheus series) | 0 | Increase `PACKET_WORKERS` or `PACKET_QUEUE_SIZE` |
+| `cnds_http_request_duration_seconds{endpoint="/api/alerts"}` | < 200ms | Add DB indexes; switch to PostgreSQL |
 | `cnds_alerts_total{severity="critical"}` | Baseline-dependent | Investigate immediately |
+| `cnds_alerts_suppressed_total{reason}` | Baseline-dependent | A jump in `suppression_rule` means a rule is hiding a lot: review it |
+| `cnds_baseline_trigger_progress_ratio` | Rises to 1 | Stuck below 1: lower the `BASELINE_MIN_*` threshold that is the bottleneck |
+
+The Prometheus series are those listed in `wiki/API-Reference.md` (`cnds_http_*`, `cnds_alerts_*`, `cnds_ensemble_score`, `cnds_baseline_*`). There are no per-engine latency, active-flow or dropped-packet series.
 
 ### Health Check
 

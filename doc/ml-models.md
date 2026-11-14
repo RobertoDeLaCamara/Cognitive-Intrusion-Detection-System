@@ -1389,7 +1389,7 @@ python scripts/pcap_replay.py test_attacks.pcap \
 
 ```bash
 cd demo
-python run_demo.py --output-json demo_results.json
+python run_demo.py            # options: --no-generate, --scenario NAME (it has no JSON output option)
 ```
 
 La salida JSON contiene scores por escenario, detecciones, falsos positivos del tráfico normal y técnicas MITRE observadas.

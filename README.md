@@ -209,7 +209,7 @@ ADGUARD_USERNAME=
 ADGUARD_PASSWORD=
 ```
 
-Every action is recorded in the `mitigation_actions` table (`src_ip`, `status`: `pending`/`confirmed`/`undone`/`expired`, `reason`, `expires_at`) for audit and rollback. See [doc/architecture.md](doc/architecture.md#guardian-auto-response-layer-srcguardian) and [doc/deployment.md](doc/deployment.md#guardian-auto-response-setup) for the full design and setup guide.
+Every action is recorded in the `mitigation_actions` table (`src_ip`, `status`: `pending`/`confirmed`/`undone`/`expired`, `reason`, `expires_at`) for audit and rollback. See [doc/architecture.md](doc/architecture.md#guardian-auto-response-layer-srcguardian) and [wiki/Deployment.md](wiki/Deployment.md#guardian-setup) for the full design and setup guide.
 
 ### SIEM Integration
 

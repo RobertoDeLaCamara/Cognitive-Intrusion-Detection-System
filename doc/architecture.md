@@ -381,7 +381,7 @@ Opt-in (`GUARDIAN_ENABLED=false` by default), off-hot-path consumer of the alert
 A two-method `Protocol` (`block(ip, reason)` / `unblock(ip)`) so enforcement points are swappable without touching the decision logic in `engine.py`.
 
 - **`AdGuardBackend`** (only implementation currently): DNS-level blocking via AdGuard Home. AdGuard's `/control/access/set` endpoint has no incremental add/remove — it always replaces the full `{allowed_clients, disallowed_clients, blocked_hosts}` payload, so `block()`/`unblock()` do a read (`/control/access/list`) → modify → write.
-- A router/firewall backend is a natural future addition, but most consumer/ISP routers have no API for this — see [deployment.md](deployment.md#guardian-auto-response-setup) for the caveat.
+- A router/firewall backend is a natural future addition, but most consumer/ISP routers have no API for this — see [the wiki deployment page](../wiki/Deployment.md#guardian-setup) for the caveat.
 
 #### Telegram inline buttons (`telegram_listener.py`)
 - `send_action_notice()` posts a message with an `inline_keyboard` (`confirm:<id>` / `undo:<id>` callback data) whenever a new action is created.

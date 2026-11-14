@@ -66,6 +66,114 @@ Migration files live in `alembic/versions/` and are tracked in git.
 - [ ] Set up SIEM integration (see [SIEM Integration](SIEM-Integration.md))
 - [ ] If enabling the Guardian, review `GUARDIAN_WHITELIST` first — never a broad LAN CIDR — and keep `GUARDIAN_ENABLED=false` until it's populated
 
+## Production Hardening
+
+### First admin user
+
+With `JWT_SECRET` set, `POST /api/auth/users` needs an admin Bearer token (an `X-API-Key` does not satisfy it), so the first admin cannot be created through the API. Insert it once, with `DATABASE_URL` pointing at the production database:
+
+```bash
+openssl rand -hex 32          # a value for JWT_SECRET
+
+venv/bin/python - <<'PY'
+import asyncio
+from src.api.database import AsyncSessionLocal, init_db
+from src.api.models import User
+from src.api.auth import hash_password
+
+async def main():
+    await init_db()
+    async with AsyncSessionLocal() as db:
+        db.add(User(username="admin", password_hash=hash_password("strong-password"), role="admin"))
+        await db.commit()
+
+asyncio.run(main())
+PY
+```
+
+Further users are created with `POST /api/auth/users` and an admin token.
+
+### Metrics endpoint
+
+`/metrics` is open unless `METRICS_TOKEN` is set; then it needs `Authorization: Bearer <token>` (in `prometheus.yml`: `authorization: {credentials: <token>}`).
+
+### TLS
+
+CNDS serves plain HTTP. Put a reverse proxy with TLS in front; the `Upgrade` and `Connection` headers are needed for `/ws/alerts`:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name cnds.internal;
+
+    ssl_certificate /etc/ssl/cnds.crt;
+    ssl_certificate_key /etc/ssl/cnds.key;
+
+    location / {
+        proxy_pass http://localhost:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+```
+
+### Capacity settings
+
+On a busier network raise the bounds of the capture path (defaults in brackets): `PACKET_WORKERS` (4), `PACKET_QUEUE_SIZE` (20000), `MAX_ACTIVE_FLOWS` (50000), `MAX_TRACKED_IPS` (5000); a shorter `FLOW_TIMEOUT` (120) frees flow state sooner. When the API runs in the capture process (`main.py --api`), `capture_stats.dropped_packets` in `GET /health` counts packets dropped because the queue was full: if it grows, add workers or queue size. There is no Prometheus series for it.
+
+### Logs
+
+Logs go to stdout/stderr; `LOG_FORMAT=json` makes them structured. In Docker, bound them with the `json-file` driver options:
+
+```yaml
+logging:
+  driver: "json-file"
+  options:
+    max-size: "100m"
+    max-file: "10"
+```
+
+### Health check
+
+`GET /health` always answers 200 with the availability of each engine while the API process is up; it does not turn into an error when engines are missing. To alert on a degraded detector, read the `engines` object (and `GET /api/baseline/status` for the baseline engine).
+
+### Background cleanup
+
+Every 5 minutes the API deletes expired suppression rules and prunes its in-memory rate limiter. Alerts are never deleted automatically: prune the `alerts` table yourself if it has to stay bounded.
+
+### GeoIP (optional)
+
+Download the free MaxMind `GeoLite2-City.mmdb` (needs a MaxMind account) and set `GEOIP_DB_PATH` to it. Without it `src_geo` is null on every alert.
+
+## Running without Docker (systemd)
+
+```ini
+# /etc/systemd/system/cnds.service
+[Unit]
+Description=Cognitive Network Defense System
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/cnds
+EnvironmentFile=/opt/cnds/.env
+ExecStart=/opt/cnds/venv/bin/python main.py --api
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl enable --now cnds
+sudo journalctl -u cnds -f
+```
+
+This runs capture and API in one process, so SQLite is enough for a single small host; the Guardian, `capture_stats` and `/api/drift-status` also work in this layout because they live in that same process.
+
 ## Guardian Auto-Response (Optional)
 
 Off by default (`GUARDIAN_ENABLED=false`). A background task in the `api` process polls the alerts table and, for alerts at or above `GUARDIAN_MIN_SEVERITY` (default `critical`), blocks the offending `src_ip` via AdGuard Home's DNS access-control API — unless it's in `GUARDIAN_WHITELIST`, already has an active action, or the circuit breaker (`GUARDIAN_CIRCUIT_MAX_ACTIONS`/`_WINDOW_SECS`) has tripped. Every block auto-expires after `GUARDIAN_BLOCK_MINUTES` (rollback) unless confirmed permanent via Telegram inline buttons (`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`, long-polling `getUpdates` — no webhook needed). All actions are logged in the `mitigation_actions` table.
@@ -80,7 +188,22 @@ ADGUARD_USERNAME=
 ADGUARD_PASSWORD=
 ```
 
-See [Configuration](Configuration.md) for the full variable list and the [deployment guide](https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System/blob/master/doc/deployment.md#guardian-auto-response-setup) in the main repo for the step-by-step setup/verification checklist.
+See [Configuration](Configuration.md) for the full variable list.
+
+### Guardian setup
+
+Do these in order, and keep `GUARDIAN_ENABLED=false` until the last step.
+
+1. **Enforcement backend.** The only backend shipped is `AdGuardBackend`: DNS-level blocking through AdGuard Home's access-control API (`/control/access/list` and `/control/access/set`). It needs an AdGuard Home instance that is already your network's DNS resolver (`ADGUARD_URL`, `ADGUARD_USERNAME`, `ADGUARD_PASSWORD`). A DNS block stops a device from resolving names, which disrupts most C2 and exfiltration traffic; it does **not** stop traffic to a hardcoded IP or to names the device already cached. Another enforcement point can be added behind the `MitigationBackend` protocol (`src/guardian/backends.py`) without touching `engine.py`.
+2. **Whitelist, before enabling.** List the gateway, your infrastructure hosts and your own devices one by one in `GUARDIAN_WHITELIST`. Never a CIDR that covers the subnet the detector monitors: the Guardian would then never block anything. A device on DHCP needs a reservation on the router, or its entry goes stale and a false positive can block it until the rollback.
+3. **Safety limits.** `GUARDIAN_MIN_SEVERITY=critical` is the conservative start (`high` blocks more, with more false positives). `GUARDIAN_BLOCK_MINUTES` is how long a block lasts before the automatic rollback. `GUARDIAN_CIRCUIT_MAX_ACTIONS` blocks inside `GUARDIAN_CIRCUIT_WINDOW_SECS` pause the Guardian and send one notice.
+4. **Alert sources.** Only alerts whose `source` is in `GUARDIAN_ALERT_SOURCES` (default `detector`) can cause a block, so alerts from `POST /api/predict` and logwatch do not, unless you add `api` or `logwatch`.
+5. **Telegram Confirm / Undo (optional).** With `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`, every block is sent with **Confirm** (make it permanent, cancel the rollback) and **Undo now** buttons. The listener long-polls `getUpdates`, so nothing has to be exposed to the internet. Button presses are accepted only from `TELEGRAM_CHAT_ID` when it is a private chat; in a group chat set `TELEGRAM_ALLOWED_USER_IDS`. Without a token the Guardian still blocks and rolls back on schedule.
+6. **Enable and verify.** Set `GUARDIAN_ENABLED=true` and restart the `api` service (the Guardian tasks run inside the API process). Then, before trusting it unattended:
+   1. Produce a `critical` alert from a non-whitelisted, disposable test address.
+   2. Within one `GUARDIAN_POLL_INTERVAL_SECS` cycle, check for a new `mitigation_actions` row with `status=pending` and for the address in AdGuard's `disallowed_clients`.
+   3. Check that the same alert from a whitelisted address produces no action.
+   4. Wait for `expires_at` (or set it to a past time in the database) and check that the next cycle unblocks the address and sets `status=expired`.
 
 ## Streamlit Dashboard
 

@@ -23,7 +23,7 @@
 | [mcp-server.md](mcp-server.md) | SOC analysts, integrators | Read-only MCP server: conversational alert triage from Claude Code / Desktop, tool catalogue, security model |
 | [use-cases.md](use-cases.md) | SOC analysts, security architects | Operational use cases, attack scenarios, analyst workflows |
 | [digital-twin-sandbox.md](digital-twin-sandbox.md) | Engineers, demo operators | Local network digital twin, offline demo, sandbox testing |
-| [deployment.md](deployment.md) | DevOps, platform engineers | Installation, configuration, production operations |
+| [wiki/Deployment.md](../wiki/Deployment.md) | DevOps, platform engineers | Installation, configuration, production operations (lives in the wiki) |
 | [ft_transformer_architecture.md](ft_transformer_architecture.md) | ML engineers | FT-Transformer internals: tokenizer, encoder blocks, forward pass diagram, hyperparameters, temperature scaling |
 | [UNIFIED_FT_LIVE_RUNBOOK.md](UNIFIED_FT_LIVE_RUNBOOK.md) | Engineers, QA | Manual end-to-end test of the FT-Transformer engine on live traffic |
 

@@ -67,9 +67,19 @@ CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
 # ── Dashboard target ─────────────────────────────────────────────────────────
 FROM base AS dashboard
 
+# ARGs do not carry over from the parent stage.
+ARG TARGETARCH=amd64
+
 USER root
-COPY requirements-dashboard.txt .
-RUN pip install --no-cache-dir -r requirements-dashboard.txt
+# Same rule as the base stage: hashed lock on amd64/arm64 (requirements-lock-dashboard.txt,
+# resolved on top of the base lock by scripts/lock_requirements.sh), unlocked elsewhere.
+COPY requirements-dashboard.txt requirements-lock-dashboard.txt ./
+RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
+        pip install --no-cache-dir --timeout=300 --retries=5 --require-hashes --no-deps \
+            -r requirements-lock-dashboard.txt ; \
+    else \
+        pip install --no-cache-dir --timeout=300 --retries=5 -r requirements-dashboard.txt ; \
+    fi
 USER ids
 
 EXPOSE 8501

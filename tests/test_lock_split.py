@@ -59,3 +59,47 @@ def test_dockerfile_installs_each_part_from_its_own_copy():
     df = (ROOT / "Dockerfile").read_text()
     for part in split_lock.PARTS:
         assert f"requirements-lock-{part}-*.txt" in df and f"requirements-lock-{part}-${{TARGETARCH}}.txt" in df
+
+
+# ── Dashboard lock ───────────────────────────────────────────────────────────
+DASHBOARD_LOCK = ROOT / "requirements-lock-dashboard.txt"
+
+
+def _pins(text):
+    """name -> version, names normalised the way pip compares them."""
+    return {
+        re.sub(r"[-_.]+", "-", name).lower(): version
+        for name, version in re.findall(r"^([A-Za-z0-9_.-]+)==(\S+)", text, flags=re.M)
+    }
+
+
+def test_dashboard_lock_covers_the_dashboard_requirements_and_is_hashed():
+    blocks = _blocks(DASHBOARD_LOCK.read_text())
+    assert blocks
+    for name, block in blocks.items():
+        assert re.search(r"--hash=sha256:[0-9a-f]{64}", block), f"{name} has no hash"
+    wanted = re.findall(r"^([A-Za-z0-9_.-]+)", (ROOT / "requirements-dashboard.txt").read_text(), flags=re.M)
+    assert wanted
+    locked = _pins(DASHBOARD_LOCK.read_text())
+    for name in wanted:
+        assert name.lower() in locked, f"{name} is missing: rerun scripts/lock_requirements.sh"
+
+
+@pytest.mark.parametrize("arch", ARCHES)
+def test_dashboard_lock_keeps_the_versions_of_the_base_image(arch):
+    """The dashboard stage installs on top of the base stage with --no-deps: a different
+    version of a shared package would replace the one the API lock was resolved with."""
+    base = _pins((ROOT / f"requirements-lock-{arch}.txt").read_text())
+    dashboard = _pins(DASHBOARD_LOCK.read_text())
+    shared = set(base) & set(dashboard)
+    assert shared, "expected the dashboard to share packages with the base image"
+    for name in shared:
+        assert dashboard[name] == base[name], (
+            f"{name}: dashboard {dashboard[name]} != base {base[name]}: rerun scripts/lock_requirements.sh"
+        )
+
+
+def test_dockerfile_installs_the_dashboard_from_its_hashed_lock():
+    stage = (ROOT / "Dockerfile").read_text().split("AS dashboard", 1)[1]
+    assert "ARG TARGETARCH" in stage, "build args are not inherited from the base stage"
+    assert re.search(r"--require-hashes --no-deps \\\n\s+-r requirements-lock-dashboard\.txt", stage)

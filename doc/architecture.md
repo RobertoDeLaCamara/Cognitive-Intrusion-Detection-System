@@ -153,8 +153,8 @@ The authoritative feature set for supervised classification, mirroring the CIC-I
 | Category | Features |
 |---|---|
 | Duration | `flow_duration` |
-| Forward (client→server) | `tot_fwd_pkts`, `tot_len_fwd_pkts`, `fwd_pkt_len_max/min/mean/std` |
-| Backward (server→client) | `tot_bwd_pkts`, `tot_len_bwd_pkts`, `bwd_pkt_len_max/min/mean/std` |
+| Forward (client→server) | `tot_fwd_pkts`, `totlen_fwd_pkts`, `fwd_pkt_len_max/min/mean/std` |
+| Backward (server→client) | `tot_bwd_pkts`, `totlen_bwd_pkts`, `bwd_pkt_len_max/min/mean/std` |
 | Flow-level rates | `flow_byts_s`, `flow_pkts_s` |
 | Inter-arrival times | `flow_iat_mean/std/max/min`, `fwd_iat_tot/mean/std/max/min`, `bwd_iat_*` |
 | TCP flags | `fwd_psh_flags`, `bwd_psh_flags`, `fwd_urg_flags`, `bwd_urg_flags`, `fin/syn/rst/pst/ack/urg/cwe/ece_flag_cnt` |
@@ -172,10 +172,10 @@ Aggregated behavioral fingerprint per source IP using a sliding window of the la
 
 | # | Feature | Description |
 |---|---|---|
-| 0 | `packet_rate` | Packets per second |
-| 1 | `byte_rate` | Bytes per second |
+| 0 | `packets_per_sec` | Packets per second |
+| 1 | `bytes_per_sec` | Bytes per second |
 | 2 | `avg_packet_size` | Mean packet size |
-| 3 | `packet_size_variance` | Size variance |
+| 3 | `packet_size_var` | Size variance |
 | 4 | `total_packets` | Window packet count |
 | 5 | `total_bytes` | Window byte count |
 | 6 | `iat_mean` | Inter-arrival time mean |
@@ -186,10 +186,10 @@ Aggregated behavioral fingerprint per source IP using a sliding window of the la
 | 11 | `udp_ratio` | Fraction of UDP packets |
 | 12 | `icmp_ratio` | Fraction of ICMP packets |
 | 13 | `unique_ports` | Distinct destination ports |
-| 14 | `uncommon_port_ratio` | Ports > 1024 / total |
-| 15 | `avg_entropy` | Mean payload byte entropy |
+| 14 | `uncommon_port_ratio` | Share of destination ports that are not in `COMMON_PORTS` (`src/config.py`) |
+| 15 | `avg_payload_entropy` | Mean payload byte entropy |
 | 16 | `avg_payload_size` | Mean payload length |
-| 17 | `payload_size_variance` | Payload size variance |
+| 17 | `payload_size_var` | Payload size variance |
 
 #### `PayloadAnalyzer` — 10 Numeric Features + 6 Pattern Flags
 Examines raw packet payload bytes for injection signatures and statistical indicators.
@@ -546,7 +546,7 @@ Key configuration categories:
 | PostgreSQL unreachable | Alert persisted to in-memory queue; retried on reconnect |
 | GeoIP database absent | `src_geo` field omitted from alert; pipeline continues |
 | JA3 hash file missing | JA3 matching disabled; fingerprint still computed and stored |
-| Packet queue full | Packets dropped; `dropped_count` incremented at `/health` |
+| Packet queue full | Packets dropped; `dropped_packets` in `capture_stats` of `/health` increases (visible only with `main.py --api`) |
 | Worker thread crash | Remaining workers continue; crash logged with stack trace |
 | Guardian's `MitigationBackend.block()`/`unblock()` fails | Exception is caught and logged; no `mitigation_actions` row is written/updated for a failed `block()`, so the audit trail never claims a block that didn't happen |
 | Guardian circuit breaker trips | Auto-blocking pauses for the batch (not replayed later); one notification fires; detection and manual response are unaffected |

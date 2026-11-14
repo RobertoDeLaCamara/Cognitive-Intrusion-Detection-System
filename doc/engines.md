@@ -163,7 +163,7 @@ Detect attacks that unfold slowly over time — behaviors that look normal in an
 - **Storage:** `models/lstm_autoencoder.pt` (weights) + `models/lstm_config.json` (architecture params).
 
 ### Per-IP Sequence Buffers
-- Each tracked source IP maintains a FIFO buffer of its last `LSTM_SEQ_LEN` (default: 20) host feature vectors.
+- Each tracked source IP maintains a FIFO buffer of its last `sequence_length` host feature vectors (20, read from `models/lstm_config.json`; there is no environment variable for it).
 - On each new packet, the buffer is updated.
 - When the buffer is full, the full sequence is run through the autoencoder.
 - LRU eviction removes the oldest IP when `MAX_TRACKED_IPS` is reached.
@@ -438,9 +438,6 @@ Training code is expected in the `scripts/` or `models/` directory. The config f
 
 ### MLflow Integration
 When `MLFLOW_TRACKING_URI` is set, models can be loaded from the registry:
-```bash
-# Register a new model version
-python src/mlflow_registry.py --register models/rf_model_v2.joblib --name cnds-rf
-```
+`src/mlflow_registry.py` has no command-line interface: models are registered by the code that trains them (`scripts/train_rf.py --mlflow-uri ...` for the Random Forest, `WindowTrainer` for the baseline models, the ML-IDS sweep for the FT-Transformer).
 
 The `src/mlflow_registry.py` module provides a unified interface for loading from registry or local path.

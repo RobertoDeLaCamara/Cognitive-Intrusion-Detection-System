@@ -39,6 +39,7 @@ CNDS is at **2.0.0 release candidate** (pre-release): usable on a home LAN, not 
         │                          ↳ falls back to Random Forest if no checkpoint
         ├─► [Isolation Forest]      Novelty score  (18 host features)
         ├─► [LSTM Autoencoder]      Sequence score (18 host features)
+        ├─► [Baseline Engine]       Live-trained IF + LSTM from the unsupervised pipeline
         ├─► [Rules Engine]          Threshold + pattern + JA3 rules
         └─► [Threat Intelligence]   External IOC feeds (AbuseIPDB, JA3, MISP)
                 │
@@ -48,7 +49,7 @@ CNDS is at **2.0.0 release candidate** (pre-release): usable on a home LAN, not 
                 │
         ┌───────┴────────┐
         │   Alert fired  │  → MITRE ATT&CK mapping
-        └───────┬────────┘    → logger + SQLite  →  FastAPI
+        └───────┬────────┘    → logger + SQLite / PostgreSQL  →  FastAPI
                 │
                 ├─► SIEM (Splunk / Elastic / Syslog-CEF)
                 ├─► Webhook / Telegram / ntfy notifications (POST /api/predict path; see note below)
@@ -396,13 +397,14 @@ Base URL: `http://localhost:8000`
 | Endpoint | Method | Description |
 |---|---|---|
 | `/health` | GET | Engine availability + capture stats |
-| `/api/predict` | POST | Run all engines on supplied features |
+| `/api/predict` | POST | Run the supervised, Isolation Forest, LSTM and rules engines on supplied features (not the baseline engine or threat intel) |
 | `/api/alerts` | GET | List alerts (filter: `severity`, `src_ip`, `acknowledged`, `start`, `end`, `hours`; paging: `limit` ≤ 500, `offset`) |
 | `/api/alerts/export` | GET | Export alerts as CSV/JSON (filter: `format`, `severity`, `src_ip`, `hours`, `limit` ≤ 10000) — requires `admin` or `analyst` when JWT is on |
 | `/api/alerts/trends` | GET | Alert counts bucketed by hour/day (filter: `hours` 1–168, `bucket`) |
-| `/api/alerts/{alert_id}` | GET | Get single alert by ID |
-| `/api/alerts/{alert_id}` | PATCH | Acknowledge alert, add notes, link to incident |
+| `/api/alerts/{alert_id}` | GET | Get single alert by ID, including its stored feature vectors |
+| `/api/alerts/{alert_id}` | PATCH | Acknowledge alert, label it `tp`/`fp`/`unknown`, add notes, link to incident |
 | `/api/incidents` | GET / POST | Incident management (POST requires admin/analyst) |
+| `/api/incidents/{incident_id}` | PATCH | Update status (forward only), notes or assignee (requires admin/analyst) |
 | `/api/stats` | GET | Alert counts grouped by severity |
 | `/api/suppression-rules` | GET / POST | List or create suppression rules (POST requires admin/analyst) |
 | `/api/suppression-rules/{rule_id}` | DELETE | Remove a suppression rule (requires admin) |
@@ -418,7 +420,7 @@ Base URL: `http://localhost:8000`
 | `/api/auth/token` | POST | Issue JWT token from a JSON body `{"username", "password"}` (501 unless `JWT_SECRET` is set) |
 | `/api/auth/users` | GET / POST | User management (requires admin) |
 | `/api/auth/users/{user_id}` | DELETE | Delete user (requires admin) |
-| `/ws/alerts` | WebSocket | Real-time alert stream (`?token=JWT` when auth enabled) |
+| `/ws/alerts` | WebSocket | Real-time alert stream (`?token=JWT` with JWT; `X-API-Key` header or `?key=` with `API_KEY` only) |
 | `/metrics` | GET | Prometheus metrics (when `PROMETHEUS_ENABLED=true`) |
 | `/docs` | GET | Swagger UI (auto-generated) |
 
@@ -664,6 +666,11 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   ├── eval_triage.py             # Triage agent agreement with analyst labels
 │   ├── generate_demo_models.py    # Synthetic IF/LSTM demo models (not for production)
 │   ├── demo_seed.py               # Seed demo data (compose `demo-seed` service)
+│   ├── make_labelled_pcap.py      # Synthetic labelled PCAP for the replay evaluation
+│   ├── eval_baseline.py           # Offline bench of the baseline models on dumped windows
+│   ├── model_manifest.py          # Write / check the SHA-256 manifest of pickle models
+│   ├── lock_requirements.sh       # Regenerate the hashed lock files (needs uv)
+│   ├── split_lock.py              # Split each lock into the per-layer parts the Dockerfile installs
 │   └── smoke_test_ft_unified.py   # Reproduce FT-Transformer F1 macro on the held-out test split
 ├── siem/                        # SIEM integration templates
 │   ├── README.md                # Setup guide for all platforms
@@ -678,7 +685,10 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   └── syslog/
 │       └── forwarder.py         # CEF syslog forwarder (QRadar, ArcSight, Sentinel)
 ├── dashboard/
-│   └── app.py                   # Streamlit real-time dashboard
+│   ├── app.py                   # Streamlit entry point: page setup and navigation
+│   ├── api_client.py            # API client (X-API-Key or JWT login)
+│   ├── data.py / common.py      # Shared helpers (filtering, KPIs, trends)
+│   └── views/                   # Alerts overview, alert detail, analytics
 ├── models/                       # ML model files
 │   ├── unified/
 │   │   ├── unified_ft_transformer.pt   # Preferred supervised model (gitignored)
@@ -695,6 +705,13 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   ├── pipeline.py              # Detection pipeline callback (flow → engines → alert)
 │   ├── mlflow_registry.py       # Unified MLflow model registry
 │   ├── timeutils.py             # utcnow(): naive-UTC helper for DateTime columns
+│   ├── labels.py                # is_benign(): benign-label helper
+│   ├── failure_streak.py        # Log the first failure of a streak, then stay quiet until recovery
+│   ├── model_integrity.py       # SHA-256 manifest check before loading pickle models
+│   ├── version.py               # Package version
+│   ├── monitoring/              # Input-feature drift monitor of the supervised model
+│   ├── inventory/               # LAN asset inventory (GET /api/assets)
+│   ├── logwatch/                # Log-based rules outside the ensemble (parser, engine, replay)
 │   ├── triage/                  # Out-of-process advisory triage agent (python -m src.triage)
 │   ├── models/
 │   │   └── ft_transformer.py    # FTTransformer class + load/build helpers + UNIFIED_CLASS_LABELS
@@ -715,6 +732,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   │   ├── isolation_forest.py  # Isolation Forest wrapper
 │   │   ├── lstm_autoencoder.py  # LSTM Autoencoder wrapper
 │   │   ├── baseline_engine.py   # Live-trained IF + LSTM baseline engine
+│   │   ├── baseline_scoring.py  # Score formulas shared with the offline bench
 │   │   ├── lstm_model.py        # LSTM Autoencoder architecture (nn.Module)
 │   │   └── rules.py             # Rule-based engine (incl. JA3 rules)
 │   ├── unsupervised/
@@ -723,6 +741,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   │   ├── triggers.py          # CompositeTrigger: four-condition window trigger
 │   │   ├── window_trainer.py    # IsolationForest + LSTM Autoencoder training + MLflow logging
 │   │   ├── artifact_schema.py   # Canonical MLflow artifact path constants
+│   │   ├── dump.py / evaluation.py / attack_sim.py  # Window dumps and the offline evaluation bench
 │   │   └── provenance.py        # ProvenanceMetadata: window statistics snapshot
 │   ├── ensemble/
 │   │   └── scorer.py            # Weighted confidence fusion → EnsembleResult
@@ -732,7 +751,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   │   ├── correlation.py       # Auto-group alerts into incidents
 │   │   ├── adaptive_weights.py  # Feedback-driven engine weight tuning
 │   │   ├── suppression.py       # Temporary alert suppression rules
-│   │   ├── notifications.py     # Webhook/Slack alert notifications
+│   │   ├── notifications.py     # Webhook/Slack, Telegram and ntfy notifications
 │   │   ├── confidence_decay.py  # Exponential score decay for repeat alerts
 │   │   ├── ip_lists.py          # IP allowlist / blocklist
 │   │   ├── threat_intel.py      # Threat intelligence feed integration (AbuseIPDB, JA3, MISP)
@@ -749,9 +768,9 @@ Copy `.env.example` to `.env` and adjust as needed.
 │   │   └── server.py            # MCP Server + stdio transport
 │   └── api/
 │       ├── main.py              # FastAPI application
-│       ├── models.py            # SQLAlchemy ORM (Alert, Incident, SuppressionRule, MitigationAction, TriageAnnotation, User)
+│       ├── models.py            # SQLAlchemy ORM (Alert, Incident, SuppressionRule, HostProfile, MitigationAction, TriageAnnotation, User)
 │       ├── schemas.py           # Pydantic request/response schemas
-│       ├── database.py          # Async SQLAlchemy session setup
+│       ├── database.py          # Async session setup + Alembic migration at startup
 │       ├── auth.py              # JWT authentication and RBAC
 │       ├── metrics.py           # Prometheus metrics + OpenTelemetry
 │       ├── rate_limit.py        # Per-IP rate limiting middleware
@@ -760,6 +779,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 │           ├── alerts.py        # Alert, incident, suppression, stats, adaptive-weights, dns-log
 │           ├── auth.py          # POST /api/auth/token + user management
 │           ├── baseline.py      # GET /api/baseline/{status,windows}
+│           ├── drift.py / engines.py / feedback.py / assets.py  # drift-status, engines, feedback, assets
 │           └── websocket.py     # WebSocket /ws/alerts
 ├── sandbox/                     # End-to-end test environments
 │   ├── orchestrator.py          # API-level sandbox (CI + demo modes)
@@ -788,21 +808,21 @@ Copy `.env.example` to `.env` and adjust as needed.
     ├── test_mitre.py            # MITRE ATT&CK mapping tests
     ├── test_payload_features.py
     ├── test_ip_lists.py          # IP allowlist/blocklist tests
-    ├── test_threat_intel.py      # Threat intelligence feed tests (32 tests)
+    ├── test_threat_intel.py      # Threat intelligence feed tests (34 tests)
     ├── test_triage.py            # Triage agent: schema, guards, runner (26 tests)
-    ├── test_pipeline.py / test_predict.py / test_suppression.py / test_correlation.py / ...
+    ├── test_pipeline.py / test_predict.py / test_suppression.py / test_correlation.py / ...   # about 60 modules; wiki/Testing.md lists them by area
     ├── test_guardian.py          # Guardian: AdGuard backend, whitelist, circuit breaker
     ├── test_mcp_server.py        # MCP server: queries, sanitisation, read-only guarantees (103 tests)
     ├── test_rules_engine.py
     ├── test_siem.py             # CEF syslog forwarder tests
     ├── test_ft_transformer_engine.py  # FT-Transformer integration tests (load + predict + dataset checks)
     ├── engines/
-    │   └── test_baseline_engine.py  # BaselineEngine (24 tests)
+    │   └── test_baseline_engine.py  # BaselineEngine (28 tests)
     └── unsupervised/
         └── test_collector.py    # BaselineCollector, CompositeTrigger, ProvenanceMetadata unit tests (43 tests)
 ```
 
-`pytest --collect-only -q` reports the current count (about 580 tests without `torch`, and it grows with every change, so this README does not pin an exact number). `pytest.ini` deselects `slow`-marked tests (`tests/unsupervised/test_window_stability.py`), and modules that need `torch` (`test_ft_transformer_engine.py`, `test_window_stability.py`) skip themselves where it is not installed, so those add to the count where `torch` is present.
+`pytest --collect-only -q` reports the current count (about 1,060 tests; a dozen are skipped without `torch`, and it grows with every change, so this README does not pin an exact number). `pytest.ini` deselects `slow`-marked tests (`tests/unsupervised/test_window_stability.py`), and modules that need `torch` (`test_ft_transformer_engine.py`, `test_window_stability.py`) skip themselves where it is not installed, so those add to the count where `torch` is present.
 
 ---
 

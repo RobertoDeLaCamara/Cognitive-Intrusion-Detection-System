@@ -1,6 +1,5 @@
 """Tests for Phase 8 enrichment modules."""
 
-import time
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 
@@ -39,7 +38,7 @@ class TestDNSLogger:
     @patch("src.enrichment.dns_logger.DNS_LOGGING_ENABLED", True)
     def test_extract_dns_query_valid_packet(self):
         from src.enrichment.dns_logger import extract_dns_query, _dns_log
-        from scapy.all import IP, UDP, DNS, DNSQR
+        from scapy.all import IP, DNS, DNSQR
 
         pkt = MagicMock()
         pkt.__contains__ = lambda self, layer: True

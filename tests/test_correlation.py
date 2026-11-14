@@ -74,7 +74,7 @@ async def test_below_threshold_returns_none(db):
 async def test_at_threshold_creates_new_incident(db):
     """Exactly CORRELATION_THRESHOLD total alerts → auto-incident created."""
     prior_count = CORRELATION_THRESHOLD - 1
-    prior = await _seed_alerts(db, prior_count, src_ip="10.0.2.1")
+    await _seed_alerts(db, prior_count, src_ip="10.0.2.1")
 
     current = _alert(src_ip="10.0.2.1")
     db.add(current)
@@ -114,7 +114,7 @@ async def test_links_to_existing_open_incident(db):
     db.add(incident)
     await db.flush()
 
-    prior = await _seed_alerts(db, CORRELATION_THRESHOLD - 1, src_ip="10.0.4.1")
+    await _seed_alerts(db, CORRELATION_THRESHOLD - 1, src_ip="10.0.4.1")
 
     current = _alert(src_ip="10.0.4.1")
     db.add(current)

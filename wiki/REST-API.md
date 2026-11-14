@@ -9,13 +9,14 @@ Base URL: `http://localhost:8000`
 | Endpoint | Method | Description |
 |---|---|---|
 | `/health` | GET | Engine availability + capture stats |
-| `/api/predict` | POST | Run all engines on supplied features |
+| `/api/predict` | POST | Run the supervised, Isolation Forest, LSTM and rules engines on supplied features (not the baseline engine or threat intel) |
 | `/api/alerts` | GET | List alerts (filter: `severity`, `src_ip`, `acknowledged`, `start`, `end`, `hours` 1–87600; paging: `limit` ≤ 500, `offset`) |
 | `/api/alerts/export` | GET | Export alerts as CSV/JSON (filter: `format`, `severity`, `src_ip`, `hours` 1–87600, `limit` ≤ 10000) — requires `admin` or `analyst` role when JWT is on |
 | `/api/alerts/trends` | GET | Alert counts bucketed by hour/day (filter: `hours` 1–168, `bucket`) |
-| `/api/alerts/{alert_id}` | GET | Get single alert by ID |
-| `/api/alerts/{alert_id}` | PATCH | Acknowledge alert, add notes, link to incident |
+| `/api/alerts/{alert_id}` | GET | Get single alert by ID, including its stored feature vectors |
+| `/api/alerts/{alert_id}` | PATCH | Acknowledge alert, label it `tp`/`fp`/`unknown`, add notes, link to incident |
 | `/api/incidents` | GET / POST | Incident management (POST requires admin/analyst) |
+| `/api/incidents/{incident_id}` | PATCH | Update status, notes or assignee (requires admin/analyst) |
 | `/api/stats` | GET | Alert counts grouped by severity |
 | `/api/suppression-rules` | GET / POST | List or create suppression rules (POST requires admin/analyst) |
 | `/api/suppression-rules/{rule_id}` | DELETE | Remove a suppression rule (requires admin) |
@@ -31,7 +32,7 @@ Base URL: `http://localhost:8000`
 | `/api/auth/token` | POST | Issue JWT token from a JSON body (501 unless `JWT_SECRET` is set) |
 | `/api/auth/users` | GET / POST | User management (requires admin) |
 | `/api/auth/users/{user_id}` | DELETE | Delete user (requires admin) |
-| `/ws/alerts` | WebSocket | Real-time alert stream (`?token=JWT` when auth enabled) |
+| `/ws/alerts` | WebSocket | Real-time alert stream (`?token=JWT` with JWT; `X-API-Key` header or `?key=` with `API_KEY` only) |
 | `/metrics` | GET | Prometheus metrics (when `PROMETHEUS_ENABLED=true`) |
 | `/docs` | GET | Swagger UI (auto-generated) |
 
@@ -39,7 +40,7 @@ Base URL: `http://localhost:8000`
 
 Authentication is required: the API refuses to start unless `API_KEY` or `JWT_SECRET` is set, or `AUTH_DISABLED=true` (lab use only). Two independent mechanisms exist:
 
-- `API_KEY` — static key sent as `X-API-Key`; checked on every HTTP route except `/health`, `/docs`, `/openapi.json`, `/metrics` and `/api/auth/*` (`/ws/alerts` authenticates inside its own handler).
+- `API_KEY` — static key sent as `X-API-Key`; checked on every HTTP route except `/health`, `/docs`, `/openapi.json`, `/metrics` and `/api/auth/token`; the user-management routes under `/api/auth/` are exempt only when `JWT_SECRET` is also set (`/ws/alerts` authenticates inside its own handler).
 - `JWT_SECRET` — enables Bearer tokens with roles on every route except `/health`, `/metrics` and `/api/auth/token` (see the role list below).
 
 ### Get a token
@@ -66,7 +67,9 @@ When `JWT_SECRET` is set, WebSocket connections require a token:
 ws://localhost:8000/ws/alerts?token=<JWT>
 ```
 
-Connections without a token are closed with code 4001, invalid/expired tokens with 4003, and the 101st concurrent client with 4029.
+With `API_KEY` only (no JWT), send the `X-API-Key` header or `?key=<API_KEY>` instead.
+
+Connections without a token or key are closed with code 4001, invalid/expired ones with 4003, and the 101st concurrent client with 4029.
 
 ### RBAC Roles
 

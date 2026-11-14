@@ -4,6 +4,8 @@
 
 ---
 
+> **Source of truth.** The [`wiki/`](../wiki/Home.md) pages are the reference for what CNDS does today: configuration, API, engines, scoring, deployment and CI are checked against the code there. The documents in this directory are long-form background (concepts, model internals, design notes, runbooks, articles). Where one of them disagrees with the wiki or with the code, the wiki and the code are right.
+
 **New to CNDS? Start with the [Reading Guide](READING-GUIDE.md).**
 
 ---
@@ -17,7 +19,7 @@
 | [architecture.md](architecture.md) | Engineers, architects | System design, data flow, component responsibilities |
 | [engines.md](engines.md) | ML engineers, security engineers | Detection engine overview, model specs, tuning |
 | [ml-models.md](ml-models.md) | ML engineers, data scientists | Deep dive: feature engineering, training, retraining, calibration, MLflow |
-| [api-reference.md](api-reference.md) | Integrators, developers | Complete REST + WebSocket API reference |
+| [wiki/API-Reference.md](../wiki/API-Reference.md) | Integrators, developers | Complete REST + WebSocket API reference (lives in the wiki) |
 | [mcp-server.md](mcp-server.md) | SOC analysts, integrators | Read-only MCP server: conversational alert triage from Claude Code / Desktop, tool catalogue, security model |
 | [use-cases.md](use-cases.md) | SOC analysts, security architects | Operational use cases, attack scenarios, analyst workflows |
 | [digital-twin-sandbox.md](digital-twin-sandbox.md) | Engineers, demo operators | Local network digital twin, offline demo, sandbox testing |

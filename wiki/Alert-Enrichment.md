@@ -1,6 +1,6 @@
 # Alert Enrichment
 
-After the ensemble scorer fires an alert, enrichment modules process it. GeoIP and MITRE apply to every persisted alert; the remaining modules below run only on the `POST /api/predict` path (marked _predict path_) and are not called by the live-capture pipeline in `src/pipeline.py`.
+After the ensemble scorer fires an alert, enrichment modules process it. GeoIP, MITRE and suppression rules apply on both alert paths; the modules marked _predict path_ below run only on `POST /api/predict` and are not called by the live-capture pipeline in `src/pipeline.py`.
 
 ## GeoIP Enrichment
 
@@ -21,7 +21,7 @@ Automatically groups related alerts into incidents:
 - When `CORRELATION_THRESHOLD` (default 5) alerts from the same IP accumulate (the new alert plus `THRESHOLD - 1` earlier ones inside the window), an incident titled `Correlated attack from <ip>` is created; later alerts from that IP join the open incident.
 - Incidents can also be created manually via `POST /api/incidents`.
 
-## Suppression Rules (_predict path_)
+## Suppression Rules
 
 **File:** `src/enrichment/suppression.py`
 
@@ -31,6 +31,8 @@ Temporary rules to suppress alerts matching specific criteria (e.g., during main
 - Delete: `DELETE /api/suppression-rules/{rule_id}` (requires admin role)
 - List: `GET /api/suppression-rules`
 - Expired rules are automatically purged by a background cleanup task every 5 minutes.
+- Applied on both paths: `POST /api/predict` checks them before storing an alert, and the live-capture pipeline checks them in its alert writer thread (a suppressed alert is logged as `[SUPPRESSED]` and not stored).
+- A rule can match `src_ip`, `dst_ip`, `src_port`, `dst_port`, `attack_type` and `min_severity`; see [API Reference](API-Reference.md#suppression-rules).
 
 ## Confidence Decay (_predict path_)
 

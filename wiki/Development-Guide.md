@@ -38,7 +38,7 @@ python scripts/train_rf.py --data-dir /path/to/CIC-UNSW-NB15
 
 # 2–3. Isolation Forest + LSTM Autoencoder — no script: trained automatically
 #      by the unsupervised baseline subsystem while the detector runs
-#      (BASELINE_COLLECTION_ENABLED=true, see doc/unsupervised.md).
+#      (BASELINE_COLLECTION_ENABLED=true, see the ML Pipeline page).
 #      For a quick local start, generate synthetic demo models instead:
 python scripts/generate_demo_models.py --output-dir models
 
@@ -147,9 +147,9 @@ Defined in `Jenkinsfile`:
 
 1. **Checkout**
 2. **Build Image** — `docker build`, tagged `<build number>` on master or `<branch>-<build>` elsewhere
-3. **Code Quality** (parallel, advisory — both end in `|| true`):
-   - `ruff` lint (blocking, rules in `ruff.toml`)
-   - `safety` dependency audit
+3. **Code Quality** (parallel):
+   - `ruff check src/ tests/` (blocking, rules in `ruff.toml`)
+   - `safety` dependency audit (advisory, ends in `|| true`)
 4. **Run Tests** — `pytest tests/` inside the image with JUnit XML + coverage (fails below 75 % total coverage)
 5. **SonarQube Analysis** — Static analysis push (project key `cnds`)
 6. **Claude PR review (advisory)** — pull requests only; posts a review on the Gitea PR, never fails the build
@@ -203,7 +203,7 @@ Note that the detector runs `python main.py` without `--api`, so `capture_stats`
 
 ```
 src/
-├── config.py                    70+ env vars, fail-fast validation
+├── config.py                    About 140 env vars, fail-fast validation
 ├── capture/
 │   ├── packet_capture.py        Scapy sniff + worker queue
 │   └── dispatcher.py            Fan-out to feature extractors
@@ -237,6 +237,9 @@ src/
 │   ├── threat_intel.py          AbuseIPDB / JA3 / MISP feeds
 │   └── dns_logger.py            DNS query capture
 ├── unsupervised/                Baseline collector, trigger, window trainer, drift
+├── monitoring/                  Input-feature drift monitor
+├── inventory/                   LAN asset inventory
+├── logwatch/                    Log-based rules (outside the ensemble)
 ├── mcp_server/                  Read-only MCP server (opt-in)
 ├── triage/                      Advisory triage agent (opt-in)
 ├── guardian/                    Auto-response module (opt-in, GUARDIAN_ENABLED=false by default)
@@ -245,7 +248,7 @@ src/
 │   └── telegram_listener.py     Inline Confirm/Undo via getUpdates long-poll
 └── api/
     ├── main.py                  FastAPI app + middleware
-    ├── models.py                ORM: Alert, Incident, User, SuppressionRule, MitigationAction, TriageAnnotation
+    ├── models.py                ORM: Alert, Incident, User, SuppressionRule, HostProfile, MitigationAction, TriageAnnotation
     ├── schemas.py               Pydantic request/response
     ├── database.py              Async session + auto-migration
     ├── auth.py                  JWT/RBAC
@@ -256,5 +259,9 @@ src/
         ├── predict.py
         ├── auth.py
         ├── baseline.py
+        ├── drift.py
+        ├── engines.py
+        ├── feedback.py
+        ├── assets.py
         └── websocket.py
 ```

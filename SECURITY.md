@@ -6,7 +6,7 @@
 |---|---|
 | 2.0.x (including release candidates) | Yes |
 | `master` | Yes |
-| 1.x | No: upgrade to 2.0 (see the "Upgrading to 2.0" section of `doc/deployment.md`) |
+| 1.x | No: upgrade to 2.0 (see the "Upgrading to 2.0" section of `wiki/Deployment.md`) |
 
 ## Reporting a vulnerability
 

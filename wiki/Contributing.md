@@ -17,7 +17,7 @@ See also: [CONTRIBUTING.md](https://github.com/RobertoDeLaCamara/Cognitive-Intru
 
 1. Create a branch: `git checkout -b feature/your-feature` or `git checkout -b fix/issue-description`
 2. Make your changes
-3. Run tests: `pytest tests/ -v`
+3. Run the linter and the tests: `ruff check src/ tests/` (CI fails on any finding) and `pytest tests/ -v`
 4. Commit with a clear message using [conventional commits](https://www.conventionalcommits.org/)
 5. Push and open a Pull Request
 

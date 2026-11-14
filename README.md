@@ -304,7 +304,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu   # optional:
 cp .env.example .env
 ```
 
-`torch` is deliberately not in `requirements.txt`. The Dockerfile installs `torch==2.6.0` CPU wheels from hashed lock files in three layers (torch, numeric stack, everything else): `requirements-lock-{torch,sci,rest}-<arch>.txt`. They are split from `requirements-lock-<arch>.txt` by `scripts/split_lock.py`; regenerate all of them with `scripts/lock_requirements.sh` and do not edit them by hand. Without it the FT-Transformer, LSTM and baseline engines report unavailable and are skipped. The Docker image uses Python 3.11 (`python:3.11-slim`); the dev venv in this checkout runs 3.12.
+`torch` is deliberately not in `requirements.txt`. The Dockerfile installs `torch==2.6.0` CPU wheels from hashed lock files in three layers (torch, numeric stack, everything else): `requirements-lock-{torch,sci,rest}-<arch>.txt`. They are split from `requirements-lock-<arch>.txt` by `scripts/split_lock.py`; regenerate all of them with `scripts/lock_requirements.sh` and do not edit them by hand. The same script writes `requirements-lock-dashboard.txt`, the hashed lock of the `dashboard` stage. Without it the FT-Transformer, LSTM and baseline engines report unavailable and are skipped. The Docker image uses Python 3.11 (`python:3.11-slim`); the dev venv in this checkout runs 3.12.
 
 ### 2. Add models
 

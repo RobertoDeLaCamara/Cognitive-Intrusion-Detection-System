@@ -24,8 +24,35 @@ def _run_alembic():
     command.upgrade(alembic_cfg, "head")
 
 
+class MigrationError(RuntimeError):
+    """A migration failed on a database that Alembic manages. The API must not start."""
+
+
+def _current_revision(sync_conn):
+    from alembic.runtime.migration import MigrationContext
+    return MigrationContext.configure(sync_conn).get_current_revision()
+
+
+async def _is_alembic_managed() -> bool:
+    """True when the database carries an Alembic revision.
+
+    A database whose tables were created by create_all (the detector does that in
+    src/pipeline.py when it writes before the API has ever run) has no revision.
+    """
+    async with engine.connect() as conn:
+        return await conn.run_sync(_current_revision) is not None
+
+
 async def init_db() -> None:
-    """Run Alembic migrations, falling back to create_all for in-memory DBs."""
+    """Bring the schema up to date before the API serves anything.
+
+    - In-memory DB (tests): create_all.
+    - No alembic.ini: create_all, with a warning.
+    - Migration fails on an Alembic-managed DB: log and raise MigrationError, so the API
+      refuses to start instead of serving on a schema that is behind the models (ADR 0004).
+    - Migration fails on a DB without a revision (tables made by create_all): keep the old
+      create_all fallback, with an error that says how to adopt the DB.
+    """
     if ":memory:" in DATABASE_URL:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -39,11 +66,21 @@ async def init_db() -> None:
             await asyncio.get_event_loop().run_in_executor(None, _run_alembic)
             return
         except Exception as exc:
-            # create_all only adds missing tables: it never alters an existing one, so after a
-            # failed migration the schema can be behind the models. Say so loudly.
+            # If the revision cannot even be read (database unreachable), this raises too
+            # and the API does not start.
+            if await _is_alembic_managed():
+                logger.critical(
+                    "Alembic migration failed: %s. Refusing to start: the schema would be behind "
+                    "the models. Fix the migration (or roll back the release) and start again.",
+                    exc, exc_info=exc,
+                )
+                raise MigrationError(f"Alembic migration failed: {exc}") from exc
+            # create_all only adds missing tables: it never alters an existing one.
             logger.error(
-                "Alembic migration failed: %s. Falling back to create_all, which does NOT alter "
-                "existing tables: the schema may be out of date until the migration is fixed.",
+                "Alembic migration failed: %s. The database has no Alembic revision (its tables "
+                "were created by create_all, not by a migration). Falling back to create_all, "
+                "which does NOT alter existing tables: the schema may be out of date. Once the "
+                "schema matches a revision, adopt it with `alembic stamp <revision>`.",
                 exc, exc_info=exc,
             )
     async with engine.begin() as conn:

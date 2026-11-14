@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 from collections import Counter
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 from src.unsupervised.collector import BaselineCollector, CollectedSample
 from src.unsupervised.triggers import CompositeTrigger, TriggerState, _shannon_entropy_bits
@@ -419,7 +419,6 @@ class TestDropCounterFix:
         # Release the trainer and wait for the full _run_training (including finally block) to finish.
         # training_done fires inside gated_callback — before the finally block resets dropped/in_flight.
         # We poll _training_in_flight as the authoritative signal that finally completed.
-        import time
         with caplog.at_level(logging.WARNING, logger="src.unsupervised.collector"):
             training_gate.wait(timeout=5)
             training_done.wait(timeout=5)

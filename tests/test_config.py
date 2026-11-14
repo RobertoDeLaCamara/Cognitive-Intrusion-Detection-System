@@ -1,6 +1,5 @@
 """Tests for configuration validation."""
 
-import pytest
 
 
 class TestConfigValidation:

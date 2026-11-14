@@ -132,13 +132,13 @@ python scripts/pcap_replay.py captures/attack_sample.pcap --output results.json
 
 ```bash
 # Lint (rules in ruff.toml)
-ruff check src/
+ruff check src/ tests/
 
 # Security audit
 safety check -r requirements.txt
 
 # Rough CI equivalent (Jenkins fails on ruff findings; safety is advisory, `|| true`)
-ruff check src/ && safety check -r requirements.txt && pytest tests/ -v --cov=src
+ruff check src/ tests/ && safety check -r requirements.txt && pytest tests/ -v --cov=src
 ```
 
 ## CI/CD Pipeline (Jenkins)

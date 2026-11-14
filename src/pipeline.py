@@ -11,7 +11,7 @@ import threading
 import time
 import concurrent.futures
 import numpy as np
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from .config import (
     DATABASE_URL, DEDUP_WINDOW_SECS, TRUSTED_OUTBOUND,
@@ -328,6 +328,94 @@ _dedup_lock = threading.Lock()
 _dedup_last_cleanup: float = 0.0
 
 
+def _threat_intel_hits(record: FlowRecord, ja3_info: Optional[dict]) -> Tuple[bool, bool]:
+    """(malicious IP, malicious JA3) for the flow; also keeps the background refresh alive."""
+    ti_malicious, _ = ti_check_ip(record.src_ip)
+    if not ti_malicious:
+        ti_malicious, _ = ti_check_ip(record.dst_ip)
+    ti_ja3_malicious = False
+    if ja3_info and ja3_info.get("hash"):
+        ti_ja3_malicious, _ = ti_check_ja3(ja3_info["hash"])
+    # Ensure threat intel refresh happens in background
+    ti_get_store()
+    return ti_malicious, ti_ja3_malicious
+
+
+def _score_supervised(scores: EngineScores, flow_vec: np.ndarray, payload_features: Optional[np.ndarray]) -> None:
+    if not supervised.is_available:
+        return
+    result = supervised.predict(flow_vec, payload_features)
+    if result:
+        label, conf = result
+        scores.supervised = 0.0 if is_benign(label) else conf
+        scores.attack_type = label
+        scores.supervised_confidence = conf
+
+
+def _score_host_engines(scores: EngineScores, record: FlowRecord, host_vec: Optional[np.ndarray]) -> None:
+    """IsolationForest, LSTM and baseline scores; they all need the per-host vector."""
+    if host_vec is None:
+        return
+    if iforest.is_available:
+        scores.isolation_forest = iforest.anomaly_score(host_vec)
+    if lstm.is_available:
+        lstm.update(record.src_ip, host_vec)
+        scores.lstm = lstm.anomaly_score(record.src_ip)
+    # Baseline engine: update ring buffer and score before feeding the collector,
+    # so the same host_vec contributes to both inference and the training window.
+    if baseline_engine.is_available:
+        baseline_engine.update(record.src_ip, host_vec)
+        scores.baseline = baseline_engine.anomaly_score(record.src_ip, host_vec)
+    if _baseline_collector is not None:
+        _baseline_collector.observe(record, host_vec)
+
+
+def _is_duplicate_alert(dedup_key: tuple) -> bool:
+    """True when the same (src_ip, attack type) fired within DEDUP_WINDOW_SECS.
+
+    Otherwise records the alert and, every 300 s, drops the expired entries.
+    """
+    global _dedup_last_cleanup
+    now = time.time()
+    with _dedup_lock:
+        last_fired = _dedup_cache.get(dedup_key, 0.0)
+        if now - last_fired < DEDUP_WINDOW_SECS:
+            return True
+        _dedup_cache[dedup_key] = now
+        if now - _dedup_last_cleanup > 300:
+            cutoff = now - DEDUP_WINDOW_SECS
+            stale = [k for k, t in _dedup_cache.items() if t < cutoff]
+            for k in stale:
+                del _dedup_cache[k]
+            _dedup_last_cleanup = now
+    return False
+
+
+def _log_alert(record: FlowRecord, scores: EngineScores, result, triggered: List[str], ja3_info: Optional[dict]) -> None:
+    parts = [
+        f"src={record.src_ip}",
+        f"dst={record.dst_ip}",
+        f"score={result.score:.3f}",
+        f"engines={result.active_engines}",
+    ]
+    if not is_benign(scores.attack_type):
+        parts.append(f"type={scores.attack_type}")
+    if triggered:
+        parts.append(f"rules={triggered}")
+    if ja3_info:
+        parts.append(f"ja3={ja3_info['hash']}")
+
+    logger.warning("[ALERT] %s", " | ".join(parts), extra={
+        "src_ip": record.src_ip,
+        "dst_ip": record.dst_ip,
+        "ensemble_score": result.score,
+        "attack_type": scores.attack_type,
+        "triggered_rules": triggered,
+        "active_engines": result.active_engines,
+        "ja3_hash": ja3_info["hash"] if ja3_info else None,
+    })
+
+
 def on_flow_complete(
     record: FlowRecord,
     flow_vec: np.ndarray,
@@ -340,15 +428,7 @@ def on_flow_complete(
     if _is_trusted_outbound(record.src_ip, record.dst_ip):
         return
 
-    # ── Threat intelligence check ───────────────────────────────────────────────
-    ti_malicious, ti_source = ti_check_ip(record.src_ip)
-    if not ti_malicious:
-        ti_malicious, ti_source = ti_check_ip(record.dst_ip)
-    ti_ja3_malicious = False
-    if ja3_info and ja3_info.get("hash"):
-        ti_ja3_malicious, _ = ti_check_ja3(ja3_info["hash"])
-    # Ensure threat intel refresh happens in background
-    ti_get_store()
+    ti_malicious, ti_ja3_malicious = _threat_intel_hits(record, ja3_info)
 
     if ASSET_INVENTORY_ENABLED:
         _start_asset_flusher()
@@ -359,27 +439,8 @@ def on_flow_complete(
     if DRIFT_ENABLED:
         feature_drift_monitor.observe(flow_vec)
 
-    if supervised.is_available:
-        result = supervised.predict(flow_vec, payload_features)
-        if result:
-            label, conf = result
-            scores.supervised = 0.0 if is_benign(label) else conf
-            scores.attack_type = label
-            scores.supervised_confidence = conf
-
-    if host_vec is not None:
-        if iforest.is_available:
-            scores.isolation_forest = iforest.anomaly_score(host_vec)
-        if lstm.is_available:
-            lstm.update(record.src_ip, host_vec)
-            scores.lstm = lstm.anomaly_score(record.src_ip)
-        # Baseline engine: update ring buffer and score before feeding the collector,
-        # so the same host_vec contributes to both inference and the training window.
-        if baseline_engine.is_available:
-            baseline_engine.update(record.src_ip, host_vec)
-            scores.baseline = baseline_engine.anomaly_score(record.src_ip, host_vec)
-        if _baseline_collector is not None:
-            _baseline_collector.observe(record, host_vec)
+    _score_supervised(scores, flow_vec, payload_features)
+    _score_host_engines(scores, record, host_vec)
 
     rule_score, triggered = rules.evaluate(record, flow_vec, payload_matches, ja3_info)
     scores.rules = rule_score
@@ -388,45 +449,12 @@ def on_flow_complete(
     scores.ti_malicious_ja3 = ti_ja3_malicious
 
     result = ensemble.score(scores)
+    if not result.is_anomaly:
+        return
 
-    if result.is_anomaly:
-        severity = severity_from_score(result.score, scores.attack_type)
+    severity = severity_from_score(result.score, scores.attack_type)
+    if _is_duplicate_alert((record.src_ip, scores.attack_type or "unknown")):
+        return
 
-        dedup_key = (record.src_ip, scores.attack_type or "unknown")
-        now = time.time()
-        with _dedup_lock:
-            last_fired = _dedup_cache.get(dedup_key, 0.0)
-            if now - last_fired < DEDUP_WINDOW_SECS:
-                return
-            _dedup_cache[dedup_key] = now
-            global _dedup_last_cleanup
-            if now - _dedup_last_cleanup > 300:
-                cutoff = now - DEDUP_WINDOW_SECS
-                stale = [k for k, t in _dedup_cache.items() if t < cutoff]
-                for k in stale:
-                    del _dedup_cache[k]
-                _dedup_last_cleanup = now
-
-        parts = [
-            f"src={record.src_ip}",
-            f"dst={record.dst_ip}",
-            f"score={result.score:.3f}",
-            f"engines={result.active_engines}",
-        ]
-        if not is_benign(scores.attack_type):
-            parts.append(f"type={scores.attack_type}")
-        if triggered:
-            parts.append(f"rules={triggered}")
-        if ja3_info:
-            parts.append(f"ja3={ja3_info['hash']}")
-
-        logger.warning("[ALERT] %s", " | ".join(parts), extra={
-            "src_ip": record.src_ip,
-            "dst_ip": record.dst_ip,
-            "ensemble_score": result.score,
-            "attack_type": scores.attack_type,
-            "triggered_rules": triggered,
-            "active_engines": result.active_engines,
-            "ja3_hash": ja3_info["hash"] if ja3_info else None,
-        })
-        _persist_alert(record, scores, result, severity, triggered, ja3_info, payload_matches, flow_vec=flow_vec)
+    _log_alert(record, scores, result, triggered, ja3_info)
+    _persist_alert(record, scores, result, severity, triggered, ja3_info, payload_matches, flow_vec=flow_vec)

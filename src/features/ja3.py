@@ -9,7 +9,7 @@ Known-malicious JA3 hashes can be loaded from a file or set via config.
 import hashlib
 import struct
 import logging
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from scapy.all import TCP, Raw
 
@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 # TLS record type 22 = Handshake, handshake type 1 = ClientHello
 _TLS_HANDSHAKE = 22
 _CLIENT_HELLO = 1
+_EXT_SUPPORTED_GROUPS = 0x000A
+_EXT_EC_POINT_FORMATS = 0x000B
 
 # GREASE values to filter out (RFC 8701)
 _GREASE = {
@@ -42,95 +44,85 @@ def load_malicious_ja3(path: str) -> None:
         logger.debug("JA3 malicious hash file not found: %s", path)
 
 
-def _parse_client_hello(data: bytes) -> Optional[Dict]:
-    """Parse a TLS ClientHello and return JA3 components, or None."""
-    if len(data) < 5:
+def _client_hello_body(data: bytes) -> Optional[bytes]:
+    """Body of the ClientHello inside a TLS handshake record, or None if `data` is not one."""
+    if len(data) < 5 or data[0] != _TLS_HANDSHAKE:
         return None
-    content_type = data[0]
-    if content_type != _TLS_HANDSHAKE:
-        return None
-
     record_len = struct.unpack("!H", data[3:5])[0]
     payload = data[5:5 + record_len]
 
-    if len(payload) < 4:
+    if len(payload) < 4 or payload[0] != _CLIENT_HELLO:
         return None
-    hs_type = payload[0]
-    if hs_type != _CLIENT_HELLO:
-        return None
-
     hs_len = struct.unpack("!I", b'\x00' + payload[1:4])[0]
     hs = payload[4:4 + hs_len]
-    if len(hs) < 38:
+    # version (2) + random (32) + session id length (1) + cipher suites length (2) + one byte more
+    return hs if len(hs) >= 38 else None
+
+
+def _u16_values(buf: bytes, start: int, length: int) -> List[int]:
+    """Big-endian 16-bit values in buf[start:start + length], truncated at the end of buf, without GREASE."""
+    values = []
+    for i in range(start, start + length, 2):
+        if i + 2 > len(buf):
+            break
+        value = struct.unpack("!H", buf[i:i + 2])[0]
+        if value not in _GREASE:
+            values.append(value)
+    return values
+
+
+def _parse_extensions(hs: bytes, pos: int) -> Tuple[List[int], List[int], List[int]]:
+    """(extension types, supported groups, EC point formats) from the extensions block at `pos`."""
+    extensions: List[int] = []
+    elliptic_curves: List[int] = []
+    ec_point_formats: List[int] = []
+    if pos + 2 > len(hs):
+        return extensions, elliptic_curves, ec_point_formats
+
+    ext_end = pos + 2 + struct.unpack("!H", hs[pos:pos + 2])[0]
+    pos += 2
+    while pos + 4 <= ext_end and pos + 4 <= len(hs):
+        ext_type, ext_len = struct.unpack("!HH", hs[pos:pos + 4])
+        pos += 4
+        if ext_type not in _GREASE:
+            extensions.append(ext_type)
+        ext_data = hs[pos:pos + ext_len]
+
+        if ext_type == _EXT_SUPPORTED_GROUPS and len(ext_data) >= 2:
+            groups_len = struct.unpack("!H", ext_data[0:2])[0]
+            elliptic_curves.extend(_u16_values(ext_data, 2, groups_len))
+        elif ext_type == _EXT_EC_POINT_FORMATS and len(ext_data) >= 1:
+            ec_point_formats.extend(ext_data[1:1 + ext_data[0]])
+
+        pos += ext_len
+    return extensions, elliptic_curves, ec_point_formats
+
+
+def _parse_client_hello(data: bytes) -> Optional[Dict]:
+    """Parse a TLS ClientHello and return JA3 components, or None."""
+    hs = _client_hello_body(data)
+    if hs is None:
         return None
 
     ch_version = struct.unpack("!H", hs[0:2])[0]
-    # Skip random (32 bytes)
+    # Skip random (32 bytes), then the session ID
     pos = 34
-
-    # Session ID
-    if pos >= len(hs):
-        return None
-    sid_len = hs[pos]
-    pos += 1 + sid_len
+    pos += 1 + hs[pos]
 
     # Cipher suites
     if pos + 2 > len(hs):
         return None
     cs_len = struct.unpack("!H", hs[pos:pos + 2])[0]
     pos += 2
-    ciphers = []
-    for i in range(0, cs_len, 2):
-        if pos + i + 2 > len(hs):
-            break
-        c = struct.unpack("!H", hs[pos + i:pos + i + 2])[0]
-        if c not in _GREASE:
-            ciphers.append(c)
+    ciphers = _u16_values(hs, pos, cs_len)
     pos += cs_len
 
     # Compression methods
     if pos >= len(hs):
         return None
-    comp_len = hs[pos]
-    pos += 1 + comp_len
+    pos += 1 + hs[pos]
 
-    # Extensions
-    extensions = []
-    elliptic_curves = []
-    ec_point_formats = []
-
-    if pos + 2 <= len(hs):
-        ext_total = struct.unpack("!H", hs[pos:pos + 2])[0]
-        pos += 2
-        ext_end = pos + ext_total
-
-        while pos + 4 <= ext_end and pos + 4 <= len(hs):
-            ext_type = struct.unpack("!H", hs[pos:pos + 2])[0]
-            ext_len = struct.unpack("!H", hs[pos + 2:pos + 4])[0]
-            pos += 4
-
-            if ext_type not in _GREASE:
-                extensions.append(ext_type)
-
-            ext_data = hs[pos:pos + ext_len]
-
-            # Supported groups (0x000A)
-            if ext_type == 0x000A and len(ext_data) >= 2:
-                gl = struct.unpack("!H", ext_data[0:2])[0]
-                for i in range(2, min(2 + gl, len(ext_data)), 2):
-                    if i + 2 <= len(ext_data):
-                        g = struct.unpack("!H", ext_data[i:i + 2])[0]
-                        if g not in _GREASE:
-                            elliptic_curves.append(g)
-
-            # EC point formats (0x000B)
-            if ext_type == 0x000B and len(ext_data) >= 1:
-                fl = ext_data[0]
-                for i in range(1, min(1 + fl, len(ext_data))):
-                    ec_point_formats.append(ext_data[i])
-
-            pos += ext_len
-
+    extensions, elliptic_curves, ec_point_formats = _parse_extensions(hs, pos)
     return {
         "version": ch_version,
         "ciphers": ciphers,

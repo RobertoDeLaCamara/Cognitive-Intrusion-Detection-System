@@ -61,7 +61,7 @@ def test_two_consecutive_windows_are_stable():
     samples_a = _make_samples(N_SAMPLES, n_features=N_FEATURES, seed=42)
     samples_b = _make_samples(N_SAMPLES, n_features=N_FEATURES, seed=137)
 
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import patch
     from src.unsupervised.provenance import ProvenanceMetadata
 
     def _make_provenance(samples):

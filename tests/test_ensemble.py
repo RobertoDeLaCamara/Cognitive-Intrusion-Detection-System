@@ -1,7 +1,7 @@
 """Tests for the ensemble scorer."""
 
 import pytest
-from src.ensemble.scorer import EnsembleScorer, EngineScores, EnsembleResult, _calibrate
+from src.ensemble.scorer import EnsembleScorer, EngineScores, _calibrate
 
 
 @pytest.fixture

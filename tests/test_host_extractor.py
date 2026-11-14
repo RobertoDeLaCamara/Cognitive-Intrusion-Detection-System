@@ -11,7 +11,7 @@ def _make_ip_packet(src="192.168.1.1", proto="TCP", dport=80, size=100):
     pkt = MagicMock()
     pkt.__len__ = lambda self: size
 
-    from scapy.all import IP, TCP, UDP, ICMP, Raw
+    from scapy.all import IP, TCP, UDP, ICMP
     ip = MagicMock()
     ip.src = src
     ip.proto = {"TCP": 6, "UDP": 17, "ICMP": 1}[proto]

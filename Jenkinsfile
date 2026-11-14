@@ -38,7 +38,7 @@ pipeline {
                         sh """
                         docker run --rm --user root \
                             ${REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG} \
-                            sh -c 'pip install --quiet ruff==0.15.7 && ruff check src/ --statistics'
+                            sh -c 'pip install --quiet ruff==0.15.7 && ruff check src/ tests/ --statistics'
                         """
                     }
                 }

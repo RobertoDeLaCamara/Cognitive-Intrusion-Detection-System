@@ -135,7 +135,25 @@ class FlowRecord:
     def add_packet(self, packet, timestamp: float, is_forward: bool) -> None:
         pkt_len = len(packet)
         ip = packet[IP]
+        hdr_len = ip.ihl * 4 if hasattr(ip, 'ihl') else 20
 
+        self._track_activity(timestamp)
+        if is_forward:
+            self._add_forward(pkt_len, hdr_len, timestamp)
+        else:
+            self._add_backward(pkt_len, hdr_len, timestamp)
+
+        if TCP in packet:
+            tcp = packet[TCP]
+            self._add_tcp_flags(tcp, is_forward)
+            if is_forward:
+                self._add_forward_payload(_l4_payload(packet, tcp))
+
+        if UDP in packet and is_forward:
+            self._add_forward_payload(_l4_payload(packet, packet[UDP]))
+
+    def _track_activity(self, timestamp: float) -> None:
+        """Start the flow clock, or close the active period when the gap since the last packet is idle."""
         if self.start_time == 0.0:
             self.start_time = timestamp
             self._last_active = timestamp
@@ -152,76 +170,64 @@ class FlowRecord:
 
         self.last_time = timestamp
 
+    def _add_forward(self, pkt_len: int, hdr_len: int, timestamp: float) -> None:
+        self.fwd_lengths.append(pkt_len)
+        self.fwd_times.append(timestamp)
+        self.fwd_header_len += hdr_len
+        # Bulk transfer tracking
+        if self._last_fwd_time > 0 and (timestamp - self._last_fwd_time) > ACTIVE_IDLE_THRESH:
+            if self._cur_fwd_bulk_pkts > 1:
+                self._fwd_bulk_bytes.append(self._cur_fwd_bulk_bytes)
+                self._fwd_bulk_pkts.append(self._cur_fwd_bulk_pkts)
+            self._cur_fwd_bulk_bytes = 0
+            self._cur_fwd_bulk_pkts = 0
+        self._cur_fwd_bulk_bytes += pkt_len
+        self._cur_fwd_bulk_pkts += 1
+        self._last_fwd_time = timestamp
+
+    def _add_backward(self, pkt_len: int, hdr_len: int, timestamp: float) -> None:
+        self.bwd_lengths.append(pkt_len)
+        self.bwd_times.append(timestamp)
+        self.bwd_header_len += hdr_len
+        # Bulk transfer tracking
+        if self._last_bwd_time > 0 and (timestamp - self._last_bwd_time) > ACTIVE_IDLE_THRESH:
+            if self._cur_bwd_bulk_pkts > 1:
+                self._bwd_bulk_bytes.append(self._cur_bwd_bulk_bytes)
+                self._bwd_bulk_pkts.append(self._cur_bwd_bulk_pkts)
+            self._cur_bwd_bulk_bytes = 0
+            self._cur_bwd_bulk_pkts = 0
+        self._cur_bwd_bulk_bytes += pkt_len
+        self._cur_bwd_bulk_pkts += 1
+        self._last_bwd_time = timestamp
+
+    def _add_tcp_flags(self, tcp, is_forward: bool) -> None:
+        flags = tcp.flags
+        self.fin += int(bool(flags & 0x01))
+        self.syn += int(bool(flags & 0x02))
+        self.rst += int(bool(flags & 0x04))
+        self.psh += int(bool(flags & 0x08))
+        self.ack += int(bool(flags & 0x10))
+        self.urg += int(bool(flags & 0x20))
+        self.ece += int(bool(flags & 0x40))
+        self.cwe += int(bool(flags & 0x80))
+
         if is_forward:
-            self.fwd_lengths.append(pkt_len)
-            self.fwd_times.append(timestamp)
-            hdr_len = ip.ihl * 4 if hasattr(ip, 'ihl') else 20
-            self.fwd_header_len += hdr_len
-            # Bulk transfer tracking
-            if self._last_fwd_time > 0 and (timestamp - self._last_fwd_time) > ACTIVE_IDLE_THRESH:
-                if self._cur_fwd_bulk_pkts > 1:
-                    self._fwd_bulk_bytes.append(self._cur_fwd_bulk_bytes)
-                    self._fwd_bulk_pkts.append(self._cur_fwd_bulk_pkts)
-                self._cur_fwd_bulk_bytes = 0
-                self._cur_fwd_bulk_pkts = 0
-            self._cur_fwd_bulk_bytes += pkt_len
-            self._cur_fwd_bulk_pkts += 1
-            self._last_fwd_time = timestamp
+            self.fwd_psh += int(bool(flags & 0x08))
+            self.fwd_urg += int(bool(flags & 0x20))
+            if self.init_fwd_win < 0:
+                self.init_fwd_win = tcp.window
         else:
-            self.bwd_lengths.append(pkt_len)
-            self.bwd_times.append(timestamp)
-            hdr_len = ip.ihl * 4 if hasattr(ip, 'ihl') else 20
-            self.bwd_header_len += hdr_len
-            # Bulk transfer tracking
-            if self._last_bwd_time > 0 and (timestamp - self._last_bwd_time) > ACTIVE_IDLE_THRESH:
-                if self._cur_bwd_bulk_pkts > 1:
-                    self._bwd_bulk_bytes.append(self._cur_bwd_bulk_bytes)
-                    self._bwd_bulk_pkts.append(self._cur_bwd_bulk_pkts)
-                self._cur_bwd_bulk_bytes = 0
-                self._cur_bwd_bulk_pkts = 0
-            self._cur_bwd_bulk_bytes += pkt_len
-            self._cur_bwd_bulk_pkts += 1
-            self._last_bwd_time = timestamp
+            self.bwd_psh += int(bool(flags & 0x08))
+            self.bwd_urg += int(bool(flags & 0x20))
+            if self.init_bwd_win < 0:
+                self.init_bwd_win = tcp.window
 
-        # TCP flags
-        if TCP in packet:
-            tcp = packet[TCP]
-            flags = tcp.flags
-            self.fin += int(bool(flags & 0x01))
-            self.syn += int(bool(flags & 0x02))
-            self.rst += int(bool(flags & 0x04))
-            self.psh += int(bool(flags & 0x08))
-            self.ack += int(bool(flags & 0x10))
-            self.urg += int(bool(flags & 0x20))
-            self.ece += int(bool(flags & 0x40))
-            self.cwe += int(bool(flags & 0x80))
-
-            if is_forward:
-                self.fwd_psh += int(bool(flags & 0x08))
-                self.fwd_urg += int(bool(flags & 0x20))
-                if self.init_fwd_win < 0:
-                    self.init_fwd_win = tcp.window
-            else:
-                self.bwd_psh += int(bool(flags & 0x08))
-                self.bwd_urg += int(bool(flags & 0x20))
-                if self.init_bwd_win < 0:
-                    self.init_bwd_win = tcp.window
-
-            # Payload data
-            if is_forward:
-                tcp_payload = _l4_payload(packet, tcp)
-                if tcp_payload:
-                    self.fwd_act_data_pkts += 1
-                    if len(self.fwd_payloads) < MAX_PAYLOAD_SAMPLES:
-                        self.fwd_payloads.append(tcp_payload[:PAYLOAD_SAMPLE_BYTES])
-
-        # UDP payload capture
-        if UDP in packet and is_forward:
-            udp_payload = _l4_payload(packet, packet[UDP])
-            if udp_payload:
-                self.fwd_act_data_pkts += 1
-                if len(self.fwd_payloads) < MAX_PAYLOAD_SAMPLES:
-                    self.fwd_payloads.append(udp_payload[:PAYLOAD_SAMPLE_BYTES])
+    def _add_forward_payload(self, payload: bytes) -> None:
+        """Count a forward packet that carries data and keep a sample of it."""
+        if payload:
+            self.fwd_act_data_pkts += 1
+            if len(self.fwd_payloads) < MAX_PAYLOAD_SAMPLES:
+                self.fwd_payloads.append(payload[:PAYLOAD_SAMPLE_BYTES])
 
     def to_feature_vector(self) -> Optional[np.ndarray]:
         """Compute all 76 features. Returns None if insufficient data."""

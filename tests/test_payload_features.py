@@ -182,7 +182,6 @@ def test_analyze_payload_with_raw_packet():
 
 def test_analyze_payload_no_raw():
     from unittest.mock import MagicMock
-    from scapy.all import Raw
     pkt = MagicMock()
     pkt.__contains__ = lambda self, layer: False
     assert analyze_payload(pkt) == []

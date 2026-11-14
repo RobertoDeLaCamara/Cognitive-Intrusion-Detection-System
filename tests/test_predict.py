@@ -13,14 +13,12 @@ Covers:
 import pytest
 from types import SimpleNamespace
 import pytest_asyncio
-import numpy as np
 from contextlib import asynccontextmanager, ExitStack
-from datetime import datetime, timezone
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from unittest.mock import patch, MagicMock, AsyncMock
 
-from src.api.models import Base, Alert, SeverityLevel
+from src.api.models import Base, Alert
 from src.api.database import get_db
 from src.ensemble.scorer import EnsembleResult, EngineScores
 

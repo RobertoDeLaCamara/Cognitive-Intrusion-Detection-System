@@ -1,6 +1,5 @@
 """Suppression rules must apply to detector-written alerts, not only to /api/predict."""
 
-import time
 from datetime import timedelta
 from types import SimpleNamespace
 

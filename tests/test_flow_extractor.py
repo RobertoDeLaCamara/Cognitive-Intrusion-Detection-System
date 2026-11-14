@@ -1,9 +1,7 @@
 """Tests for the CICFlowMeter-compatible flow extractor."""
 
 import time
-import pytest
-import numpy as np
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from src.features.flow_extractor import FlowExtractor, FlowRecord, FLOW_FEATURE_NAMES
 
@@ -28,7 +26,7 @@ def _make_tcp_packet(src="192.168.1.1", dst="10.0.0.1", sport=12345, dport=80,
     tcp.window = 65535
     tcp.payload = MagicMock()
 
-    from scapy.all import IP, TCP
+    from scapy.all import IP
     pkt.__getitem__ = lambda self, layer: ip if layer is IP else tcp
     return pkt
 
@@ -98,7 +96,7 @@ def test_fwd_payloads_accumulated():
     rec = FlowRecord(key=("1.2.3.4", "5.6.7.8", 1234, 80, 6))
     assert rec.fwd_payloads == []
 
-    from scapy.all import IP, TCP
+    from scapy.all import IP
     pkt = MagicMock()
     pkt.__len__ = lambda self: 200
 
@@ -131,7 +129,7 @@ def test_fwd_payloads_not_stored_for_backward():
     """Backward packets should not add to fwd_payloads."""
     rec = FlowRecord(key=("1.2.3.4", "5.6.7.8", 1234, 80, 6))
 
-    from scapy.all import IP, TCP
+    from scapy.all import IP
     pkt = MagicMock()
     pkt.__len__ = lambda self: 100
 

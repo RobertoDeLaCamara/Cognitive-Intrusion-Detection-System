@@ -1,10 +1,9 @@
 """Tests for JA3 TLS fingerprint extraction."""
 
 import struct
-import pytest
 from src.features.ja3 import (
     extract_ja3, _parse_client_hello, is_malicious_ja3,
-    load_malicious_ja3, _MALICIOUS_JA3, _GREASE,
+    load_malicious_ja3, _MALICIOUS_JA3,
 )
 
 
@@ -126,7 +125,7 @@ class TestExtractJA3:
 
     def test_no_raw_layer_returns_none(self):
         from unittest.mock import MagicMock
-        from scapy.all import TCP, Raw
+        from scapy.all import TCP
         pkt = MagicMock()
         pkt.__contains__ = lambda self, layer: layer is TCP
         assert extract_ja3(pkt) is None

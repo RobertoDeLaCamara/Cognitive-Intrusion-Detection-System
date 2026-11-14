@@ -12,7 +12,7 @@ Builds two images from the one `Dockerfile`: `192.168.1.147:5000/cnds:<tag>` (st
 
 ### 3. Code Quality (parallel)
 
-- **Lint** — `ruff check src/` with the rules in `ruff.toml` (blocking: any finding fails the build)
+- **Lint** — `ruff check src/ tests/` with the rules in `ruff.toml` (blocking: any finding fails the build)
 - **Security** — `safety check -r requirements.txt` (advisory: `|| true`)
 
 ### 4. Run Tests

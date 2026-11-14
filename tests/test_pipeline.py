@@ -162,7 +162,6 @@ class TestOnFlowComplete:
 
     def test_skips_trusted_outbound(self):
         import src.pipeline as pipeline
-        engines = _mock_engines()
         flow = _flow(src_ip="192.168.1.1", dst_ip="8.8.8.8")
 
         with patch.object(pipeline, "TRUSTED_OUTBOUND", {"192.168.1.1": [".google.com"]}):

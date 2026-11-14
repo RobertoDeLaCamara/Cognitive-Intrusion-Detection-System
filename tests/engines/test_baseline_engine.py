@@ -18,9 +18,7 @@ import os
 import sys
 import threading
 import time
-from collections import deque
-from typing import Optional
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
@@ -216,7 +214,7 @@ class TestLoadArtifactPaths:
     def test_correct_artifact_paths_inside_tmpdir(self):
         """joblib.load must be called with paths rooted under ARTIFACT_ROOT."""
         from src.unsupervised.artifact_schema import (
-            ARTIFACT_ROOT, SCALER_FILE, IFOREST_FILE, LSTM_FILE, THRESHOLD_FILE,
+            ARTIFACT_ROOT, SCALER_FILE, IFOREST_FILE, THRESHOLD_FILE,
             FEATURE_SCHEMA_FILE, HOST_FEATURE_SCHEMA,
         )
 
@@ -266,7 +264,7 @@ class TestLoadArtifactPaths:
             mock_reg._get_mlflow.return_value = mock_mlflow_mod
 
             from src.engines.baseline_engine import BaselineEngine
-            engine = BaselineEngine()
+            BaselineEngine()
 
         # Verify both joblib paths contain the ARTIFACT_ROOT directory component
         assert len(captured_paths) == 2, f"Expected 2 joblib.load calls, got: {captured_paths}"
@@ -283,7 +281,7 @@ class TestFeatureSchemaGuard:
     """A model trained on other host-feature semantics must not be served."""
 
     def _load_with_schema(self, schema_text):
-        from src.unsupervised.artifact_schema import ARTIFACT_ROOT, FEATURE_SCHEMA_FILE, THRESHOLD_FILE
+        from src.unsupervised.artifact_schema import FEATURE_SCHEMA_FILE, THRESHOLD_FILE
 
         version = MagicMock(run_id="abc", version="7")
         client = MagicMock()
@@ -365,7 +363,6 @@ class TestAnomalyScoreContract:
 
     def test_returns_float_when_iforest_anomalous(self):
         """High anomaly from iforest (negative decision) should produce score > 0.5."""
-        import torch
 
         engine = _build_loaded_engine(decision_value=-2.0, threshold=0.05)
 
@@ -433,7 +430,6 @@ class TestAnomalyScoreLSTMBypass:
 
     def test_empty_buffer_uses_only_iforest(self):
         """IP has no history at all — score derived solely from iforest."""
-        import torch
 
         engine = _build_loaded_engine(decision_value=-3.0)  # strong anomaly
 
@@ -530,7 +526,6 @@ class TestConcurrentScoringAndReload:
 
     def test_no_exception_under_concurrent_score_and_reload(self):
         """10 threads scoring while reload fires — no exception, no crash."""
-        import torch
 
         engine = _build_loaded_engine()
         ip = "192.168.50.1"
@@ -595,8 +590,6 @@ class TestReloadSerialisation:
         concurrent_count = [0]
         max_concurrent = [0]
         lock = threading.Lock()
-
-        original_load = engine._load
 
         def _instrumented_load():
             with lock:

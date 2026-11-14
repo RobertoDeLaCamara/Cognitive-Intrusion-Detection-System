@@ -1,4 +1,4 @@
-# Lint configuration. CI runs `ruff check src/` and fails the build on any finding
+# Lint configuration. CI runs `ruff check src/ tests/` and fails the build on any finding
 # (see the Lint stage in the Jenkinsfile). Run the same command before pushing.
 line-length = 120
 target-version = "py311"
@@ -11,3 +11,7 @@ select = ["E4", "E7", "E9", "F", "S110"]
 [lint.per-file-ignores]
 # mlflow_registry.init() has to run before the engine modules are imported.
 "src/engines/registry.py" = ["E402"]
+# conftest sets environment variables before the first src import.
+"tests/conftest.py" = ["E402"]
+# pytest.importorskip("torch") has to run before the modules that import torch.
+"tests/unsupervised/test_window_stability.py" = ["E402"]

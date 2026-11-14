@@ -180,11 +180,10 @@ class TestIntegration:
         assert scores.supervised == 0.5
 
     def test_threat_intel_in_pipeline(self):
-        """Verify pipeline can import threat_intel module."""
+        """The pipeline imports the threat-intel lookups it calls per flow."""
         from src import pipeline
         from src.enrichment.threat_intel import check_ip
-        # Just verify the function can be called
-        assert callable(check_ip)
+        assert pipeline.ti_check_ip is check_ip
 
     def test_refresh_feeds_no_urls(self):
         """Verify refresh doesn't crash when no feeds configured."""
@@ -332,7 +331,7 @@ ghi789
         store.last_refresh = time.time() - 7200  # 2 hours ago
         with patch("src.enrichment.threat_intel.REFRESH_MINUTES", 60):
             with patch.object(store, 'stale', return_value=True):
-                with patch.object(store, 'refresh') as mock_refresh:
+                with patch.object(store, 'refresh'):
                     with patch("src.enrichment.threat_intel._intel_store", store):
                         get_store()
                         # refresh should be called (background thread started)

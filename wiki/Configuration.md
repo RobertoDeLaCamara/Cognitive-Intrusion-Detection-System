@@ -65,6 +65,9 @@ Variables marked _reserved_ are defined in `src/config.py` but no runtime code r
 | `CONFIDENCE_DECAY_WINDOW` | `300` | Seconds to track repeat alerts for decay |
 | `CORRELATION_WINDOW_SECS` | `300` | Time window for alert correlation (seconds) |
 | `CORRELATION_THRESHOLD` | `5` | Alerts from same IP before auto-incident creation |
+| `ASSET_INVENTORY_ENABLED` | `true` | Build the LAN asset inventory from completed flows (`GET /api/assets`) |
+| `ASSET_FLUSH_SECS` | `60` | How often the in-memory asset counters are merged into the `host_profiles` table |
+| `FEEDBACK_RETRAIN_THRESHOLD` | `500` | Labelled (`tp`/`fp`) alerts after which `GET /api/feedback-stats` reports `retrain_ready`; retraining itself is manual |
 
 ## Model Files
 
@@ -85,6 +88,8 @@ Variables marked _reserved_ are defined in `src/config.py` but no runtime code r
 | `IF_SCALER_FILE` | `if_scaler.joblib` | IF scaler filename |
 | `LSTM_MODEL_FILE` | `lstm_autoencoder.pt` | LSTM model filename |
 | `LSTM_CONFIG_FILE` | `lstm_config.json` | LSTM config filename |
+| `MODEL_INTEGRITY_MODE` | `auto` | SHA-256 check of pickle model files before `joblib.load`: `auto` enforces when the manifest exists and warns once when it does not, `enforce` refuses to load without a matching manifest entry, `off` disables the check |
+| `MODEL_MANIFEST_PATH` | `<MODELS_DIR>/MANIFEST.sha256` | Manifest file, written by `python scripts/model_manifest.py write` |
 
 ## Database
 
@@ -117,6 +122,7 @@ Variables marked _reserved_ are defined in `src/config.py` but no runtime code r
 | Variable | Default | Description |
 |---|---|---|
 | `PROMETHEUS_ENABLED` | `false` | Enable Prometheus metrics at `/metrics` |
+| `METRICS_TOKEN` | _(empty)_ | When set, `/metrics` requires `Authorization: Bearer <token>` (401 otherwise); empty leaves the endpoint open |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | _(empty)_ | OpenTelemetry OTLP endpoint |
 | `MLFLOW_TRACKING_URI` | _(empty)_ | MLflow server URL; empty disables MLflow |
 | `MLFLOW_REGISTRY_NAME` | `cnds` | MLflow model registry name |
@@ -138,6 +144,8 @@ Variables marked _reserved_ are defined in `src/config.py` but no runtime code r
 | `NTFY_TOKEN` | _(empty)_ | ntfy access token, sent as a Bearer token; takes precedence over user/password |
 | `TELEGRAM_BOT_TOKEN` | _(empty)_ | Telegram bot token; empty disables |
 | `TELEGRAM_CHAT_ID` | _(empty)_ | Telegram chat/group ID |
+| `TELEGRAM_ALLOWED_USER_IDS` | _(empty)_ | Comma-separated Telegram user IDs allowed to press the Guardian Confirm/Undo buttons. Empty: only `TELEGRAM_CHAT_ID` itself when it is a private chat; a group chat needs this set |
+| `DASHBOARD_URL` | _(empty)_ | Base URL of the dashboard (e.g. `http://192.168.1.38:8501`); when set, ntfy notifications carry a link that opens the alert detail page |
 | `DNS_LOGGING_ENABLED` | `false` | Enable DNS query logging from captured traffic |
 | `TRUSTED_OUTBOUND` | `{}` | JSON `{"<src_ip>": ["domain.suffix", ...]}`; capture-pipeline flows from that IP to a reverse-resolved matching host skip detection |
 
@@ -154,6 +162,7 @@ Variables marked _reserved_ are defined in `src/config.py` but no runtime code r
 |---|---|---|
 | `GUARDIAN_ENABLED` | `false` | Master switch for the auto-response module |
 | `GUARDIAN_MIN_SEVERITY` | `critical` | Minimum alert severity that triggers an auto-block |
+| `GUARDIAN_ALERT_SOURCES` | `detector` | Comma-separated alert sources the guardian acts on (`detector`, `api`, `logwatch`). By default alerts from `POST /api/predict` and logwatch never block anything |
 | `GUARDIAN_POLL_INTERVAL_SECS` | `15` | How often the guardian polls the alerts table |
 | `GUARDIAN_BLOCK_MINUTES` | `30` | How long an auto-block lasts before automatic rollback |
 | `GUARDIAN_WHITELIST` | `192.168.1.1,192.168.1.62` | Comma-separated IPs/CIDRs the guardian never blocks — **never a broad LAN CIDR**, see [Deployment](Deployment.md) |
@@ -187,6 +196,8 @@ The four `BASELINE_MIN_*` variables are the trigger thresholds; all four must ho
 | `BASELINE_MIN_ELAPSED_SECS` | `1800` | Training trigger: minimum seconds since the window started |
 | `BASELINE_MIN_PORT_ENTROPY` | `2.5` | Training trigger: minimum destination-port Shannon entropy (bits) |
 | `BASELINE_THRESHOLD_MAX_RATIO` | `3.0` | Stability gate: a trained window is not promoted when its LSTM threshold is more than this factor above/below the median of the last accepted windows (`0` disables) |
+| `BASELINE_DUMP_DIR` | _(empty)_ | Directory where every collected window is also written as an `.npz` file for offline evaluation (`scripts/eval_baseline.py`); empty disables it |
+| `BASELINE_DUMP_KEEP` | `48` | Newest window dumps kept in `BASELINE_DUMP_DIR`; `0` keeps all |
 | `BASELINE_THRESHOLD_REF_WINDOWS` | `5` | Stability gate: how many accepted thresholds the median is taken over (in-process, reset on restart) |
 | `BASELINE_MAX_CONSECUTIVE_REJECTS` | `3` | Stability gate: after this many rejections in a row the new level is accepted as a regime change |
 | `BASELINE_DRIFT_WARN` | `0.30` | Drift score for the `warning` verdict |
@@ -216,7 +227,10 @@ The four `BASELINE_MIN_*` variables are the trigger thresholds; all four must ho
 | Variable | Used by | Description |
 |---|---|---|
 | `POSTGRES_PASSWORD` | `docker-compose.yml` | Required; compose refuses to start without it |
-| `CNDS_API_URL` | `dashboard/app.py` | API base URL for the dashboard (default `http://localhost:8000`) |
+| `CNDS_API_URL` | dashboard (`dashboard/api_client.py`) | API base URL for the dashboard (default `http://localhost:8000`) |
+| `CNDS_API_KEY` | dashboard | Sent as `X-API-Key`; compose sets it from `API_KEY` |
+| `CNDS_API_USER` / `CNDS_API_PASSWORD` | dashboard | Account used to obtain a JWT from `/api/auth/token` when `JWT_SECRET` is set |
+| `API_KEY` / `CNDS_API_TOKEN` | `scripts/demo_seed.py` | The demo seeder sends `API_KEY` as `X-API-Key` and `CNDS_API_TOKEN` as a Bearer token |
 
 ## Input Drift (supervised model)
 

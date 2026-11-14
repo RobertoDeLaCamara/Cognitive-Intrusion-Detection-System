@@ -29,7 +29,7 @@ DATABASE_URL=postgresql+asyncpg://user:pass@db:5432/cnds
 
 ### Detector Privileges
 
-The detector container runs as `root` with `network_mode: host` because Scapy requires raw socket access for packet capture.
+The detector container runs as `root` with `network_mode: host` because Scapy requires raw socket access for packet capture. The compose file drops every capability except `NET_RAW` and `NET_ADMIN` and sets `no-new-privileges`.
 
 ## Database Migrations
 
@@ -84,9 +84,11 @@ See [Configuration](Configuration.md) for the full variable list and the [deploy
 
 ## Streamlit Dashboard
 
-The dashboard (`dashboard/app.py`) is a Streamlit client of the REST API with six tabs: alerts (with in-place acknowledge), trends, top talkers, engines, MITRE and geo-intel. The UI labels are in Spanish, and it sends no `X-API-Key` / Bearer header, so it cannot talk to an API that has `API_KEY` set.
+The dashboard (`dashboard/app.py`) is a Streamlit client of the REST API with three pages: **Alerts overview** (KPIs, timeline, filters, table, acknowledge and label), **Alert detail** (network and detection data, triage, other alerts from the same source, raw features) and **Analytics** (tabs for trends, top talkers, engines, MITRE and geo).
 
-Access at `http://localhost:8501` when started with `docker-compose --profile dashboard up -d`, or run it by hand with `pip install -r requirements-dashboard.txt && streamlit run dashboard/app.py` (it reads `CNDS_API_URL`, default `http://localhost:8000`).
+It authenticates with the API through `dashboard/api_client.py`: `CNDS_API_KEY` is sent as `X-API-Key` (API-key deployments), and `CNDS_API_USER` + `CNDS_API_PASSWORD` log in at `/api/auth/token` and send the JWT as a Bearer token (JWT deployments; use an `analyst` or `admin` account so it can acknowledge alerts). The compose file passes `API_KEY` from `.env` as `CNDS_API_KEY`.
+
+Access at `http://localhost:8501` when started with `docker-compose --profile dashboard up -d`, or run it by hand with `pip install -r requirements-dashboard.txt && streamlit run dashboard/app.py` (it reads `CNDS_API_URL`, default `http://localhost:8000`, and the credentials above).
 
 ## Operating Notes
 
@@ -102,7 +104,7 @@ Access at `http://localhost:8501` when started with `docker-compose --profile da
 2.0 changes defaults for security; check these before upgrading a 1.x deployment:
 
 1. **Set `API_KEY` or `JWT_SECRET`.** The API exits at start-up without one (or `AUTH_DISABLED=true`, lab use only).
-2. **JWT deployments:** every client, including the dashboard and `scripts/demo_seed.py`, must send a token or `CNDS_API_KEY`.
+2. **Clients must authenticate:** the dashboard uses `CNDS_API_KEY`, or `CNDS_API_USER` / `CNDS_API_PASSWORD` with JWT; `scripts/demo_seed.py` sends `API_KEY` and, with JWT, the token in `CNDS_API_TOKEN`.
 3. **Apply migrations before starting the detector:** recreate the `api` service first (it runs Alembic), then the detector.
 4. **Rebuild the image.** Dependencies are hash-pinned (`requirements-lock-*.txt`) and torch is 2.6.0.
 5. **Optional:** set `METRICS_TOKEN`, and `GUARDIAN_ALERT_SOURCES` if you relied on `/api/predict` alerts triggering the Guardian.

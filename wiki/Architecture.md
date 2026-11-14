@@ -29,7 +29,7 @@
                 │
         ┌───────┴────────┐
         │   Alert fired  │  → MITRE ATT&CK mapping
-        └───────┬────────┘    → logger + SQLite  →  FastAPI
+        └───────┬────────┘    → logger + SQLite / PostgreSQL  →  FastAPI
                 │
                 ├─► SIEM (Splunk / Elastic / Syslog-CEF)
                 ├─► Webhook / Telegram / ntfy notifications
@@ -72,6 +72,7 @@ src/
 │   ├── isolation_forest.py   # Isolation Forest wrapper
 │   ├── lstm_autoencoder.py   # LSTM Autoencoder wrapper
 │   ├── baseline_engine.py    # Live-trained IF + LSTM baseline engine
+│   ├── baseline_scoring.py   # Score formulas shared by the baseline engine and the offline bench
 │   ├── lstm_model.py         # LSTM Autoencoder architecture (nn.Module)
 │   └── rules.py              # Rule-based engine (incl. JA3 rules)
 ├── ensemble/
@@ -88,21 +89,28 @@ src/
 │   ├── threat_intel.py       # AbuseIPDB / JA3 / MISP feeds
 │   └── dns_logger.py         # DNS query logging
 ├── unsupervised/             # Baseline collector, composite trigger, window trainer, drift
+├── monitoring/               # Input-feature drift monitor of the supervised model
+├── inventory/                # LAN asset inventory (tracker, classification, flush to host_profiles)
+├── logwatch/                 # Log-based rules outside the ensemble (Gitea parser, replay tool)
 ├── mcp_server/               # Read-only MCP server (opt-in, separate process)
 ├── triage/                   # Advisory triage agent (opt-in, separate process)
 ├── timeutils.py              # utcnow(): naive-UTC helper
+├── labels.py                 # is_benign(): benign-label helper shared by engines and scorer
+├── failure_streak.py         # Log the first failure of a streak, then stay quiet until recovery
+├── model_integrity.py        # SHA-256 manifest check before loading pickle models
+├── version.py                # Package version
 ├── guardian/                  # Auto-response module (opt-in, off by default)
 │   ├── backends.py           # MitigationBackend protocol + AdGuardBackend
 │   ├── engine.py             # guardian_loop / guardian_expiry_loop background tasks
 │   └── telegram_listener.py  # Inline Confirm/Undo buttons (getUpdates long-poll)
 ├── api/                      # FastAPI application
 │   ├── main.py               # App factory, startup hooks, middleware
-│   ├── models.py             # SQLAlchemy ORM (Alert, Incident, SuppressionRule, MitigationAction, TriageAnnotation, User)
+│   ├── models.py             # SQLAlchemy ORM (Alert, Incident, SuppressionRule, HostProfile, MitigationAction, TriageAnnotation, User)
 │   ├── schemas.py            # Pydantic request/response models
 │   ├── database.py           # Async session + Alembic migration
 │   ├── auth.py               # JWT + RBAC
 │   ├── metrics.py            # Prometheus + OpenTelemetry
 │   ├── rate_limit.py         # Per-IP rate limiting
-│   └── routers/              # Route modules (predict, alerts, auth, baseline, websocket)
+│   └── routers/              # Route modules (predict, alerts, auth, baseline, drift, engines, feedback, assets, websocket)
 └── mlflow_registry.py        # Unified MLflow model registry
 ```

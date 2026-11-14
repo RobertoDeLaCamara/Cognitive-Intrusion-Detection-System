@@ -10,8 +10,8 @@ At least one mechanism must be configured: the API refuses to start with neither
 
 | Mechanism | Env Var | Header / Param | Scope |
 |-----------|---------|----------------|-------|
-| API key (legacy) | `API_KEY` | `X-API-Key: <key>` | Every HTTP route except `/health`, `/docs`, `/openapi.json`, `/metrics`, `/api/auth/*` (`/ws/alerts` authenticates inside its own handler) |
-| JWT | `JWT_SECRET` | `Authorization: Bearer <token>` | Every route except `/health`, `/metrics` and `/api/auth/token` (role table below), plus the `/ws/alerts` `?token=` |
+| API key (legacy) | `API_KEY` | `X-API-Key: <key>` | Every HTTP route except `/health`, `/docs`, `/openapi.json`, `/metrics` and `/api/auth/token`. The other `/api/auth/*` routes (user management) are exempt only when `JWT_SECRET` is also set, because then the admin role guards them; with `API_KEY` alone they need the key. `/ws/alerts` authenticates inside its own handler |
+| JWT | `JWT_SECRET` | `Authorization: Bearer <token>` | Every route except `/health`, `/metrics` and `/api/auth/token` (role table below), plus `/ws/alerts` through `?token=` |
 
 ### JWT roles
 
@@ -156,15 +156,15 @@ curl "http://localhost:8000/api/alerts?severity=high&hours=6&acknowledged=false"
 curl "http://localhost:8000/api/alerts?start=2026-10-01T00:00:00Z&end=2026-10-02T00:00:00Z"
 ```
 
-Each item (`AlertOut`): `id`, `timestamp`, `src_ip`, `dst_ip`, `src_port`, `dst_port`, `attack_type`, `severity`, `ensemble_score`, `engine_scores`, `triggered_rules`, `acknowledged`, `notes`, `incident_id`, `src_geo`, `mitre_techniques`, `ja3_hash`.
+Each item (`AlertOut`): `id`, `timestamp`, `src_ip`, `dst_ip`, `src_port`, `dst_port`, `attack_type`, `severity`, `ensemble_score`, `engine_scores`, `triggered_rules`, `acknowledged`, `label` (`tp`, `fp`, `unknown` or null), `notes`, `incident_id`, `src_geo`, `mitre_techniques`, `ja3_hash`, `source` (`detector` for the capture pipeline, `api` for `POST /api/predict`, `logwatch` for log-based alerts) and `src_asset_type`.
 
 ### `GET /api/alerts/{alert_id}`
 
-Single alert (same fields as above; the raw feature vectors are stored but not returned). 404 if unknown.
+Single alert (`AlertDetailOut`): the fields above plus `protocol`, `payload_matches`, the stored feature vectors `flow_features` (76) and `host_features` (18), and their names in `flow_feature_names` / `host_feature_names`. The vectors are null for alerts stored without them. 404 if unknown.
 
 ### `PATCH /api/alerts/{alert_id}`
 
-Update any of `acknowledged`, `notes`, `incident_id`. This is also how an alert is linked to an incident.
+Update any of `acknowledged`, `label` (`tp`, `fp`, `unknown`), `notes`, `incident_id`. This is also how an alert is linked to an incident.
 
 ```json
 {"acknowledged": true, "notes": "Confirmed DoS from 192.168.1.50", "incident_id": 3}
@@ -233,7 +233,7 @@ Rules that have not expired yet.
 
 ### `POST /api/suppression-rules`
 
-Create a rule (201; `admin`/`analyst`). All match fields are optional but at least one is required: `src_ip`, `dst_ip`, `dst_port` (1-65535), `attack_type`, `min_severity`. `duration_minutes` defaults to 120 (1–10080, i.e. at most 7 days); a *narrow* rule (`src_ip` or `dst_ip` together with `dst_port`) may last up to 525600 minutes (365 days). The server computes `expires_at`; clients do not send it.
+Create a rule (201; `admin`/`analyst`). All match fields are optional but at least one is required: `src_ip`, `dst_ip`, `src_port` and `dst_port` (1-65535), `attack_type`, `min_severity`. `src_port` matches the replies of a service (the service port is the source port of the reply, whose destination port is ephemeral). `duration_minutes` defaults to 120 (1–10080, i.e. at most 7 days); a *narrow* rule (`src_ip` or `dst_ip` together with `src_port` or `dst_port`) may last up to 525600 minutes (365 days). The server computes `expires_at`; clients do not send it.
 
 ```json
 {
@@ -250,7 +250,7 @@ Create a rule (201; `admin`/`analyst`). All match fields are optional but at lea
 
 204 on success (`admin`), 404 if unknown. Expired rules are purged by a background task every 5 minutes.
 
-Suppression is applied on the `/api/predict` path and to alerts written by the detector (a suppressed detector alert is not stored; the detector logs it at INFO level with the id of the rule). Adding `dst_port` needs the Alembic revision `a8b9c0d1e2f3`, which the API applies at startup: recreate `api` before the detector.
+Suppression is applied on the `/api/predict` path and to alerts written by the detector (a suppressed detector alert is not stored; the detector logs it at INFO level with the id of the rule). `dst_port` and `src_port` come from the Alembic revisions `a8b9c0d1e2f3` and `b9c0d1e2f3a4`, which the API applies at startup: recreate `api` before the detector, and create `src_port` rules only once the detector runs the new code (an older detector ignores the field and matches more broadly).
 
 ---
 
@@ -306,7 +306,7 @@ Queries captured by the detector when `DNS_LOGGING_ENABLED=true`; optional `src_
 
 ### `WS /ws/alerts`
 
-Broadcasts alerts persisted through `POST /api/predict`. When `JWT_SECRET` is set, connect with `?token=<JWT>`; closes with 4001 (missing token), 4003 (invalid/expired) or 4029 (more than 100 clients). The `API_KEY` header check does not apply to WebSockets.
+Broadcasts alerts persisted through `POST /api/predict`. When `JWT_SECRET` is set, connect with `?token=<JWT>` (the API key is not accepted in its place). With `API_KEY` only, send the `X-API-Key` header, or `?key=<API_KEY>` from clients that cannot set headers. The handler does this check itself, because the HTTP key middleware does not run for WebSockets. It closes with 4001 (missing token or key), 4003 (invalid or expired) or 4029 (more than 100 clients).
 
 ```javascript
 const ws = new WebSocket('ws://localhost:8000/ws/alerts');
@@ -324,7 +324,7 @@ Message fields: `id`, `src_ip`, `dst_ip`, `ensemble_score`, `severity`, `attack_
 
 ### `GET /metrics`
 
-Registered only when `PROMETHEUS_ENABLED=true` and `prometheus_client` is installed. Main series:
+Registered only when `PROMETHEUS_ENABLED=true` and `prometheus_client` is installed. Open by default; when `METRICS_TOKEN` is set the scraper must send `Authorization: Bearer <token>` (401 otherwise). Main series:
 
 | Metric | Type | Labels |
 |--------|------|--------|
@@ -349,3 +349,36 @@ Per-client-IP sliding window, in memory (`src/api/rate_limit.py`). Set `RATE_LIM
 | `RATE_LIMIT_WINDOW` | 60 | Window in seconds |
 
 Returns HTTP 429 with a `Retry-After` header when exceeded. `/health`, `/docs`, `/openapi.json` and `/metrics` are exempt.
+
+---
+
+## Error responses
+
+| Code | Meaning |
+|---|---|
+| 400 | Bad request, e.g. unknown role on `POST /api/auth/users` |
+| 401 | Missing/invalid API key, missing/invalid/expired token |
+| 403 | Authenticated but role not allowed |
+| 404 | Alert / incident / user / suppression rule not found |
+| 409 | Username already exists; backward incident status change |
+| 422 | Request validation error (Pydantic): bad IP, out-of-range `hours`, `start` after `end`, ... |
+| 429 | Rate limit exceeded |
+| 501 | `POST /api/auth/token` while `JWT_SECRET` is unset |
+
+Error body: `{"detail": "Human-readable error message"}` (a list of objects for 422).
+
+## WebSocket client example (Python)
+
+```python
+import asyncio, json, websockets
+
+async def stream_alerts():
+    # JWT: ?token=<JWT>. API key only: ?key=<API_KEY> (or the X-API-Key header). AUTH_DISABLED: no parameter.
+    uri = "ws://localhost:8000/ws/alerts?token=eyJ..."
+    async with websockets.connect(uri) as ws:
+        async for message in ws:
+            alert = json.loads(message)
+            print(f"[{alert['severity']}] {alert['attack_type']} from {alert['src_ip']}")
+
+asyncio.run(stream_alerts())
+```

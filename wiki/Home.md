@@ -2,6 +2,8 @@
 
 Real-time network intrusion detection system using a five-engine weighted ensemble (defaults from `src/config.py`): Supervised classifier (30 % — FT-Transformer when its checkpoint is present, Random Forest fallback otherwise), Isolation Forest (20 %), LSTM Autoencoder (10 %), rule-based heuristics (25 %) and the live-trained unsupervised Baseline engine (15 %), plus external threat-intel boosts and a `CRITICAL_RULES` override. Live Scapy packet capture → async worker queue → flow dispatcher → feature extractors → ensemble → MITRE ATT&CK enrichment → alert.
 
+> **This wiki is the source of truth for CNDS documentation.** Configuration, API, engines, scoring, deployment and CI are described here and checked against the code. The repository's `doc/` directory keeps long-form background that has no wiki page: [concepts](https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System/blob/master/doc/concepts.md), [model internals](https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System/blob/master/doc/ml-models.md), the [unsupervised baseline reference](https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System/blob/master/doc/unsupervised.md), the [MCP server](https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System/blob/master/doc/mcp-server.md), the [triage agent](https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System/blob/master/doc/triage-agent.md), the [network sandbox](https://github.com/RobertoDeLaCamara/Cognitive-Intrusion-Detection-System/blob/master/doc/digital-twin-sandbox.md), articles and papers. Design decisions are in `docs/adr/`. Where those disagree with this wiki or with the code, the wiki and the code are right.
+
 ## Quick Start
 
 ```bash
@@ -46,7 +48,7 @@ uvicorn src.api.main:app --port 8000   # API only
 
 ```
 main.py                          entry point — capture + CLI
-src/config.py                    100+ env vars with fail-fast validation
+src/config.py                    about 140 env vars with fail-fast validation
 src/pipeline.py                  detection pipeline callback (flow → engines → alert)
 src/capture/                     Scapy + async worker queue
 src/features/                    flow (76), host (18), payload (10), JA3

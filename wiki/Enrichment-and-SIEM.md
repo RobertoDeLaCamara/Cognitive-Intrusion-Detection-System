@@ -12,6 +12,7 @@ EnsembleResult (score, attack_type, triggered_rules)
 1. Trusted-outbound filter and threat-intel lookup (before scoring)
 2. Dedup on (src_ip, attack_type) within DEDUP_WINDOW_SECS
 3. Writer thread: GeoIP lookup (src_ip), MITRE ATT&CK mapping, JA3 fields
+4. Writer thread: suppression rule check → discard if matched (logged as [SUPPRESSED])
     ↓
 SQLite / PostgreSQL INSERT
 ```
@@ -23,15 +24,15 @@ EnsembleResult
     ↓
 1. IP allowlist skip / blocklist escalate (before scoring)
 2. Confidence decay on the score
-3. Dedup on (src_ip, attack_type)
-4. GeoIP lookup, MITRE ATT&CK mapping
+3. GeoIP lookup, MITRE ATT&CK mapping
+4. Dedup on (src_ip, attack_type)
 5. Suppression rule check         → discard if matched
 6. Incident correlation check     → auto-create incident if threshold met
     ↓
-INSERT, then WebSocket broadcast and notification dispatch (webhook / Telegram)
+INSERT, then WebSocket broadcast and notification dispatch (webhook / Telegram / ntfy)
 ```
 
-IP lists, decay, suppression, correlation, WebSocket broadcast and webhook/Telegram notifications are not applied to alerts written by the capture pipeline.
+Suppression rules, GeoIP and MITRE apply on both paths. IP lists, decay, correlation, WebSocket broadcast and webhook/Telegram/ntfy notifications are not applied to alerts written by the capture pipeline.
 
 ---
 
@@ -118,7 +119,7 @@ File: `src/enrichment/suppression.py`
 
 Suppress alerts during scheduled maintenance windows:
 
-`POST /api/suppression-rules` body (the server derives `expires_at` from `duration_minutes`, default 120, max 10080):
+`POST /api/suppression-rules` body (the server derives `expires_at` from `duration_minutes`, default 120, max 10080; a rule with `src_ip` or `dst_ip` plus `src_port` or `dst_port` may last up to 525600). A rule can match `src_ip`, `dst_ip`, `src_port`, `dst_port`, `attack_type` and `min_severity`:
 
 ```json
 {
@@ -130,7 +131,7 @@ Suppress alerts during scheduled maintenance windows:
 }
 ```
 
-Expired rules auto-deleted by background cleanup task (every 300s). Suppression is applied on the `/api/predict` path only.
+Expired rules auto-deleted by background cleanup task (every 300s). Suppression is applied on both paths: `/api/predict` checks the rules before storing, and the capture pipeline checks them in its alert writer thread (rules are cached there for a few seconds), logging each dropped alert as `[SUPPRESSED]`.
 
 ---
 
@@ -144,6 +145,7 @@ Async delivery (non-blocking). Failure does not prevent alert persistence.
 |---------|----------|--------|
 | Webhook / Slack | `WEBHOOK_URLS` (comma-separated) | JSON POST with a summary: `text`, `src_ip`, `dst_ip`, `severity`, `attack_type`, `ensemble_score`, `timestamp` |
 | Telegram | `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` | Formatted MarkdownV2 message |
+| ntfy | `NTFY_URL` (+ `NTFY_TOPIC`, `NTFY_TOKEN` or `NTFY_USER` / `NTFY_PASSWORD`) | JSON publish with title, message, tags and a priority that follows severity; with `DASHBOARD_URL` set it carries a link to the alert detail page |
 
 There is no separate Slack variable: a Slack incoming-webhook URL goes in `WEBHOOK_URLS`. Notifications are dispatched from `/api/predict` and by the Guardian (circuit-breaker notice); the capture pipeline does not call them.
 
@@ -163,7 +165,7 @@ When `ADAPTIVE_WEIGHTS_ENABLED=true`, analyst feedback (acknowledged TP/FP) driv
 weight_engine ∝ (TP + 1) / (TP + FP + 2)
 ```
 
-where TP / FP are each engine's share of the engine-score total over acknowledged alerts; an alert counts as a false positive when its notes contain "false positive" (case-insensitive). The result is normalised to sum to 1.0 over supervised / isolation_forest / lstm / rules. Requires `ADAPTIVE_WEIGHTS_ENABLED=true` and `ADAPTIVE_MIN_SAMPLES` (default 100) acknowledged alerts. Weights are recomputed on `GET /api/adaptive-weights`; they must be applied manually through the `WEIGHT_*` variables.
+where TP / FP are each engine's share of the engine-score total over acknowledged alerts; an alert counts as a false positive when it is labelled `fp` or its notes contain "false positive" (case-insensitive). The result is normalised to sum to 1.0 over supervised / isolation_forest / lstm / rules. Requires `ADAPTIVE_WEIGHTS_ENABLED=true` and `ADAPTIVE_MIN_SAMPLES` (default 100) acknowledged alerts. Weights are recomputed on `GET /api/adaptive-weights`; they must be applied manually through the `WEIGHT_*` variables.
 
 ---
 
@@ -200,12 +202,7 @@ sourcetype = cnds:alert
 
 Files: `siem/elastic/index_template.json`, `siem/elastic/logstash_cnds.conf`
 
-```
-logstash_cnds.conf:
-  input { http { port => 8080 } }
-  filter { json { source => "message" } }
-  output { elasticsearch { hosts => ["localhost:9200"] index => "cnds-alerts-%{+YYYY.MM.dd}" } }
-```
+`logstash_cnds.conf` has two inputs: an `http_poller` that reads `GET /api/alerts/export?format=json&hours=1` from the API (option A, pull) and an `http` input on port 5140 that receives the `WEBHOOK_URLS` pushes (option B). It renames the fields to ECS (`source.ip`, `destination.port`, ...) and writes to the daily index `cnds-alerts-%{+YYYY.MM.dd}`. The poller sends no credentials, so add the `X-API-Key` or Bearer header to it when the API requires one.
 
 ### Syslog-CEF
 

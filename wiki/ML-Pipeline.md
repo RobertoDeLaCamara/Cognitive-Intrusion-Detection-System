@@ -127,7 +127,7 @@ Extracted by `src/features/payload_analyzer.py`. Per-flow numeric features from 
 | Rule | Condition | Default Threshold |
 |------|-----------|-------------------|
 | `icmp_flood` | Forward ICMP packets in the flow | > 50 (`ICMP_FLOOD_THRESHOLD`) |
-| `syn_scan` | SYN flag count (with < 5 forward packets) | > 20 (`PORT_SCAN_THRESHOLD`) |
+| `syn_scan` | SYN flag count (with fewer than 5 forward packets that carry data) | > 20 (`PORT_SCAN_THRESHOLD`) |
 | `large_payload` | Largest forward packet (bytes) | > 10 000 (`LARGE_PAYLOAD_BYTES`) |
 | `asymmetric_upload` | Fwd/bwd byte ratio (> 10 forward packets) | > 50 (fixed) |
 | `payload:*` | 6 regex signatures (SQLi, XSS, command injection, path traversal, Log4j, Shellshock) | — |

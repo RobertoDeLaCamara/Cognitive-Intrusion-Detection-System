@@ -29,7 +29,7 @@ The digital twin models a typical home/small-office network:
 └── 192.168.1.100  CLIENT      — Developer workstation
 ```
 
-These IPs are representative of a real lab environment and match the `TRUSTED_OUTBOUND` device profiles in `.env.example`. Each device has realistic traffic patterns modeled in the generator.
+These IPs are representative of a real lab environment. The generator also uses an external attacker (`10.0.0.1`) and a relay address for the NAS vendor (`52.69.100.1`). `ROUTER` and `REGISTRY` are declared but the current scenarios send no traffic to or from them.
 
 ---
 
@@ -45,14 +45,12 @@ Models day-to-day device activity:
 
 | Traffic Type | Source | Destination | Protocol |
 |---|---|---|---|
-| HTTP/HTTPS web browsing | CLIENT | External IPs | TCP 80/443 |
-| Git push/pull | CLIENT | GITEA :80 | TCP |
-| Docker pull | CLIENT | REGISTRY :5000 | TCP/HTTPS |
-| NAS file access | CLIENT | NAS :445 | SMB/TCP |
-| DNS lookups | CLIENT | ROUTER :53 | UDP |
-| ICMP ping | CLIENT | ROUTER | ICMP |
+| Vendor relay heartbeat (one flow every 30 s) | NAS | external relay | TCP 443 |
+| SMB backup chunks | CLIENT | NAS | TCP 445 |
+| Git info/refs requests | CLIENT | GITEA | TCP 80 |
+| ICMP health checks | CLIENT | NAS | ICMP |
 
-Packet sizes, inter-arrival times, and flow durations are randomized within realistic ranges to create varied but recognizable "normal" traffic.
+The payloads are short placeholder strings (for example `SMB2_NEGOTIATE`), with fixed spacing between flows; they are not real protocol exchanges.
 
 #### Attack Scenarios
 
@@ -101,11 +99,11 @@ PCAPs can be inspected with Wireshark, analyzed with CICFlowMeter, or fed into a
 
 ### What it does
 
-1. Generates PCAPs (calls `generate_traffic.py` if `demo/traffic/` is empty).
+1. Generates the PCAPs with `generate_all()` on every run, overwriting `demo/traffic/*.pcap`, unless `--no-generate` is given.
 2. Initializes CNDS engines (loads models if available, gracefully degrades if not).
 3. Replays each PCAP through the full CNDS detection pipeline (feature extraction → engines → ensemble → enrichment).
 4. Prints a color-coded alert summary to terminal.
-5. Outputs a final summary report: detection rates, false positive rates, MITRE coverage.
+5. Prints a final summary: alert count per scenario (detected / missed, false positives for `normal_traffic`), a severity breakdown and the MITRE technique ids observed.
 
 ### Running the demo
 
@@ -259,14 +257,14 @@ SCENARIOS = [
 
 ### Using real PCAP as baseline
 
-Replace `generate_normal_traffic()` with a real capture:
+Replace the generated `normal_traffic.pcap` with a real capture and run with `--no-generate` (a plain run would regenerate and overwrite it):
 
 ```bash
 # Capture 5 minutes of normal traffic
 sudo tcpdump -i eth0 -w demo/traffic/normal_traffic.pcap -G 300 -W 1
 
 # Run demo with real baseline
-python run_demo.py
+python demo/run_demo.py --no-generate
 ```
 
 The demo will report false positives from real traffic that the synthetic generator doesn't model (streaming video, cloud sync, background OS traffic).

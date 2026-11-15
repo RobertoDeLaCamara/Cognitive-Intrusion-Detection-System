@@ -3,7 +3,7 @@ score the held-out test split, and compare to the published metric.
 
 Usage:
     python scripts/smoke_test_ft_unified.py
-        [--data-dir /home/roberto/repos/ML-IDS/data/CIC-IDS2017]
+        --data-dir /path/to/CIC-UNSW-NB15  # directory with Data.csv and Label.csv
         [--per-class-samples 1000]    # subsample for speed
         [--device cpu|cuda]
 
@@ -60,7 +60,8 @@ def predict_batch(engine: FTTransformerEngine, X: np.ndarray, batch_size: int = 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data-dir", default="/home/roberto/repos/ML-IDS/data/CIC-IDS2017")
+    ap.add_argument("--data-dir", required=True,
+                    help="Directory with Data.csv and Label.csv (CIC-UNSW-NB15)")
     ap.add_argument("--per-class-samples", type=int, default=0,
                     help="If >0, subsample test set to N per class (faster).")
     ap.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda"])

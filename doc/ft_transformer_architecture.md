@@ -191,7 +191,7 @@ The checkpoint deployed at `models/unified/unified_ft_transformer.pt` was produc
 | Test F1 weighted | 0.9380 |
 | XGBoost baseline (test F1 macro) | 0.6095 |
 | Default FT-T (no Optuna, test F1 macro) | 0.5446 |
-| Total parameters | ~2.4M |
+| Total parameters | ~1.6M (1,623,562 in the shipped checkpoint) |
 | Training hardware | NVIDIA GeForce RTX 5060 Ti |
 | Training time | ~686 s |
 

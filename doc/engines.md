@@ -12,15 +12,20 @@ CNDS uses five complementary detection engines (plus a threat-intelligence boost
 | Rules Engine | 25% | All signals | High-confidence threshold and signature patterns |
 | Baseline (unsupervised live pipeline) | 15% | 18 host features | Adaptive behavioral anomalies |
 
-(Defaults from `src/config.py`. The shipped `.env.example` sets 35/25/15/5/20, and docker-compose loads it, so containers use those values unless `.env` overrides them.)
+(Defaults from `src/config.py`. The shipped `.env.example` sets 40/10/0/20/30 (supervised/iforest/lstm/rules/baseline), and docker-compose loads it, so containers use those values unless `.env` overrides them.)
 
 ---
 
 ## 1. Supervised classifier (FT-Transformer preferred, Random Forest fallback)
 
 The supervised slot has two interchangeable implementations. Both consume the
-same 76 CICFlowMeter flow-feature vector, return `(label, confidence)` from
-`predict()`, and a calibrated `[0, 1]` score from `anomaly_score()`. The
+same 76 CICFlowMeter flow-feature vector and return `(label, confidence)` from
+`predict()`. That is the only method the runtime calls: both the capture pipeline
+(`_score_supervised()` in `src/pipeline.py`) and `POST /api/predict` set the
+supervised score to `0.0` when the label is benign and to the confidence of the
+predicted class otherwise. Each engine also has an `anomaly_score()` method
+(`1 - P(Benign)`, zeroed below a threshold), but no runtime path calls it, so
+`FT_SCORE_THRESHOLD` and `RF_SCORE_THRESHOLD` currently have no effect on alerts. The
 registry picks **FT-Transformer when its checkpoint is present**, otherwise
 falls back to the Random Forest pipeline.
 
@@ -35,13 +40,13 @@ F1 on minority attacks than the legacy RF and produces the named
 `attack_type` label that appears on every alert.
 
 #### Model
-- **Algorithm:** FT-Transformer (Gorishniy et al., NeurIPS 2021) — per-feature affine tokenizer + 3 Pre-LN transformer encoder blocks + linear head. ~2.4M parameters, Optuna-tuned.
+- **Algorithm:** FT-Transformer (Gorishniy et al., NeurIPS 2021) — per-feature affine tokenizer + 3 Pre-LN transformer encoder blocks + linear head. The shipped Optuna-tuned checkpoint uses `d_token=256`, 8 heads and has about 1.6M parameters.
 - **Features:** 76 CICFlowMeter flow features (same order as `FlowExtractor`).
 - **Training dataset:** UNSW-NB15 (CIC redistribution; ~447k labeled flows, 10 classes).
 - **Test metric:** F1 macro **0.6197** (vs XGBoost baseline 0.6095, default FT-T 0.5446).
 - **Class-weighting strategy:** `sqrt_inverse` — full inverse over-corrects on minorities, focal loss adds nothing over sqrt-weighted CE.
-- **Anomaly score:** `1 - P(Benign)` — calibrated against the actual benign probability.
-- **FP threshold:** scores below `FT_SCORE_THRESHOLD` (default `0.50`) are zeroed.
+- **Score used by the ensemble:** confidence of the predicted class (softmax over logits divided by `FT_TEMPERATURE`, default `2.0`), or `0.0` when the class is `Benign`.
+- **`anomaly_score()`:** `1 - P(Benign)`, zeroed below `FT_SCORE_THRESHOLD` (default `0.50`). Not called at runtime (see above).
 - **Architecture diagrams:** see [`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](https://github.com/RobertoDeLaCamara/ML-IDS/blob/main/docs/UNIFIED_MODEL_ARCHITECTURE.md).
 
 #### Model load chain (priority order)
@@ -65,8 +70,8 @@ Classify network flows into one of 9 known attack categories or `Benign`. This e
 - **Algorithm:** scikit-learn `Pipeline` (clip → log1p on skewed features → StandardScaler → RandomForestClassifier).
 - **Features:** 76 CICFlowMeter flow features (see `FlowExtractor`).
 - **Training dataset:** CIC-UNSW-NB15 — 447k labeled flows from the Canadian Institute for Cybersecurity / UNSW.
-- **Anomaly score:** `1 - P(Benign)` — calibrated against the actual benign probability.
-- **FP threshold:** scores below `RF_SCORE_THRESHOLD` (default `0.90`) are zeroed to suppress low-confidence predictions.
+- **Score used by the ensemble:** confidence of the predicted class, or `0.0` when the class is `Benign`.
+- **`anomaly_score()`:** `1 - P(Benign)`, zeroed below `RF_SCORE_THRESHOLD` (default `0.90`). Not called at runtime (see above).
 
 ### Model load chain (priority order)
 
@@ -121,7 +126,7 @@ Detect behavioral anomalies in host-level traffic patterns without requiring lab
 ### Model
 - **Algorithm:** scikit-learn `IsolationForest`.
 - **Features:** 18 per-IP host features (see `HostExtractor`).
-- **Storage:** `models/isolation_forest.joblib` + `models/if_scaler.joblib`.
+- **Storage:** MLflow registry (`<MLFLOW_REGISTRY_NAME>-isolation_forest`, stage `Production`) when MLflow is configured, otherwise `models/isolation_forest.joblib`; the optional scaler is `models/if_scaler.joblib`. Neither file ships with the repo.
 - **Training:** Fit on normal traffic captures (baseline period).
 
 ### Score Normalization
@@ -138,7 +143,7 @@ anomaly_score = 1 / (1 + exp(-5 × (-decision_function(x))))
 - **Volumetric attacks**: Packet rate, byte rate, and burst rate spikes are among the 18 features.
 - **Protocol anomalies**: Unusual TCP/UDP/ICMP ratios.
 - **Port diversity**: Scanning behavior (many unique destination ports).
-- **Entropy anomalies**: High-entropy payloads characteristic of encrypted exfiltration.
+- **Entropy anomalies**: unusual average payload entropy for a host (`avg_payload_entropy`).
 
 ### Limitations
 - Requires a representative normal-traffic baseline for training.
@@ -164,13 +169,13 @@ Detect attacks that unfold slowly over time — behaviors that look normal in an
 
 ### Per-IP Sequence Buffers
 - Each tracked source IP maintains a FIFO buffer of its last `sequence_length` host feature vectors (20, read from `models/lstm_config.json`; there is no environment variable for it).
-- On each new packet, the buffer is updated.
+- The buffer gets one vector per completed flow of that source IP (not per packet).
 - When the buffer is full, the full sequence is run through the autoencoder.
-- LRU eviction removes the oldest IP when `MAX_TRACKED_IPS` is reached.
+- When `MAX_TRACKED_IPS` (default 5000) buffers exist and a new IP arrives, the IP with the shortest buffer is evicted.
 
 ### Scoring
 - Reconstruction error = Mean Squared Error (MSE) between input and reconstructed sequence.
-- Normalized to [0, 1] using the empirical max error observed during training.
+- Normalized as `min(error / reconstruction_threshold, 1.0)`, with `reconstruction_threshold` read from `models/lstm_config.json` (0.1 if the key is missing).
 - High reconstruction error → high anomaly score.
 
 ### What it catches
@@ -180,12 +185,12 @@ Detect attacks that unfold slowly over time — behaviors that look normal in an
 - **Progressive brute force**: Authentication attempts spread over time.
 
 ### Cold-start behavior
-The buffer must be full (20 packets from the same IP) before the LSTM produces a score. New IPs contribute no LSTM signal until their sequence is populated. The weight for LSTM is redistributed to other engines for that IP during this period.
+The buffer must be full (20 completed flows from the same IP) before the LSTM produces a real score. Until then `anomaly_score()` returns `0.0`, and that zero enters the blend with the full LSTM weight: the weight is only redistributed when the engine itself is unavailable (no model loaded).
 
 ### Training requirements
-- Requires labeled or unlabeled normal-traffic captures.
-- Training script produces `lstm_autoencoder.pt` and `lstm_config.json`.
-- Minimum recommended training data: 2+ hours of representative traffic.
+- Needs normal-traffic host vectors; no labels.
+- The repository has no standalone LSTM training script. `scripts/generate_demo_models.py` writes a demo `lstm_autoencoder.pt` and `lstm_config.json` from synthetic data, and the live baseline pipeline (`WindowTrainer`, see [unsupervised.md](unsupervised.md)) trains its own LSTM for the baseline engine.
+- `models/lstm_config.json` ships with the repo; the weights file does not.
 
 ---
 
@@ -194,17 +199,17 @@ The buffer must be full (20 packets from the same IP) before the LSTM produces a
 **File:** `src/engines/rules.py`
 
 ### Purpose
-High-precision, zero-latency detection of well-understood attack patterns. Rules fire immediately with 100% confidence when thresholds are exceeded — no probability estimation needed.
+Deterministic detection of well-understood attack patterns. Rules are evaluated once per completed flow and return a binary score: `1.0` when at least one rule fires, no probability estimation.
 
 ### Rules
 
 #### Rule 1: ICMP Flood
 ```
-host_features[icmp_ratio] × packet_count > ICMP_FLOOD_THRESHOLD
+protocol == ICMP AND forward packets in the flow > ICMP_FLOOD_THRESHOLD
 ```
-- Detects ICMP ping floods and Smurf amplification.
-- Threshold: `ICMP_FLOOD_THRESHOLD` (default: 50).
-- MITRE: T1498 (Network Denial of Service).
+- Detects ICMP ping floods.
+- Threshold: `ICMP_FLOOD_THRESHOLD` (default: 50 packets).
+- MITRE: T1498.001 (Direct Network Flood).
 
 #### Rule 2: SYN Scan
 ```
@@ -219,41 +224,42 @@ AND flow_features[fwd_act_data_pkts] < 5
 
 #### Rule 3: Large Payload
 ```
-flow_features[max_fwd_len] > LARGE_PAYLOAD_BYTES
+max(forward packet lengths in the flow) > LARGE_PAYLOAD_BYTES
 ```
 - Detects unusually large payload packets potentially carrying exploits or exfiltration.
 - Threshold: `LARGE_PAYLOAD_BYTES` (default: 10000 bytes).
-- MITRE: T1030 (Data Transfer Size Limits violation).
+- MITRE: T1030 (Data Transfer Size Limits).
 
 #### Rule 4: Payload Signatures
 ```
-any(payload_features[0:6]) == 1
+for each pattern name returned by the payload analyzer: add "payload:<name>"
 ```
 - Fires when any of the 6 payload patterns (SQLi, XSS, CMDi, traversal, Log4J, Shellshock) matches.
 - Each matching pattern adds a separate triggered rule entry to the alert.
 - Payloads that look encrypted or compressed are skipped (#68): a TLS record header at the start of the payload, or a sample of at least 256 bytes with Shannon entropy of 7.0 bits/byte or more (`looks_encrypted()` in `src/features/payload_analyzer.py`). Plaintext attacks sit well below that entropy, while chance regex matches inside bulk TLS or backup transfers used to surface as `CRITICAL_RULES` alerts.
-- MITRE: T1190 (Exploit Public-Facing Application), T1059.007 (XSS).
+- MITRE (`src/enrichment/mitre.py`): T1190 for `sql_injection`, `log4j` (plus T1203) and `shellshock`; T1059.007 for `xss`; T1059 for `command_injection`; T1083 for `path_traversal`.
 
 #### Rule 5: Asymmetric Upload
 ```
-flow_features[fwd_bytes] / flow_features[bwd_bytes] > 50
+forward packets > 10 AND backward packets > 0
+AND sum(forward lengths) / sum(backward lengths) > 50
 ```
 - Detects large upload-to-download ratios characteristic of data exfiltration.
-- Ignores flows with zero backward bytes to avoid division errors.
-- MITRE: T1048 (Exfiltration Over Alternative Protocol).
+- Flows with no backward packets are ignored.
+- MITRE: T1041 (Exfiltration Over C2 Channel).
 
 #### Rule 6: Malicious JA3
 ```
 ja3_hash in malicious_ja3_set
 ```
 - Fires when the TLS ClientHello fingerprint matches a known-malicious hash.
-- Hash list loaded from `MALICIOUS_JA3_FILE` at startup.
-- MITRE: T1071.001 (Application Layer Protocol: Web Protocols).
+- Hash list loaded from `MALICIOUS_JA3_FILE` by `main.py` at startup (empty by default, so the rule cannot fire until a file is configured). Hashes fetched from `MALICIOUS_JA3_URL` belong to the threat-intel store instead and produce the separate `threat_intel_malicious_ja3` entry.
+- MITRE: T1071 (Application Layer Protocol) and T1573 (Encrypted Channel).
 
 ### Scoring
 - Rules return `1.0` when any rule fires, `0.0` otherwise.
 - `triggered_rules` list contains the names of all fired rules.
-- Multiple rules can fire simultaneously from the same packet/flow.
+- Multiple rules can fire for the same flow.
 - Default `CRITICAL_RULES` (each forces an alert on its own): the six `payload:*` rules (`sql_injection`, `command_injection`, `log4j`, `shellshock`, `xss`, `path_traversal`), `malicious_ja3` and `syn_scan`.
 
 ---
@@ -305,19 +311,20 @@ WEIGHT_RULES      = 0.25
 WEIGHT_BASELINE   = 0.15
 ```
 
-Override per attack type with `ATTACK_TYPE_WEIGHTS` JSON:
+Override per attack type with `ATTACK_TYPE_WEIGHTS` JSON. The key must equal the label the supervised engine returns (for the shipped models: `DoS`, `Exploits`, `Reconnaissance`, ...), and the given engines replace the base weights while the others keep theirs:
 ```json
 {
-  "PortScan": {"rules": 0.40, "supervised": 0.40, "isolation_forest": 0.20, "lstm": 0.00},
-  "Bot":      {"lstm": 0.50, "supervised": 0.30, "isolation_forest": 0.20, "rules": 0.00}
+  "DoS":            {"supervised": 0.60, "rules": 0.20},
+  "Reconnaissance": {"rules": 0.50}
 }
 ```
+The override weights are not validated to sum to 1.0; they are renormalised over the engines that produced a score.
 
 ### Dynamic Weight Redistribution
 When an engine is unavailable (model missing), its weight is distributed proportionally to the remaining engines:
 
 ```
-Example: LSTM unavailable (weight 0.10)
+Example: LSTM unavailable (weight 0.10); an engine counts as unavailable when its score is `None`, not when it scores `0.0`
 Before: supervised=0.30, iforest=0.20, lstm=0.10, rules=0.25, baseline=0.15
 After:  supervised≈0.33, iforest≈0.22, lstm=0.00, rules≈0.28, baseline≈0.17
         (each remaining engine scales by 1/(1-0.10))
@@ -335,7 +342,7 @@ calibrated = sigmoid(logit / temperature)
 - `temperature > 1.0`: Softens scores toward 0.5 (more conservative).
 - `temperature < 1.0`: Sharpens scores toward 0 or 1 (more aggressive).
 
-Tune `CALIBRATION_TEMPERATURE` after observing score distributions on your network.
+Tune `CALIBRATION_TEMPERATURE` after observing score distributions on your network. Calibration is applied after the threat-intel boost (+0.30) and the `CRITICAL_RULES` override (score forced to 1.0); scores of exactly 0 or 1 are left unchanged.
 
 ---
 
@@ -343,13 +350,15 @@ Tune `CALIBRATION_TEMPERATURE` after observing score distributions on your netwo
 
 ```python
 # From src/engines/registry.py
-supervised = SupervisedEngine()    # is_available = False if .joblib missing
-iforest    = IsolationForest()     # is_available = False if .joblib missing
-lstm       = LSTMAutoencoder()     # is_available = False if .pt missing
-rules      = RulesEngine()         # always is_available = True (no model files)
+_ft_engine = FTTransformerEngine()
+supervised = _ft_engine if _ft_engine.is_available else SupervisedEngine()
+iforest    = IsolationForestEngine()   # is_available = False if no model
+lstm       = LSTMAutoencoderEngine()   # is_available = False if no model
+baseline   = BaselineEngine()          # is_available = False until a window is trained
+rules      = RulesEngine()             # no model files, always on
 ```
 
-The rules engine is always available and provides a minimum detection floor. In a fresh deployment with no trained models, the system still detects ICMP floods, SYN scans, large payloads, payload injection patterns, asymmetric uploads, and known malicious JA3 hashes.
+The rules engine is always available and provides a minimum detection floor. In a fresh clone the bundled lite Random Forest also loads, so the supervised slot is active too. With no models at all, the system still detects ICMP floods, SYN scans, large payloads, payload injection patterns, asymmetric uploads, and known malicious JA3 hashes.
 
 ---
 
@@ -388,12 +397,12 @@ Steps 3 and 4 are explicit wiring, not automatic discovery: the scorer still has
 | Engine | Latency | Memory | CPU | False Positive Risk |
 |---|---|---|---|---|
 | FT-Transformer (primary) | ~3–8 ms | ~30 MB (model) | Medium (inference_mode, CPU) | Low (labeled training, 10 classes) |
-| Random Forest (fallback) | ~1 ms | ~200 MB (full model) | Medium (inference) | Low (labeled training) |
+| Random Forest (fallback) | ~1 ms | ~200 MB (full model; the bundled lite model is 1.6 MB on disk) | Medium (inference) | Low (labeled training) |
 | Isolation Forest | ~0.1 ms | ~50 MB (model) | Low | Medium (topology changes) |
 | LSTM Autoencoder | ~5 ms | ~100 MB (model) | High (GPU optional) | Low (sequence context) |
 | Rules Engine | ~0.01 ms | Negligible | Very Low | Very Low (threshold-based) |
 
-Total pipeline latency (all engines): typically 5–15 ms per packet batch on modern hardware.
+These figures are rough orders of magnitude, not measurements from this repository; no benchmark for them is checked in. Engines run once per completed flow.
 
 ---
 
@@ -401,12 +410,12 @@ Total pipeline latency (all engines): typically 5–15 ms per packet batch on mo
 
 ### Random Forest
 ```bash
-# Standard 76-feature model
-python -m sklearn ...  # use your labeled dataset
+# Standard 76-feature model (see "Training" above for --lite and --mlflow-uri)
+python scripts/train_rf.py --data-dir /path/to/CIC-UNSW-NB15
 
 # Extended 86-feature model (adds 10 payload features)
 python scripts/retrain_with_payload.py \
-    --data data/labeled_flows.csv \
+    --dataset data/labeled_flows.csv \
     --output models/rf_model_v2.joblib
 ```
 
@@ -425,14 +434,24 @@ dump(model, 'models/isolation_forest.joblib')
 "
 ```
 
+With `MODEL_INTEGRITY_MODE` enforcing a manifest, a hand-made model file also needs an entry (see `scripts/model_manifest.py`).
+
+```bash
+# Demo models from synthetic data (RF, Isolation Forest + scaler, LSTM), for trying the stack only
+python scripts/generate_demo_models.py --output-dir models
+```
+
 ### LSTM Autoencoder
-Training code is expected in the `scripts/` or `models/` directory. The config file `models/lstm_config.json` must match the architecture used for inference:
+There is no standalone training script (see section 3). The config file `models/lstm_config.json` must match the architecture of the weights; the shipped file is:
 ```json
 {
-  "input_size": 18,
-  "hidden_size": 64,
+  "sequence_length": 20,
+  "hidden_dim": 64,
+  "latent_dim": 32,
   "num_layers": 2,
-  "seq_len": 20
+  "dropout": 0.2,
+  "n_features": 18,
+  "reconstruction_threshold": 2.9730082154273987
 }
 ```
 

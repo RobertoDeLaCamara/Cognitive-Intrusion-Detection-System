@@ -62,7 +62,7 @@ CNDS is at **2.0.0 release candidate** (pre-release): usable on a home LAN, not 
 
 | Engine | Input | Model | Detects |
 |---|---|---|---|
-| **Supervised (preferred)** | 76 CICFlowMeter flow features | FT-Transformer (PyTorch, ~2.4M params) — Optuna-tuned, F1 macro 0.6197 on UNSW-NB15 test split | 10 attack classes: Benign, Analysis, Backdoor, DoS, Exploits, Fuzzers, Generic, Reconnaissance, Shellcode, Worms |
+| **Supervised (preferred)** | 76 CICFlowMeter flow features | FT-Transformer (PyTorch, ~1.6M params) — Optuna-tuned, F1 macro 0.6197 on UNSW-NB15 test split | 10 attack classes: Benign, Analysis, Backdoor, DoS, Exploits, Fuzzers, Generic, Reconnaissance, Shellcode, Worms |
 | **Supervised (fallback)** | 76 CICFlowMeter flow features (+ 10 payload features if retrained) | Random Forest (sklearn Pipeline) | Same 10 attack classes; activates only when no FT-T checkpoint is present |
 | **Isolation Forest** | 18 per-IP host features | IsolationForest + StandardScaler. The bundled generator makes a **synthetic demo model** | Novel volumetric anomalies, once fitted on real traffic |
 | **LSTM Autoencoder** | 18-feature time-series per IP | PyTorch sequence AE. The bundled generator makes a **synthetic demo model** | Temporal behaviour drift, once fitted on real traffic |
@@ -541,11 +541,11 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `MODELS_DIR` | `models` | Directory containing model files |
 | `RF_MODEL_FILE` | `rf_model.joblib` | Full RF model (gitignored, fallback only) |
 | `RF_LITE_MODEL_FILE` | `rf_lite_model.joblib` | Bundled lite RF model (committed, second-tier fallback) |
-| `RF_SCORE_THRESHOLD` | `0.90` | Min RF anomaly score to avoid false positives |
+| `RF_SCORE_THRESHOLD` | `0.90` | Floor applied by `SupervisedEngine.anomaly_score()`. No runtime path calls that method, so it currently has no effect |
 | `FT_MODEL_FILE` | `unified/unified_ft_transformer.pt` | FT-Transformer checkpoint (gitignored, preferred) |
 | `FT_SCALER_FILE` | `unified/unified_scaler.pkl` | StandardScaler matched to the FT checkpoint |
 | `FT_USE_GPU` | `false` | Run FT-T inference on CUDA when available |
-| `FT_SCORE_THRESHOLD` | `0.50` | Min FT anomaly score (1 − P(Benign)) to contribute |
+| `FT_SCORE_THRESHOLD` | `0.50` | Floor applied by `FTTransformerEngine.anomaly_score()` (1 − P(Benign)). No runtime path calls that method (the ensemble uses the predicted-class confidence), so it currently has no effect |
 | `MLFLOW_FT_REGISTRY_NAME` | `ml-ids-unified-ft-transformer` | MLflow registered model name to load FT from |
 | `MLFLOW_FT_STAGE` | `None` | MLflow stage to pin (default = latest version) |
 | `IF_CONTAMINATION`, `IF_N_ESTIMATORS`, `IF_MIN_SAMPLES`, `IF_TRAINING_STATUS_FILE` | `0.05`, `200`, `100`, `/tmp/cnds_if_training_status.json` | Reserved — defined in `src/config.py` but not read; the baseline `WindowTrainer` uses its own constructor defaults (contamination 0.01, 200 estimators) |

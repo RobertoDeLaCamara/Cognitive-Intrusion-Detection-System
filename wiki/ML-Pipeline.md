@@ -83,7 +83,7 @@ Extracted by `src/features/payload_analyzer.py`. Per-flow numeric features from 
 
 - Files: `src/engines/ft_transformer_engine.py`, `src/models/ft_transformer.py`
 - Model: PyTorch FT-Transformer (Gorishniy et al., NeurIPS 2021), Optuna-tuned
-- Architecture: per-feature affine tokenizer → 3 Pre-LN encoder blocks → linear head; ~2.4M params
+- Architecture: per-feature affine tokenizer → 3 Pre-LN encoder blocks → linear head; ~1.6M params
 - Best config (from the ML-IDS Optuna sweep; not verifiable here: the checkpoint is gitignored, and the tracked `models/unified/unified_metadata.json` records `d_token=128` with test F1 macro 0.5446, i.e. the untuned default): `d_token=256, n_blocks=3, n_heads=8, ff_factor=2.0, dropout=0.0985, class_weight='sqrt_inverse'`
 - Features: 76 CICFlowMeter flow features
 - 10 output classes (UNSW-NB15): Benign, Analysis, Backdoor, DoS, Exploits, Fuzzers, Generic, Reconnaissance, Shellcode, Worms

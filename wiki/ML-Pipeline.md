@@ -214,7 +214,7 @@ Or rely on MLflow auto-load by setting `MLFLOW_TRACKING_URI` and the S3
 credentials. Validate end-to-end with:
 
 ```bash
-python scripts/smoke_test_ft_unified.py --device cpu       # F1 macro on test split
+python scripts/smoke_test_ft_unified.py --device cpu --data-dir /path/to/CIC-UNSW-NB15   # F1 macro on test split
 pytest tests/test_ft_transformer_engine.py -v              # 7 tests; skipped without torch and the checkpoint
 ```
 

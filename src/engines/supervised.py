@@ -79,7 +79,7 @@ class SupervisedEngine:
             try:
                 self._model = load_joblib(RF_LITE_MODEL_PATH)
                 logger.info("SupervisedEngine loaded from bundled lite model %s "
-                            "(~88-90%% accuracy — run scripts/train_rf.py for full model)",
+                            "(~88-90%% accuracy — run scripts/train_rf.py --data-dir <dataset> for full model)",
                             RF_LITE_MODEL_PATH)
             except Exception as e:
                 logger.error("Failed to load RF lite model: %s", e)
@@ -87,7 +87,7 @@ class SupervisedEngine:
         if self._model is None:
             logger.warning(
                 "No RF model found (checked MLflow, %s, %s) — supervised engine disabled. "
-                "Run: python scripts/train_rf.py",
+                "Run: python scripts/train_rf.py --data-dir <dataset>",
                 self._model_path, RF_LITE_MODEL_PATH,
             )
             return

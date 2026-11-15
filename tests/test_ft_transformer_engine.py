@@ -5,9 +5,12 @@ softmax → label) against real samples from the unified dataset.  They are
 skipped automatically when:
   - torch is not installed in the active environment, or
   - the unified checkpoint at models/unified/ is absent, or
-  - the CIC-IDS2017 dataset is not on disk.
+  - the dataset is not available: the two tests that read it need
+    CNDS_TEST_DATA_DIR to point at a directory with Data.csv and Label.csv
+    (the CIC-UNSW-NB15 redistribution).
 """
 
+import os
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +18,10 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 CKPT = REPO / "models" / "unified" / "unified_ft_transformer.pt"
-DATA = Path("/home/roberto/repos/ML-IDS/data/CIC-IDS2017")
+_DATA_DIR = os.getenv("CNDS_TEST_DATA_DIR", "")
+DATA = Path(_DATA_DIR) if _DATA_DIR else None
+_NO_DATA = DATA is None or not (DATA / "Data.csv").exists()
+_NO_DATA_REASON = "set CNDS_TEST_DATA_DIR to a directory with Data.csv and Label.csv"
 
 torch = pytest.importorskip("torch")
 
@@ -103,7 +109,7 @@ def test_rejects_wrong_feature_count(engine):
         engine._forward(np.zeros(75, dtype=np.float32))
 
 
-@pytest.mark.skipif(not (DATA / "Data.csv").exists(), reason="dataset not on disk")
+@pytest.mark.skipif(_NO_DATA, reason=_NO_DATA_REASON)
 def test_classifies_benign_majority(engine):
     """Take N=200 known-Benign rows, expect >=90% predicted as Benign."""
     import pandas as pd
@@ -121,7 +127,7 @@ def test_classifies_benign_majority(engine):
     )
 
 
-@pytest.mark.skipif(not (DATA / "Data.csv").exists(), reason="dataset not on disk")
+@pytest.mark.skipif(_NO_DATA, reason=_NO_DATA_REASON)
 def test_classifies_attack_majority_non_benign(engine):
     """For each attack class with >=50 samples, expect <50% predicted as Benign.
 

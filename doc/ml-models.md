@@ -930,13 +930,13 @@ pip install imbalanced-learn        # o usar --no-smote
 python scripts/train_rf.py --data-dir /path/to/CIC-UNSW-NB15
 ```
 
-Pasar siempre `--data-dir`: el valor por defecto es una ruta del equipo del autor.
+`--data-dir` es obligatorio. Si se pide SMOTE y `imbalanced-learn` no está instalado, el script termina con un mensaje que nombra el paquete y `--no-smote`.
 
 El script recorta negativos a 0, aplica `log1p` a los features con |asimetría| > 5, escala con `StandardScaler`, sobremuestrea con SMOTE las clases minoritarias (solo en train) y entrena un `RandomForestClassifier(class_weight="balanced")`. Guarda el `Pipeline` completo en `<output-dir>/rf_model.joblib`, de modo que `SupervisedEngine` no necesita un scaler aparte. Si `MLFLOW_TRACKING_URI` (o `--mlflow-uri`) está definido, también registra el run en MLflow.
 
 | Opción | Default | Descripción |
 |---|---|---|
-| `--data-dir` | (ruta local del autor) | Directorio con `Data.csv` y `Label.csv` |
+| `--data-dir` | (obligatorio) | Directorio con `Data.csv` y `Label.csv` |
 | `--output-dir` | `models` | Dónde se escribe `rf_model.joblib` (sobrescribe el existente) |
 | `--estimators` | 200 | Árboles |
 | `--max-depth` | 20 | Profundidad máxima (`None` = sin límite) |

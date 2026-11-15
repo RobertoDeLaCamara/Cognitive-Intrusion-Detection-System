@@ -8,7 +8,7 @@ CNDS uses a Jenkins declarative pipeline defined in `Jenkinsfile`. It runs on th
 Checks out the commit with `checkout scm`.
 
 ### 2. Build Image
-Builds the Docker image `192.168.1.147:5000/cnds:<tag>`. On `master` (or the legacy single-branch job, where `BRANCH_NAME` is unset) the tag is the build number; on other branches and PRs it is `<branch>-<build>`.
+Builds two images from the one `Dockerfile`: `192.168.1.147:5000/cnds:<tag>` (stage `base`: API and detector) and `192.168.1.147:5000/cnds-dashboard:<tag>` (stage `dashboard`: the same plus the Streamlit dependencies). Lint and the security check run in the first; the tests run in the second, which contains everything. On `master` (or the legacy single-branch job, where `BRANCH_NAME` is unset) the tag is the build number; on other branches and PRs it is `<branch>-<build>`.
 
 ### 3. Code Quality (parallel)
 
@@ -25,7 +25,7 @@ Pushes static analysis and coverage to SonarQube (project key `cnds`, sources `s
 Runs only for pull requests (`changeRequest()`). The `Claude PR review (advisory)` stage runs `python3 /opt/hf/ci/pr_review.py` inside the `claude-runner` image from the registry, with the Jenkins credentials `anthropic-api-key` and `gitea-factory-bot`, and posts a `claude -p` review on the Gitea PR using a spend cap (`HF_REVIEW_BUDGET`, 0.50); `costs.jsonl` and `pr-review.result.json` are archived. It is wrapped in `catchError`, so it never fails the build (at worst the stage is marked unstable, for example when credentials are missing).
 
 ### 7. Push to Registry
-Tags `:latest` and pushes `cnds:<tag>` and `cnds:latest` to the private registry at `192.168.1.147:5000`, each push wrapped in `retry(4)` (up to 4 attempts) that sleeps 90 s after a failed attempt before the next one. The wait is deliberate: the registry on Magua can need longer than the Docker client's 30 s response-header timeout to commit a big new layer. The client gives up but the registry still finishes, so an immediate retry re-uploads the same layer and times out again; after the pause the next attempt finds the layer already present. This stage runs **only on `master`** (or the legacy single-branch job): PR and feature-branch builds never reach the registry.
+Tags `:latest` and pushes `cnds:<tag>`, `cnds:latest`, `cnds-dashboard:<tag>` and `cnds-dashboard:latest` to the private registry at `192.168.1.147:5000`, each push wrapped in `retry(4)` (up to 4 attempts) that sleeps 90 s after a failed attempt before the next one. The wait is deliberate: the registry on Magua can need longer than the Docker client's 30 s response-header timeout to commit a big new layer. The client gives up but the registry still finishes, so an immediate retry re-uploads the same layer and times out again; after the pause the next attempt finds the layer already present. This stage runs **only on `master`** (or the legacy single-branch job): PR and feature-branch builds never reach the registry.
 
 The `Build Image arm64` stage is present but commented out; it needs an aarch64 agent labelled `raspi-62`.
 

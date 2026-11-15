@@ -1,7 +1,7 @@
 # When Your IDS Lies to You: Designing for Calibration, Not Just Accuracy
 
 > **Historical draft (March 2026). Not a description of the current system.**
-> This text describes an early four-engine design: a Random Forest trained on CIC-IDS2017, an Isolation Forest, an LSTM Autoencoder and a rule engine, blended with weights 40/30/20/10. CNDS today runs six engines (an FT-Transformer or Random Forest fallback trained on UNSW-NB15, Isolation Forest, LSTM Autoencoder, rules, and a live-trained baseline) with default weights 30/20/10/25/15, and evaluates rules when a flow expires, not per packet. Across this set of drafts, several settings and files do not exist or are not read by the code (for example `ALERT_COOLDOWN_SECS`, `ALERT_DB_POOL_SIZE`, `scripts/train_supervised.py`).
+> This text describes an early four-engine design: a Random Forest trained on CIC-IDS2017, an Isolation Forest, an LSTM Autoencoder and a rule engine, blended with weights 40/30/20/10. CNDS today runs five engines (a supervised engine, FT-Transformer with a Random Forest fallback, trained on UNSW-NB15; Isolation Forest; LSTM Autoencoder; rules; and a live-trained baseline) with default weights 30/20/10/25/15, and evaluates rules when a flow expires, not per packet. Across this set of drafts, several settings and files do not exist or are not read by the code (for example `ALERT_COOLDOWN_SECS`, `ALERT_DB_POOL_SIZE`, `scripts/train_supervised.py`).
 >
 > The figures and monitoring thresholds in this article are illustrative; none of them is backed by a script or report in this repository.
 >

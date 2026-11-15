@@ -94,26 +94,30 @@ Tactic (column)       → the goal of the adversary at this stage
 
 ### Techniques relevant to CNDS detections
 
-| MITRE ID | Name | Tactic | Detected by CNDS via |
+| MITRE ID | Name | Tactic | Mapped in CNDS from |
 |---|---|---|---|
-| T1046 | Network Service Scanning | Discovery | Rules (syn_scan), RF (PortScan label) |
-| T1110 | Brute Force | Credential Access | RF (FTP-Patator, SSH-Patator labels) |
-| T1110.001 | Password Guessing | Credential Access | RF (Web Attack – Brute Force) |
-| T1190 | Exploit Public-Facing Application | Initial Access | RF (Infiltration, Web Attack – SQL Injection) |
-| T1059.007 | JavaScript (XSS) | Execution | Payload pattern match, RF label |
-| T1071 | Application Layer Protocol | C2 | RF (Bot label) |
-| T1071.001 | Web Protocols | C2 | Malicious JA3 rule |
-| T1203 | Exploitation for Client Execution | Execution | RF (Heartbleed label) |
-| T1498 | Network Denial of Service | Impact | Rules (icmp_flood), RF (DoS labels) |
-| T1499 | Endpoint Denial of Service | Impact | RF (DoS Slowloris, Slowhttptest) |
-| T1048 | Exfiltration Over Alternative Protocol | Exfiltration | Rules (asymmetric_upload), IF |
-| T1030 | Data Transfer Size Limits | Exfiltration | Rules (large_payload) |
+| T1046 | Network Service Scanning | Discovery | Rule `syn_scan`; label `PortScan` |
+| T1110 | Brute Force | Credential Access | Label `Web Attack – Brute Force` |
+| T1110.001 | Password Guessing | Credential Access | Labels `FTP-Patator`, `SSH-Patator` |
+| T1190 | Exploit Public-Facing Application | Initial Access | Rules `payload:sql_injection`, `payload:log4j`, `payload:shellshock`; labels `Web Attack – Sql Injection`, `Heartbleed` |
+| T1203 | Exploitation for Client Execution | Execution | Rule `payload:log4j` (second technique) |
+| T1059 | Command and Scripting Interpreter | Execution | Rule `payload:command_injection` |
+| T1059.007 | JavaScript | Execution | Rule `payload:xss`; label `Web Attack – XSS` |
+| T1083 | File and Directory Discovery | Discovery | Rule `payload:path_traversal` |
+| T1071 | Application Layer Protocol | Command and Control | Rule `malicious_ja3`; labels `Bot`, `Infiltration` |
+| T1573 | Encrypted Channel | Command and Control | Rule `malicious_ja3` (second technique) |
+| T1498 | Network Denial of Service | Impact | Labels `DoS Hulk`, `DoS GoldenEye`, `DDoS` |
+| T1498.001 | Direct Network Flood | Impact | Rule `icmp_flood`; labels `DoS slowloris`, `DoS Slowhttptest` |
+| T1041 | Exfiltration Over C2 Channel | Exfiltration | Rule `asymmetric_upload`; label `Infiltration` |
+| T1030 | Data Transfer Size Limits | Exfiltration | Rule `large_payload` |
+
+The label rows are CIC-IDS2017 names. The models shipped with CNDS emit UNSW-NB15 classes (`Exploits`, `Fuzzers`, `Reconnaissance`, ...), which have no entry in the map, so in practice the techniques on an alert come from the rules that fired.
 
 ### How CNDS uses ATT&CK
 
 Every alert fired by CNDS is automatically **enriched with MITRE technique IDs and tactic names** before being stored. The mapping lives in `src/enrichment/mitre.py` and works in two directions:
 
-1. **From supervised label** — "DoS Hulk" → T1498 (Network Denial of Service)
+1. **From supervised label** — "DoS Hulk" → T1498 (Network Denial of Service), for the labels that have an entry (see the note above)
 2. **From triggered rules** — "payload:sql_injection" → T1190 (Exploit Public-Facing Application)
 
 This enrichment has two practical effects:
@@ -324,11 +328,11 @@ The randomness in both sample selection and feature selection ensures that the t
 
 ### Feature importance
 
-Random Forests implicitly compute feature importance: features that produce the cleanest splits (highest reduction in impurity) across all trees get higher scores. This can be used to identify which of the 76 flow features are most discriminative for your specific network. Inspect with `model.named_steps['rf'].feature_importances_` after loading the model.
+Random Forests implicitly compute feature importance: features that produce the cleanest splits (highest reduction in impurity) across all trees get higher scores. This can be used to identify which of the 76 flow features are most discriminative for your specific network. Inspect with `model.named_steps['classifier'].feature_importances_` after loading the model.
 
 ### In CNDS
 
-The RF is trained on the CIC redistribution of UNSW-NB15 (~447k labeled flows, 10 classes — the dataset folder is named `CIC-IDS2017/` for historical reasons but the labels are UNSW-NB15). At inference, a 76-element (or 86-element with payload) flow feature vector is fed in, and the model returns the predicted attack class and its confidence. If the class is `Benign`, the engine contributes a score of 0.0 to the ensemble. Any attack class contributes its confidence score (or `1 - P(Benign)` if scoring through `anomaly_score()`). This RF code path only runs when no FT-Transformer checkpoint is available.
+The RF is trained on the CIC redistribution of UNSW-NB15 (~447k labeled flows, 10 classes — the dataset folder is named `CIC-IDS2017/` for historical reasons but the labels are UNSW-NB15). At inference, a 76-element (or 86-element with payload) flow feature vector is fed in, and the model returns the predicted attack class and its confidence. If the class is `Benign`, the engine contributes a score of 0.0 to the ensemble. Any attack class contributes its confidence score. (`anomaly_score()` computes `1 - P(Benign)` instead, but no runtime path calls it.) This RF code path only runs when no FT-Transformer checkpoint is available.
 
 ---
 
@@ -424,7 +428,7 @@ The LSTM's temporal view gives it unique sensitivity to:
 
 ### Threshold
 
-The `threshold` in `lstm_config.json` (1.1037 in production) is the 99th percentile of reconstruction error observed on the validation set during training. An error equal to the threshold maps to a score of 1.0; errors below it map to scores in (0, 1). This calibration step is critical — setting the threshold too low causes constant false positives; too high causes missed detections.
+The `reconstruction_threshold` in `lstm_config.json` (2.973 in the shipped file) scales the reconstruction error: `score = min(error / threshold, 1.0)`, so an error at or above the threshold maps to 1.0 and errors below it map to scores in (0, 1). The live baseline pipeline derives its own threshold as the 99th percentile of validation reconstruction error (`WindowTrainer`, `threshold_percentile=99.0`). This calibration step is critical — setting the threshold too low causes constant false positives; too high causes missed detections.
 
 ---
 
@@ -436,16 +440,17 @@ An ensemble combines multiple models to produce a better prediction than any sin
 
 For this to work, the models must be **diverse** — they should make errors on different samples. If all models fail on the same inputs, averaging does nothing.
 
-### Why CNDS uses four engines
+### Why CNDS uses several engines
 
-The four CNDS engines are diverse by design — they use **completely different feature representations and algorithms**:
+The CNDS engines are diverse by design — they use **completely different feature representations and algorithms**:
 
 | Engine | Features | Algorithm type | Error profile |
 |---|---|---|---|
 | Supervised (FT-Transformer or RF) | 76 flow features (per flow) | Supervised classification | Misses novel attacks not in training data |
 | Isolation Forest | 18 host features (per IP) | Unsupervised anomaly | False positives on unusual-but-benign traffic |
 | LSTM Autoencoder | Temporal sequences (per IP) | Unsupervised temporal | Cold-start gap; misses single-packet attacks |
-| Rules Engine | All features (threshold) | Deterministic heuristics | Misses attacks below threshold; rigid |
+| Rules Engine | Flow record, payload matches, JA3 | Deterministic heuristics | Misses attacks below threshold; rigid |
+| Baseline | 18 host features (per IP) | IsolationForest + LSTM trained live on this network | Inactive until a first window is trained; learns whatever traffic it sees as normal |
 
 A slow exfiltration attack will score low on the Rules Engine (below rate thresholds), moderate on the RF (no labeled pattern), but high on the IF (asymmetric bytes) and LSTM (persistent directional drift). Their disagreement is informative: the ensemble score will be moderate, which might still cross the alert threshold, and the per-engine breakdown tells the analyst which signals are driving the detection.
 
@@ -457,22 +462,25 @@ CNDS fuses engine scores with a weighted average:
 ensemble_score = Σ(weight_i × score_i) / Σ(weight_i)
 ```
 
-Weights reflect the relative trustworthiness of each engine on the specific network:
-- Supervised RF gets the highest weight (40%) because it is the most precise on known attacks.
-- IF gets 30% — reliable for volumetric anomalies.
-- LSTM gets 20% — valuable for temporal patterns but has cold-start issues.
-- Rules get 10% — high precision but very low recall.
+Weights reflect the relative trustworthiness of each engine on the specific network. The defaults in `src/config.py`:
+- Supervised: 30%, the most precise on known attacks.
+- Isolation Forest: 20%.
+- LSTM: 10%, valuable for temporal patterns but with cold-start issues.
+- Rules: 25%.
+- Baseline: 15%.
+
+(`.env.example`, which docker-compose loads, ships 40/10/0/20/30 instead.) A hit on a rule listed in `CRITICAL_RULES` bypasses the blend and forces an alert.
 
 When an engine is unavailable, its weight is redistributed proportionally to the remaining engines.
 
 ### Dynamic weight redistribution
 
 ```
-Example: LSTM unavailable
-Before: RF=0.40, IF=0.30, LSTM=0.20, Rules=0.10  (sum=1.0)
-After:  RF = 0.40/(0.40+0.30+0.10) = 0.50
-        IF = 0.30/0.80 = 0.375
-        Rules = 0.10/0.80 = 0.125              (sum=1.0)
+Example: LSTM and baseline unavailable (defaults)
+Before: supervised=0.30, IF=0.20, LSTM=0.10, rules=0.25, baseline=0.15  (sum=1.0)
+After:  supervised = 0.30/0.75 = 0.40
+        IF         = 0.20/0.75 ≈ 0.267
+        rules      = 0.25/0.75 ≈ 0.333                                  (sum=1.0)
 ```
 
 This guarantees the ensemble always produces a score in [0, 1] regardless of which engines are running.
@@ -571,9 +579,9 @@ Major SIEM platforms:
 
 CNDS integrates with SIEM platforms in two ways:
 
-**Push (real-time):** When `WEBHOOK_URLS` is configured, every alert is POSTed as JSON to the configured endpoints immediately after enrichment. Splunk HEC and Elastic support JSON ingestion natively.
+**Push (real-time):** When `WEBHOOK_URLS` is configured, alerts created through `POST /api/predict` at or above `NOTIFY_MIN_SEVERITY` (default `high`) are POSTed as JSON to the configured endpoints. Alerts written by the capture pipeline are not pushed; collect those with the pull route or the syslog forwarder.
 
-**Pull (batch):** The `GET /api/alerts/export` endpoint streams alerts as JSON or CSV. SIEM tools can poll this endpoint periodically or a scheduled job can push the export.
+**Pull (batch):** The `GET /api/alerts/export` endpoint returns alerts as JSON or CSV (`format=json|csv`, up to 10,000 per call; admin or analyst). SIEM tools can poll this endpoint periodically, and `siem/syslog/forwarder.py` polls the API and forwards alerts as CEF syslog.
 
 Pre-built configuration templates in the `siem/` directory handle field mappings and index definitions for Splunk, Elastic, and CEF Syslog.
 
@@ -644,9 +652,9 @@ RBAC restricts system access based on the **role** assigned to each user, rather
 
 | Role | Who | What they can do |
 |---|---|---|
-| `viewer` | Read-only consumers (dashboards, reports) | Read alerts, incidents, stats |
-| `analyst` | SOC tier-1/tier-2 | All viewer + acknowledge alerts, create incidents, manage suppression rules |
-| `admin` | System administrators | All analyst + create/delete users, delete suppression rules |
+| `viewer` | Read-only consumers (dashboards, reports) | Read alerts, incidents, stats, suppression rules |
+| `analyst` | SOC tier-1/tier-2 | All viewer + acknowledge alerts, `POST /api/predict`, export, create incidents, create suppression rules |
+| `admin` | System administrators | All analyst + create/list/delete users, delete suppression rules |
 
 Role is embedded in the JWT payload. FastAPI dependency functions check the role on each protected endpoint — an `analyst` trying to delete a user receives HTTP 403 Forbidden.
 
@@ -661,10 +669,10 @@ Prometheus is an open-source monitoring and alerting toolkit. It works on a **pu
 Metrics are exposed in a simple text format:
 
 ```
-# HELP cnds_alerts_total Total alerts fired by severity
+# HELP cnds_alerts_total Total alerts fired
 # TYPE cnds_alerts_total counter
-cnds_alerts_total{severity="high",attack_type="PortScan"} 42
-cnds_alerts_total{severity="critical",attack_type="DoS Hulk"} 7
+cnds_alerts_total{severity="high",engine="supervised"} 42
+cnds_alerts_total{severity="critical",engine="rules"} 7
 ```
 
 Three metric types:
@@ -678,7 +686,7 @@ CNDS exposes a Prometheus endpoint at `/metrics` (when `PROMETHEUS_ENABLED=true`
 
 OpenTelemetry is an observability framework that standardizes the collection of **traces**, **metrics**, and **logs** across distributed systems. A trace follows a single request through all the services it touches, measuring latency at each step.
 
-In CNDS, OTel traces can track the path of a single packet from capture → feature extraction → engine inference → ensemble → storage, with timing at each stage. This enables identifying which engine is slow or which packet patterns cause excessive processing time.
+In CNDS, OTel instruments the FastAPI application (`FastAPIInstrumentor`), so traces cover API requests such as `POST /api/predict`. The packet-capture pipeline is not traced.
 
 OTel is configured via `OTEL_EXPORTER_OTLP_ENDPOINT` — point it at a collector (Jaeger, Tempo, etc.) to start receiving traces.
 
@@ -706,9 +714,9 @@ CNDS counts cumulative TCP flags across all packets of a flow and includes them 
 **SYN scan pattern:**
 - `syn_flag_cnt` is high (many connection attempts)
 - `ack_flag_cnt` is near zero (connections never complete — server is not responding or RSTs immediately)
-- `tot_fwd_pkts` is very low (only SYN sent, never continued)
+- `fwd_act_data_pkts` is very low (the forward packets carry no payload: only SYNs were sent)
 
-This pattern is exactly what `PORT_SCAN_THRESHOLD` targets in the Rules Engine: `syn_flag_cnt > 20 AND tot_fwd_pkts < 5`.
+This pattern is exactly what `PORT_SCAN_THRESHOLD` targets in the Rules Engine: `syn_flag_cnt > 20 AND fwd_act_data_pkts < 5`.
 
 **Normal HTTP connection:**
 - SYN (client initiates) → SYN-ACK (server responds) → ACK (client completes)
@@ -771,11 +779,18 @@ A migration is a versioned, reversible description of a schema change. Each migr
 
 Alembic is the standard migration tool for SQLAlchemy (the Python ORM used by CNDS). Migration files live in `alembic/versions/`. Each file is named with its revision ID and a human-readable description.
 
-**CNDS's two migrations:**
+**CNDS's migrations** (`alembic history` shows the chain):
 
 ```
-72da55e575e8_initial_schema.py      ← creates alerts, incidents, suppression_rules, users
-a1b2c3d4e5f6_add_mitre_techniques.py ← adds mitre_techniques JSON column to alerts
+72da55e575e8_initial_schema.py          ← alerts, incidents, suppression_rules, users
+a1b2c3d4e5f6_add_mitre_techniques.py    ← mitre_techniques JSON column on alerts
+f7c9a2b4e1d3_add_mitigation_actions.py  ← Guardian audit table
+c3d8e1f4a7b2_add_triage_annotations.py  ← triage agent annotations
+d4e5f6a7b8c9_add_alert_source.py        ← alerts.source
+e5f6a7b8c9d0_add_alert_label.py         ← alerts.label (analyst verdict)
+f6a7b8c9d0e1_add_host_profiles.py       ← asset inventory
+a8b9c0d1e2f3_add_suppression_dst_port.py
+b9c0d1e2f3a4_add_suppression_src_port.py
 ```
 
 **Common commands:**
@@ -788,7 +803,7 @@ alembic history            # show migration chain
 alembic revision --autogenerate -m "add_new_column"  # generate new migration from model diff
 ```
 
-Alembic runs automatically at CNDS startup (in `src/api/database.py`), so fresh deployments and upgrades self-migrate without manual intervention.
+Alembic runs automatically at API startup (in `src/api/database.py`), so fresh deployments and upgrades self-migrate without manual intervention. If the upgrade fails on a database that already carries an Alembic revision, the API refuses to start (see the wiki [Deployment](../wiki/Deployment.md) page).
 
 ---
 
@@ -810,7 +825,7 @@ CNDS uses three ML models — the supervised classifier (FT-Transformer or Rando
 MLflow solves this:
 - Every training run logs its hyperparameters, training metrics (accuracy, F1, threshold), and the model artifact.
 - The Registry provides a promotion workflow: train → register → test in Staging → promote to Production.
-- CNDS's engine loaders check MLflow first (`load_latest("supervised")`) and fall back to local files if MLflow is not configured.
+- CNDS's engine loaders check MLflow first (`load_latest("supervised")`, stage `Production`; the FT-Transformer uses `MLFLOW_FT_REGISTRY_NAME` at stage `MLFLOW_FT_STAGE`, default `None`) and fall back to local files if MLflow is not configured or has no such model.
 
 ### Model lifecycle in CNDS
 

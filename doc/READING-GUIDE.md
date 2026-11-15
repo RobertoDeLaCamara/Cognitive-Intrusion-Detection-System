@@ -13,7 +13,7 @@ The CNDS documentation is designed to be read in layers. Not every reader needs 
 
 **→ Read: [concepts.md](concepts.md)**
 
-Twenty self-contained explanations of every concept the rest of the documentation assumes you know: MITRE ATT&CK (what it is, how it is structured, which techniques CNDS maps), network flows and the 5-tuple, CICFlowMeter and the CIC-IDS2017 dataset, JA3 TLS fingerprinting, Random Forest, Isolation Forest, LSTM Autoencoders, ensemble methods, confidence calibration, Shannon entropy, SIEM platforms, CEF syslog, JWT and RBAC, Prometheus, TCP flags, Scapy, Alembic migrations, MLflow, and a glossary of every attack type that appears in CNDS alerts.
+Twenty self-contained explanations of every concept the rest of the documentation assumes you know: MITRE ATT&CK (what it is, how it is structured, which techniques CNDS maps), network flows and the 5-tuple, CICFlowMeter and the UNSW-NB15 training dataset, JA3 TLS fingerprinting, Random Forest, Isolation Forest, LSTM Autoencoders, ensemble methods, confidence calibration, Shannon entropy, SIEM platforms, CEF syslog, JWT and RBAC, Prometheus, TCP flags, Scapy, Alembic migrations, MLflow, and a glossary of every attack type that appears in CNDS alerts.
 
 You do not need to read this document front to back. It is a reference — come back to it whenever a term in another document is unfamiliar.
 
@@ -26,7 +26,7 @@ You do not need to read this document front to back. It is a reference — come 
 
 **→ Read: [product.md](product.md)**
 
-This document sets the context. CNDS was born from a gap: free intrusion detection tools (Snort, Suricata) are signature-based and blind to unknown attacks; commercial ML solutions (Darktrace, Vectra) are black boxes with inaccessible price tags. CNDS bets on combining four detection engines — two supervised, two unsupervised — with full transparency into how and why each alert fires.
+This document sets the context. CNDS was born from a gap: free intrusion detection tools (Snort, Suricata) are signature-based and blind to unknown attacks; commercial ML solutions (Darktrace, Vectra) are black boxes with inaccessible price tags. CNDS bets on combining several detection engines (one supervised classifier, unsupervised anomaly engines, a rules engine and a baseline trained on the local network) with full transparency into how and why each alert fires.
 
 After reading this document you will understand the *purpose* of the system and who it protects.
 
@@ -39,7 +39,7 @@ After reading this document you will understand the *purpose* of the system and 
 
 **→ Read: [architecture.md](architecture.md)**
 
-This document tells the story of the packet. It enters raw from Scapy, passes through an async queue system, gets decomposed into three feature representations (flow, host, payload), runs through four detection engines in parallel, and emerges as an `EnsembleResult` object with a weighted score, an attack label, and the corresponding MITRE techniques — all before being persisted and broadcast.
+This document tells the story of the packet. It enters raw from Scapy, passes through an async queue system, gets decomposed into three feature representations (flow, host, payload), is scored by up to five detection engines when its flow expires, and emerges as an `EnsembleResult` object with a weighted score, an attack label, and the corresponding MITRE techniques — all before being persisted and broadcast.
 
 The architecture includes a full ASCII diagram of the pipeline, the database schema table, the thread concurrency model, and the degradation modes when a model is unavailable.
 
@@ -54,7 +54,7 @@ After this document you will have a complete mental map of the system.
 
 **→ Read first: [engines.md](engines.md)**
 
-A half-hour read that covers all four engines — Random Forest, Isolation Forest, LSTM Autoencoder, Rules Engine — with their characteristics, strengths, limitations, and how their scores are fused in the ensemble. Includes temperature calibration logic and severity classification. Sufficient to understand what the system detects and why.
+A half-hour read that covers the engines — supervised (FT-Transformer or Random Forest), Isolation Forest, LSTM Autoencoder, Rules Engine, plus logwatch — with their characteristics, strengths, limitations, and how their scores are fused in the ensemble. Includes temperature calibration logic and severity classification. Sufficient to understand what the system detects and why.
 
 > *How are those models trained? How are they retrained? What data do they need?*
 
@@ -73,7 +73,7 @@ This document is the reference for when you need to intervene in the models — 
 
 **→ Read: [use-cases.md](use-cases.md)**
 
-Fifteen scenarios narrated end to end: the analyst receives the alert, sees each engine's score, understands why it fired, and acts. From triaging a `high`-severity alert with MITRE context to suppressing an authorized vulnerability scanner, through integration with Zeek/Arkime, incident management, and adaptive weight tuning from team feedback.
+Sixteen scenarios narrated end to end: the analyst receives the alert, sees each engine's score, understands why it fired, and acts. From triaging a `high`-severity alert with MITRE context to suppressing an authorized vulnerability scanner, through integration with Zeek/Arkime, incident management, and adaptive weight tuning from team feedback.
 
 After this document you will know what to do with the system on day one of operations.
 
@@ -88,17 +88,17 @@ The three final documents are operational references. Read them in any order dep
 
 **→ Read: [digital-twin-sandbox.md](digital-twin-sandbox.md)**
 
-The digital twin is a simulated network (router, NAS, Git Server, Docker registry, workstation) with Scapy-generated synthetic traffic. No root, no database, no models needed. The demo runs five attack scenarios and produces a detection report. It also documents how to extend the twin with new devices and scenarios, and how to use the PCAP replay script to evaluate models against real captures.
+The digital twin is a simulated network (router, NAS, Git Server, Docker registry, workstation) with Scapy-generated synthetic traffic. No root and no database needed (the payload-signature scenarios are detected without any ML model). The demo runs a baseline and eight attack scenarios and prints a detection summary. It also documents how to extend the twin with new devices and scenarios, and how to use the PCAP replay script to evaluate models against real captures.
 
 > *I want to integrate CNDS into my stack or build something on top of it.*
 
-**→ Read: [api-reference.md](api-reference.md)**
+**→ Read: the wiki [API Reference](../wiki/API-Reference.md)** (`api-reference.md` here is only a pointer)
 
 Complete reference for every REST and WebSocket endpoint: alerts, incidents, manual prediction, statistics, suppression rules, adaptive weights, JWT/RBAC authentication, Prometheus metrics. Includes JSON request/response examples for every operation.
 
 > *I want to install it in production.*
 
-**→ Read: [deployment.md](deployment.md)**
+**→ Read: the wiki [Deployment](../wiki/Deployment.md) page** (`deployment.md` here is only a pointer)
 
 From prerequisites to production hardening: local and Docker Compose installation, every configuration variable with its effect, PostgreSQL and Alembic setup, GeoIP and SIEM configuration, systemd service, monitoring with key metrics and what to do when they spike.
 
@@ -106,7 +106,7 @@ From prerequisites to production hardening: local and Docker Compose installatio
 
 ## Reading paths by profile
 
-Three suggested paths depending on your starting point:
+Suggested paths depending on your starting point:
 
 **Executive / PM (30 minutes)**
 ```
@@ -120,7 +120,7 @@ concepts.md (skim) → product.md → architecture.md → engines.md → use-cas
 
 **ML engineer / data scientist (3–4 hours)**
 ```
-concepts.md (sections 3, 4, 6, 7, 8, 9, 10, 11) → architecture.md (Feature Extraction section) → engines.md → ml-models.md (full) → digital-twin-sandbox.md → deployment.md (Model Files section)
+concepts.md (sections 3, 4, 6, 7, 8, 9, 10, 11) → architecture.md (Feature Extraction section) → engines.md → ml-models.md (full) → digital-twin-sandbox.md → wiki Deployment page
 ```
 
 **Security analyst with no ML background (2 hours)**

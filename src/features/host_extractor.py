@@ -15,7 +15,11 @@ from typing import Dict, List, Optional
 
 from scapy.all import IP, TCP, UDP, ICMP, Raw
 
-from ..config import HOST_WINDOW_SIZE, MAX_TRACKED_IPS, COMMON_PORTS
+from ..config import (
+    HOST_WINDOW_SIZE, MAX_TRACKED_IPS, COMMON_PORTS,
+    HOST_SCAN_PORTS, HOST_SCAN_WINDOW_SECS, HOST_SCAN_ALLOWLIST,
+)
+from .scan_tracker import ScanTracker
 from .utils import byte_entropy
 from ..failure_streak import FailureStreak
 from ..unsupervised.artifact_schema import HOST_FEATURE_SCHEMA  # noqa: F401  (re-exported)
@@ -93,6 +97,7 @@ class HostExtractor:
     def __init__(self):
         self._data: Dict[str, HostHistory] = defaultdict(HostHistory)
         self._lock = threading.RLock()
+        self.scan_tracker = ScanTracker(HOST_SCAN_PORTS, HOST_SCAN_WINDOW_SECS, HOST_SCAN_ALLOWLIST)
         # Without a host vector the IsolationForest, LSTM and baseline engines do not score.
         self._compute_streak = FailureStreak(logger, "Host feature extraction")
 
@@ -105,6 +110,9 @@ class HostExtractor:
             if len(self._data) >= MAX_TRACKED_IPS and src not in self._data:
                 self._evict_least_active()
             self._data[src].add_packet(packet, ts)
+        # Start of a TCP connection (SYN, no ACK): input of the host-level port-scan rule.
+        if TCP in packet and (int(packet[TCP].flags) & 0x12) == 0x02:
+            self.scan_tracker.observe(src, packet[IP].dst, int(packet[TCP].dport), ts)
         return src
 
     def extract_features(self, ip: str, now: Optional[float] = None) -> Optional[np.ndarray]:

@@ -62,19 +62,23 @@ Result on a fresh checkout (rules + RF-lite, threshold 0.55; 389 benign flows):
 | sql_injection | 1 | 1 | `payload:sql_injection` |
 | xss | 1 | 1 | `payload:xss` |
 | syn_flood | 1 | 1 | `syn_scan` |
-| port_scan | 200 | 0 | none |
+| port_scan | 200 | 200 | `port_scan` |
 | ssh_bruteforce | 40 | 0 | none |
 | dns_burst | 300 | 0 | none |
 
 False-positive rate on the benign background: 0 of 389. Reading the table:
 
-- The signature-based classes (payload patterns, `syn_scan`) are caught because those rules are in
-  `CRITICAL_RULES`.
-- **Behavioural attacks are not caught by the rules alone.** A port scan is 200 two-packet flows,
-  each unremarkable by itself; SSH brute force and a DNS burst have no rule. Catching them
+- The rule-based classes (payload patterns, `syn_scan`, `port_scan`) are caught because those rules are in
+  `CRITICAL_RULES`. `port_scan` (issue #87) is the host-level rule: it counts distinct destination ports per
+  source and target across flows. It also tags a flow that starts within `HOST_SCAN_WINDOW_SECS` after a scan
+  from the same source to the same target (the `syn_flood` row of the report lists it too). Before it existed,
+  the same replay detected 0 of 200 scan flows.
+- **Behavioural attacks are not caught by the rules alone.** SSH brute force and a DNS burst have no rule
+  (issues #88 and #89); a port scan used to be in this group, since it is 200 two-packet flows, each
+  unremarkable by itself. Catching them
   depends on the host-level engines (Isolation Forest, LSTM, baseline), which this replay
   does not run on a fresh checkout. Run it again with `models/` populated before drawing conclusions.
-- **Full production engines (measured on the Raspberry Pi deployment).** Replaying the same suite in the
+- **Full production engines (measured on the Raspberry Pi deployment, before the `port_scan` rule).** Replaying the same suite in the
   detector image on the Pi (models mounted read-only, the deployment's own `.env`, threshold 0.65, baseline
   model v28 loaded from MLflow) gives: sql_injection, xss and syn_flood detected; **port_scan (200 flows),
   ssh_bruteforce (40) and dns_burst (300) not detected**; 0 of 389 benign flows flagged. The per-engine

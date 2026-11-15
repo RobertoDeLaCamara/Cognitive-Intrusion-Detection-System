@@ -78,6 +78,10 @@ class FlowRecord:
     start_time: float = 0.0
     last_time: float = 0.0
 
+    # Rules decided above the single flow (e.g. "port_scan" from ScanTracker); set by the
+    # dispatcher / replay before the flow is scored, read by RulesEngine.
+    host_hits: List[str] = field(default_factory=list)
+
     # Directional packet lists
     fwd_lengths: List[int] = field(default_factory=list)
     bwd_lengths: List[int] = field(default_factory=list)

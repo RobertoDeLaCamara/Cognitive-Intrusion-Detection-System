@@ -77,9 +77,9 @@ How to read the detection scenarios (2 to 7):
 **Actor:** Automated detection pipeline
 **Goal:** Detect nmap-style TCP SYN scan.
 
-**Current state: partial.** `nmap -sS` sends one SYN per destination port, so every probe is its own flow with a single SYN. The `syn_scan` rule counts SYNs inside one flow and does not fire, and each flow on its own is unremarkable to the supervised engine. This gap is tracked in issue #87 (no host-level scan rule).
+`nmap -sS` sends one SYN per destination port, so every probe is its own flow with a single SYN. The `syn_scan` rule counts SYNs inside one flow and does not fire, and each flow on its own is unremarkable to the supervised engine. The host-level `port_scan` rule (issue #87) covers this case: when one source starts TCP connections to `HOST_SCAN_PORTS` (15) distinct ports of one target within `HOST_SCAN_WINDOW_SECS` (60 s), every probe flow of the scan carries `port_scan`, which is in the default `CRITICAL_RULES`, so each flow that expires produces a critical alert candidate (deduplicated per source and attack type). As with every rule, the flows are scored after `FLOW_TIMEOUT` (120 s) of idle time, not while the scan runs. UDP scans and scans slower than the threshold per window are not detected; add monitoring sources to `HOST_SCAN_ALLOWLIST`.
 
-What can still raise an alert:
+Other signals that can add to an alert:
 
 1. **Isolation Forest / baseline engine**: the scanning host's vector shows very high `unique_ports` and `uncommon_port_ratio`. Whether that crosses `ENSEMBLE_THRESHOLD` depends on the weights; with the defaults, a host-engine score alone usually does not.
 2. **Supervised engine**: may label individual probe flows `Reconnaissance`.

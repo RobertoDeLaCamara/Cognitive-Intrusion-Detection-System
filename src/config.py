@@ -110,7 +110,7 @@ CRITICAL_RULES = set(
         "CRITICAL_RULES",
         "payload:sql_injection,payload:command_injection,payload:log4j,"
         "payload:shellshock,payload:xss,payload:path_traversal,malicious_ja3,"
-        "syn_scan",
+        "syn_scan,port_scan",
     ).split(",") if x.strip()
 )
 
@@ -128,6 +128,13 @@ ICMP_FLOOD_THRESHOLD  = int(os.getenv("ICMP_FLOOD_THRESHOLD", "50"))
 PORT_SCAN_THRESHOLD   = int(os.getenv("PORT_SCAN_THRESHOLD", "20"))   # unique ports
 LARGE_PAYLOAD_BYTES   = int(os.getenv("LARGE_PAYLOAD_BYTES", "10000"))
 ALERT_COOLDOWN_SECS   = int(os.getenv("ALERT_COOLDOWN_SECS", "60"))
+# Host-level port scan (src/features/scan_tracker.py): one source starting TCP connections to
+# at least HOST_SCAN_PORTS distinct ports of one target within HOST_SCAN_WINDOW_SECS.
+# 0 disables the rule. HOST_SCAN_ALLOWLIST: comma-separated source IPs that are never flagged
+# (monitoring probes, vulnerability scanners you run yourself).
+HOST_SCAN_PORTS       = int(os.getenv("HOST_SCAN_PORTS", "15"))
+HOST_SCAN_WINDOW_SECS = float(os.getenv("HOST_SCAN_WINDOW_SECS", "60"))
+HOST_SCAN_ALLOWLIST   = [x.strip() for x in os.getenv("HOST_SCAN_ALLOWLIST", "").split(",") if x.strip()]
 
 # ── Model paths ────────────────────────────────────────────────────────────────
 MODELS_DIR          = os.getenv("MODELS_DIR", "models")

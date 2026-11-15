@@ -80,11 +80,12 @@ to Random Forest.
 - **Rules include:**
   - `icmp_flood` — more than `ICMP_FLOOD_THRESHOLD` forward ICMP packets in the flow
   - `syn_scan` — SYN flag count above `PORT_SCAN_THRESHOLD` with fewer than 5 forward packets that carry data
+  - `port_scan` — one source started TCP connections (SYN without ACK) to at least `HOST_SCAN_PORTS` distinct ports of one target within `HOST_SCAN_WINDOW_SECS`. It is decided across flows by `src/features/scan_tracker.py` (a scan is many one-packet flows, none of them unusual alone) and attached to every flow that began inside the scan interval, so each probe flow lists it. Only TCP connection starts count; sources in `HOST_SCAN_ALLOWLIST` are skipped
   - `large_payload` — a forward packet larger than `LARGE_PAYLOAD_BYTES`
   - `asymmetric_upload` — more than 10 forward packets and a forward/backward byte ratio above 50
   - `payload:sql_injection`, `payload:xss`, `payload:command_injection`, `payload:path_traversal`, `payload:log4j`, `payload:shellshock` — regex signatures matched on the first 4 KB of each packet
   - `malicious_ja3` — JA3 hash matches the known-malicious list
-- The rules marked in `CRITICAL_RULES` (by default the six `payload:*` rules, `malicious_ja3` and `syn_scan`) force an alert regardless of the weighted blend. There is no rate-spike rule.
+- The rules marked in `CRITICAL_RULES` (by default the six `payload:*` rules, `malicious_ja3`, `syn_scan` and `port_scan`) force an alert regardless of the weighted blend. There is no rate-spike rule.
 
 Payload regex rules are skipped on payloads that look encrypted or compressed (#68): a TLS record header at the start of the payload, or a sample of at least 256 bytes with Shannon entropy of 7.0 bits/byte or more. This stops chance regex matches inside bulk TLS or backup transfers from raising `CRITICAL_RULES` alerts; plaintext attacks are unaffected.
 

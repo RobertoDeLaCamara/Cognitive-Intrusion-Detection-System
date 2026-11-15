@@ -13,8 +13,11 @@ Full pipeline from ML-IDS notebooks:
 The trained sklearn Pipeline (steps 1-3 + RF) is saved to models/rf_model.joblib
 so SupervisedEngine can load it directly — no external scaler needed.
 
+SMOTE needs the `imbalanced-learn` package, which is not a runtime dependency
+(`pip install imbalanced-learn`, or pass --no-smote).
+
 Usage:
-    python scripts/train_rf.py [--data-dir PATH] [--output-dir PATH]
+    python scripts/train_rf.py --data-dir PATH [--output-dir PATH]
                                [--estimators N] [--max-depth D]
                                [--test-size F] [--jobs N] [--no-smote]
                                [--mlflow-uri URI]
@@ -103,7 +106,11 @@ def load_data(data_dir: Path):
 
 def apply_smote(X_train, y_train):
     """Oversample minority classes to SMOTE_MIN_SAMPLES using SMOTE."""
-    from imblearn.over_sampling import SMOTE
+    try:
+        from imblearn.over_sampling import SMOTE
+    except ImportError:
+        sys.exit("SMOTE needs the imbalanced-learn package, which is not in requirements.txt. "
+                 "Install it (pip install imbalanced-learn) or pass --no-smote.")
 
     unique, counts = np.unique(y_train, return_counts=True)
     class_counts = dict(zip(unique, counts))
@@ -288,9 +295,9 @@ def save(pipeline, metrics: dict, output_dir: Path, filename: str = "rf_model.jo
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-dir",
-                        default="/home/roberto/repos/ML-IDS/data/CIC-IDS2017",
-                        type=Path)
+    parser.add_argument("--data-dir", required=True, type=Path,
+                        help="Directory with Data.csv (76 CICFlowMeter features) "
+                             "and Label.csv (integer class index)")
     parser.add_argument("--output-dir", default="models", type=Path)
     parser.add_argument("--estimators", default=200, type=int)
     parser.add_argument("--max-depth", default=20,

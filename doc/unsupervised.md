@@ -6,7 +6,7 @@ Developer reference for the `src/unsupervised/` subsystem.
 
 ## Overview
 
-The unsupervised baseline training subsystem collects live network feature vectors from the CNDS detection pipeline and autonomously retrains anomaly baseline models — no labeled traffic, no human trigger. It runs as a passive observer alongside the four detection engines: every flow that produces a host feature vector is silently handed to `BaselineCollector.observe()`.
+The unsupervised baseline training subsystem collects live network feature vectors from the CNDS detection pipeline and autonomously retrains anomaly baseline models — no labeled traffic, no human trigger. It runs as a passive observer alongside the detection engines: every flow that produces a host feature vector is silently handed to `BaselineCollector.observe()`.
 
 When the **composite trigger** decides that enough diverse traffic has been seen, `BaselineCollector` snapshots the buffer and dispatches a daemon thread that fits a new **IsolationForest** and **LSTM Autoencoder** on the window. Artifacts are logged to MLflow under a canonical layout and registered in the model registry. The live pipeline keeps running uninterrupted throughout.
 
@@ -52,7 +52,7 @@ main.py
               │         └─ mlflow.start_run()
               │               ├─ log_metrics / log_params
               │               ├─ log_artifacts  (artifact_schema.py constants)
-              │               └─ register_model("cnds-unsupervised-baseline")
+              │               └─ _register_baseline()  → "cnds-unsupervised-baseline"
               │
               └─ [_training_in_flight = False; log dropped count if > 0]
 ```
@@ -199,14 +199,15 @@ Training pipeline, step by step:
 2. Stacks `host_vec` arrays into a single float32 matrix `X`.
 3. **Drops any rows containing NaN or Inf** (logs a WARNING with the count). If fewer than 1,000 finite rows remain, skips training. This prevents `StandardScaler.fit_transform()` from silently producing a poisoned scaler with `NaN` mean/scale.
 4. Splits `X` **chronologically**: rows are ordered by timestamp, the oldest 80 % train and the newest 20 % validate (`_temporal_split()`). A random split would put neighbouring rows of the same host on both sides and make the validation error optimistic.
-4. Fits `StandardScaler` on the training split; applies to both splits.
-5. Fits `IsolationForest` (200 estimators, `n_jobs=-1`) on the scaled training split.
-6. Constructs sliding-window sequences of length `seq_len` **inside each source IP** (`_to_host_sequences()`), the same shape the engine scores at inference (one `seq_len` buffer per IP). A host with fewer than `seq_len` rows in a split contributes nothing. Skips training if either split produces zero sequences.
-7. Trains `LSTMAutoencoder` for 20 epochs (batch size 256, Adam lr=1e-3, MSE loss) on the training sequences. Uses CUDA if available, otherwise CPU.
-8. Computes per-sequence MSE on the validation sequences; sets `threshold` = 99th percentile.
-9. Writes `n_sequences`, `n_train`, `n_val` back to the `ProvenanceMetadata` object.
-10. If MLflow is not enabled, logs a warning and returns without persisting.
-11. Otherwise, opens an MLflow run named `"baseline-window"`, logs metrics and params, writes all five artifact files to a temp directory, calls `mlflow.log_artifacts()` under `ARTIFACT_ROOT`. The run is then **closed** (status → FINISHED) before `mlflow.register_model()` is called. This ensures the artifact set is immutable before the registry entry is created, preventing `BaselineEngine` from loading an incomplete artifact set.
+5. Fits `StandardScaler` on the training split; applies to both splits.
+6. Fits `IsolationForest` (200 estimators, `n_jobs=-1`) on the scaled training split.
+7. Constructs sliding-window sequences of length `seq_len` **inside each source IP** (`_to_host_sequences()`), the same shape the engine scores at inference (one `seq_len` buffer per IP). A host with fewer than `seq_len` rows in a split contributes nothing. Skips training if either split produces zero sequences.
+8. Trains `LSTMAutoencoder` for 20 epochs (batch size 256, Adam lr=1e-3, MSE loss) on the training sequences. Uses CUDA if available, otherwise CPU.
+9. Computes per-sequence MSE on the validation sequences; sets `threshold` = 99th percentile.
+10. Writes `n_sequences`, `n_train`, `n_val` back to the `ProvenanceMetadata` object.
+11. Stability gate: if the threshold is rejected (see `BASELINE_THRESHOLD_*` below), returns here; the window is neither recorded in the history nor logged to MLflow.
+12. If MLflow is not enabled, logs a warning and returns without persisting.
+13. Otherwise, opens an MLflow run named `"baseline-window"`, logs metrics and params, writes the six artifact files to a temp directory, calls `mlflow.log_artifacts()` under `ARTIFACT_ROOT`. The run is then **closed** (status → FINISHED) before the version is registered (`_register_baseline()`, which uses `MlflowClient.create_model_version()` instead of `mlflow.register_model()`). This ensures the artifact set is immutable before the registry entry is created, preventing `BaselineEngine` from loading an incomplete artifact set.
 
 **LSTM training (fixed hyperparameters):**
 
@@ -262,7 +263,7 @@ A dataclass that describes the statistical properties of a training window. Cons
 | `BASELINE_THRESHOLD_REF_WINDOWS` | `5` | Stability gate: how many accepted thresholds the median is taken over (in-process, reset on restart) |
 | `BASELINE_MAX_CONSECUTIVE_REJECTS` | `3` | Stability gate: after this many rejections in a row the new level is accepted as a regime change |
 
-The four `BASELINE_MIN_*` variables are read in `src/config.py` and passed to `CompositeTrigger` by `pipeline.init_baseline_collector()`; the values in the `CompositeTrigger` table below are only the dataclass defaults, which match the variable defaults. A home LAN with about ten talkers never reaches 20 distinct source IPs at the defaults, so lower them, for example `BASELINE_MIN_VECTORS=5000`, `BASELINE_MIN_SRC_IPS=5`, `BASELINE_MIN_ELAPSED_SECS=900`, `BASELINE_MIN_PORT_ENTROPY=1.5`.
+The four `BASELINE_MIN_*` variables are read in `src/config.py` and passed to `CompositeTrigger` by `pipeline.init_baseline_collector()`; the values in the `CompositeTrigger` table above are only the dataclass defaults, which match the variable defaults. A home LAN with about ten talkers never reaches 20 distinct source IPs at the defaults, so lower them, for example `BASELINE_MIN_VECTORS=5000`, `BASELINE_MIN_SRC_IPS=5`, `BASELINE_MIN_ELAPSED_SECS=900`, `BASELINE_MIN_PORT_ENTROPY=1.5`.
 
 All other knobs (`val_fraction`, epochs, `n_estimators`, `HARD_CAP`, etc.) are constructor arguments or module constants of `WindowTrainer` / `BaselineCollector` with no environment variable; changing them needs a code edit in `src/unsupervised/` or `pipeline.init_baseline_collector()`.
 
@@ -334,13 +335,13 @@ If the flag were not cleared in any of these paths, the collector would permanen
 
 ## Testing
 
-Tests live in `tests/unsupervised/test_collector.py`. Run with:
+The collector tests live in `tests/unsupervised/test_collector.py` (the same folder holds the tests for host sequences, the threshold gate, window stability, model registration and the evaluation bench). Run with:
 
 ```bash
 pytest tests/unsupervised/test_collector.py -v
 ```
 
-All external dependencies (MLflow, PyTorch, scikit-learn, database) are fully mocked. The test file covers five bug-fix areas, each in its own class:
+All external dependencies (MLflow, PyTorch, scikit-learn, database) are fully mocked. `test_collector.py` covers five bug-fix areas, each in its own class:
 
 | Class | What it tests |
 |---|---|

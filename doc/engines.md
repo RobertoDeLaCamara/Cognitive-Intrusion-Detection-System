@@ -223,6 +223,17 @@ AND flow_features[fwd_act_data_pkts] < 5
 - `syn_scan` is in the default `CRITICAL_RULES` (#50), so a hit forces an alert regardless of the weighted blend.
 - MITRE: T1046 (Network Service Scanning).
 
+#### Rule 2b: Port Scan (host level)
+```
+one source starts TCP connections (SYN without ACK) to >= HOST_SCAN_PORTS distinct ports
+of one target within HOST_SCAN_WINDOW_SECS
+```
+- A scan is many one-packet flows, none unusual alone, so this rule is decided across flows by `ScanTracker` (`src/features/scan_tracker.py`), fed from `HostExtractor.process_packet`, and attached to each flow that began inside the scan interval (`FlowRecord.host_hits`). Flows are scored when they expire, long after the window has moved on, which is why the scan interval is remembered.
+- Thresholds: `HOST_SCAN_PORTS` (default 15, `0` disables), `HOST_SCAN_WINDOW_SECS` (default 60). `HOST_SCAN_ALLOWLIST` lists source IPs that are never flagged (monitoring probes, your own scanners).
+- Limits: TCP connection starts only (UDP scans are not seen); a scan slower than the threshold per window is not seen; a connection from the same source to the same target within the window after a scan is also tagged.
+- `port_scan` is in the default `CRITICAL_RULES`, so a hit forces an alert. It was added from a clean synthetic replay (0 of 389 benign flows flagged), not from a real capture: check it against your own traffic and add monitoring sources to `HOST_SCAN_ALLOWLIST`.
+- MITRE: T1046 (Network Service Scanning).
+
 #### Rule 3: Large Payload
 ```
 max(forward packet lengths in the flow) > LARGE_PAYLOAD_BYTES
@@ -261,7 +272,7 @@ ja3_hash in malicious_ja3_set
 - Rules return `1.0` when any rule fires, `0.0` otherwise.
 - `triggered_rules` list contains the names of all fired rules.
 - Multiple rules can fire for the same flow.
-- Default `CRITICAL_RULES` (each forces an alert on its own): the six `payload:*` rules (`sql_injection`, `command_injection`, `log4j`, `shellshock`, `xss`, `path_traversal`), `malicious_ja3` and `syn_scan`.
+- Default `CRITICAL_RULES` (each forces an alert on its own): the six `payload:*` rules (`sql_injection`, `command_injection`, `log4j`, `shellshock`, `xss`, `path_traversal`), `malicious_ja3`, `syn_scan` and `port_scan`.
 
 ---
 

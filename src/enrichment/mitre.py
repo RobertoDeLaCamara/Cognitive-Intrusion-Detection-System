@@ -31,6 +31,7 @@ _ATTACK_TYPE_MAP: Dict[str, List[Dict[str, str]]] = {
 _RULE_MAP: Dict[str, List[Dict[str, str]]] = {
     "icmp_flood":       [{"id": "T1498.001", "name": "Direct Network Flood", "tactic": "Impact"}],
     "syn_scan":         [{"id": "T1046", "name": "Network Service Scanning", "tactic": "Discovery"}],
+    "port_scan":        [{"id": "T1046", "name": "Network Service Scanning", "tactic": "Discovery"}],
     "large_payload":    [{"id": "T1030", "name": "Data Transfer Size Limits", "tactic": "Exfiltration"}],
     "asymmetric_upload": [{"id": "T1041", "name": "Exfiltration Over C2 Channel", "tactic": "Exfiltration"}],
     "payload:sql_injection":    [{"id": "T1190", "name": "Exploit Public-Facing Application", "tactic": "Initial Access"}],

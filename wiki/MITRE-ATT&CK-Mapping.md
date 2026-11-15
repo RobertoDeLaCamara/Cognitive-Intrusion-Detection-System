@@ -53,6 +53,7 @@ Exact match first, then a case-insensitive partial match in either direction. La
 |---|---|
 | `icmp_flood` | T1498.001 (Direct Network Flood) |
 | `syn_scan` | T1046 (Network Service Scanning) |
+| `port_scan` | T1046 (Network Service Scanning) |
 | `large_payload` | T1030 (Data Transfer Size Limits) |
 | `asymmetric_upload` | T1041 (Exfiltration Over C2 Channel) |
 | `payload:sql_injection` | T1190 (Exploit Public-Facing Application) |

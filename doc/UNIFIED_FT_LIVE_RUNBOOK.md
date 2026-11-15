@@ -101,10 +101,12 @@ and the rule does not fire.
 sudo nmap -sS -p 1-1000 -T4 <TARGET_IP>
 ```
 
-Expected: possibly `attack_type=Reconnaissance` (class 7) on some probe
-flows. There is no `port_scan` rule: a sweep sends one SYN per port, each
-its own flow, so `syn_scan` does not fire and an alert is not guaranteed
-(tracked in issue #87).
+Expected: the `port_scan` rule (15 distinct ports of one target within 60 s,
+a critical rule) tags every probe flow, so an alert follows once the flows
+expire (`FLOW_TIMEOUT`, 120 s idle). Some probe flows may also carry
+`attack_type=Reconnaissance` (class 7). `syn_scan` does not fire here: a
+sweep sends one SYN per port, each its own flow. Not verified on a live
+capture yet; see issue #87.
 
 ### UDP fuzzing
 

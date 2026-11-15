@@ -71,6 +71,9 @@ class RulesEngine:
                 flow_features[_IDX_FWD_ACT_DATA_PKTS] < 5):
             triggered.append("syn_scan")
 
+        # 2b. Host-level hits decided across flows (port_scan from ScanTracker, issue #87)
+        triggered.extend(getattr(record, "host_hits", None) or [])
+
         # 3. Large payload
         if record.fwd_lengths:
             max_fwd = max(record.fwd_lengths)

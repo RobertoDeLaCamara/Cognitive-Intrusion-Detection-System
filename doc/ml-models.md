@@ -682,12 +682,13 @@ El Rules Engine no tiene parámetros aprendidos pero sí **umbrales configurable
 |---|---|---|
 | `icmp_flood` | `n_fwd > ICMP_FLOOD_THRESHOLD` (proto=ICMP) | `ICMP_FLOOD_THRESHOLD=50` |
 | `syn_scan` | `syn_flag_cnt > PORT_SCAN_THRESHOLD AND fwd_act_data_pkts < 5` | `PORT_SCAN_THRESHOLD=20` |
+| `port_scan` | una fuente inicia conexiones TCP (SYN sin ACK) a >= `HOST_SCAN_PORTS` puertos destino distintos de un mismo destino dentro de `HOST_SCAN_WINDOW_SECS` (`ScanTracker`, decidida entre flujos) | `HOST_SCAN_PORTS=15`, `HOST_SCAN_WINDOW_SECS=60`, `HOST_SCAN_ALLOWLIST` |
 | `large_payload` | `max(fwd_lengths) > LARGE_PAYLOAD_BYTES` | `LARGE_PAYLOAD_BYTES=10000` |
 | `payload:*` | Cualquier match de los 6 patrones de payload | — (regex fijos) |
 | `asymmetric_upload` | más de 10 paquetes forward, al menos 1 backward y `sum(fwd_bytes) / max(sum(bwd_bytes),1) > 50` | Hardcoded ratio=50 |
 | `malicious_ja3` | `ja3_hash in malicious_set` | Lista en `MALICIOUS_JA3_FILE` |
 
-Las reglas listadas en `CRITICAL_RULES` (por defecto las seis `payload:*`, `malicious_ja3` y `syn_scan`) fuerzan el score a 1.0 y generan alerta con independencia de la mezcla ponderada.
+Las reglas listadas en `CRITICAL_RULES` (por defecto las seis `payload:*`, `malicious_ja3`, `syn_scan` y `port_scan`) fuerzan el score a 1.0 y generan alerta con independencia de la mezcla ponderada.
 
 **Nota:** Los valores default son **más conservadores** de lo que parecen. Por ejemplo, `ICMP_FLOOD_THRESHOLD=50` significa 50 paquetes en el flujo acumulado, no 50/segundo. Para redes con alto tráfico ICMP legítimo (monitoreo Nagios, etc.), conviene subirlo a 200–500.
 

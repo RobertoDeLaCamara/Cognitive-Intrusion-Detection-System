@@ -116,6 +116,14 @@ CNDS is structured as a linear pipeline: capture → feature extraction → dete
     └────────────────────────────────────────────┘
 ```
 
+Reading notes for the diagram:
+
+- A fifth scored engine, the live **baseline** engine (default weight 15%, `src/engines/baseline_engine.py`), is not drawn; see [unsupervised.md](unsupervised.md).
+- The enrichment box is not one pipeline. MITRE mapping, GeoIP, deduplication and suppression rules run on both the capture path (`src/pipeline.py`) and `POST /api/predict`. IP allow/block lists, confidence decay, incident correlation, the WebSocket broadcast and notifications run only on the `POST /api/predict` path.
+- Adaptive weights are computed on request (`GET /api/adaptive-weights`, `GET /api/engines`) and are informational: nothing writes them back into the scorer.
+- There is no SIEM push inside the application. `siem/` holds Splunk and Elastic configuration that reads CNDS output, and `siem/syslog/forwarder.py` polls the REST API.
+- `/ws/alerts` accepts a JWT (`?token=`) or, in key-only mode, the API key.
+
 ---
 
 ## Component Reference
@@ -125,7 +133,7 @@ CNDS is structured as a linear pipeline: capture → feature extraction → dete
 #### `PacketCapture`
 - Wraps Scapy `sniff()` in a daemon thread.
 - Writes raw `scapy.Packet` objects to a bounded FIFO queue.
-- Queue size configurable via `PACKET_QUEUE_SIZE` (default: 10,000).
+- Queue size configurable via `PACKET_QUEUE_SIZE` (default: 20,000).
 - Dropped-packet counter exposed for monitoring.
 
 #### `PacketProcessor`
@@ -139,7 +147,7 @@ CNDS is structured as a linear pipeline: capture → feature extraction → dete
 - Maintains per-(src_ip, dst_ip, sport, dport, protocol) flow state.
 - Flushes flows older than `FLOW_TIMEOUT` seconds (default: 120) periodically.
 - LRU eviction for payload matches and JA3 cache when ceilings are hit.
-- Passes completed feature vectors to the engine pipeline.
+- Hands each expired flow to `on_flow_complete()` in `src/pipeline.py`, which builds the feature vectors and runs the engines.
 
 ---
 
@@ -211,7 +219,7 @@ Examines raw packet payload bytes for injection signatures and statistical indic
 - Index 8: Mean payload length
 - Index 9: Suspicious character ratio
 
-Pattern matching is timeout-protected (1 s per pattern via threading) to prevent regex catastrophic backtracking from stalling the capture pipeline. A cheap pre-screen regex runs before the full pattern set.
+There is no per-pattern timeout. The cost is bounded by the input instead: only the first `PAYLOAD_SAMPLE_BYTES` (default 4096) of a packet are scanned, a single combined pre-screen regex runs first and the six patterns are only tried when it matches, and payloads that look encrypted or compressed are skipped (`looks_encrypted()`).
 
 #### `JA3` — TLS ClientHello Fingerprinting
 Parses TLS record layer (type 22, handshake type 1) to extract:
@@ -236,10 +244,10 @@ class DetectionEngine(Protocol):
     @property
     def is_available(self) -> bool: ...
 
-    def score(self, features: np.ndarray) -> tuple[float, str | None]: ...
+    def anomaly_score(self, *args, **kwargs) -> Optional[float]: ...
 ```
 
-Every engine exposes `is_available` (graceful degradation when model files are absent) and `score()` returning `(confidence: float [0,1], attack_type: str | None)`.
+Every ML engine exposes `is_available` (graceful degradation when model files are absent) and `anomaly_score()` returning a normalised `[0, 1]` score. Argument types differ per engine (a feature vector for the supervised and Isolation Forest engines, a source IP for the LSTM), so the protocol only checks structure. The supervised engines also expose `predict()`, returning `(label, confidence)`, which is what the pipeline calls. `RulesEngine` has its own interface (`evaluate()`) and is not part of the protocol.
 
 **Engine singletons** (`src/engines/registry.py`): Engines are loaded once at startup and shared across all worker threads. The registry checks availability flags to skip absent models rather than crashing.
 
@@ -249,20 +257,24 @@ Every engine exposes `is_available` (graceful degradation when model files are a
 
 #### `EngineScores` (dataclass)
 ```
-supervised_score: float
-iforest_score: float
-lstm_score: float
-rules_score: float
-attack_type: str | None      # from supervised engine
-triggered_rules: list[str]   # from rules engine
+supervised: float | None          # None = engine unavailable / no data
+isolation_forest: float | None
+lstm: float | None
+rules: float | None
+baseline: float | None
+attack_type: str | None           # from supervised engine
+supervised_confidence: float | None
+triggered_rules: list[str]        # from rules engine (+ threat-intel entries)
+ti_malicious_ip: bool
+ti_malicious_ja3: bool
 ```
 
 #### Scoring Algorithm
 
-1. **Collect available scores**: Engines that return `is_available=False` are excluded.
+1. **Collect available scores**: fields left at `None` (engine unavailable, or no feature vector for it) are excluded. A score of `0.0` counts as available.
 2. **Dynamic weight redistribution**: Base weights `{supervised: 0.30, iforest: 0.20, lstm: 0.10, rules: 0.25, baseline: 0.15}` (defaults in `src/config.py`) are re-normalized across available engines only.
-3. **Per-attack-type overrides**: If `ATTACK_TYPE_WEIGHTS` env var contains a JSON mapping for the detected attack type, those weights replace the base weights.
-4. **Weighted average**: `raw_score = Σ(weight_i × score_i) / Σ(weight_i)`.
+3. **Per-attack-type overrides**: If `ATTACK_TYPE_WEIGHTS` env var contains a JSON mapping for the detected (non-benign) attack type, the engines it names replace their base weights before the re-normalisation of step 2.
+4. **Weighted average**: `raw_score = Σ(weight_i × score_i) / Σ(weight_i)`. A threat-intel hit on the IP or JA3 then adds 0.30 (capped at 1.0), and a `CRITICAL_RULES` hit sets the score to 1.0.
 5. **Temperature scaling**: `calibrated = sigmoid(logit(raw_score) / CALIBRATION_TEMPERATURE)`. Default temperature = 1.0 (no-op).
 6. **Threshold gate**: If `calibrated_score >= ENSEMBLE_THRESHOLD` (default 0.55), `is_anomaly = True`.
 7. **Severity mapping**:
@@ -286,65 +298,69 @@ triggered_rules: list[str]   # from rules engine
 |---|---|
 | DoS Hulk | T1498 — Network Denial of Service |
 | DoS GoldenEye | T1498 |
-| DoS Slowloris | T1499 — Endpoint Denial of Service |
-| DoS Slowhttptest | T1499 |
+| DoS slowloris | T1498.001 — Direct Network Flood |
+| DoS Slowhttptest | T1498.001 |
+| DDoS | T1498 |
 | PortScan | T1046 — Network Service Scanning |
-| FTP-Patator | T1110 — Brute Force |
-| SSH-Patator | T1110 |
+| FTP-Patator | T1110.001 — Password Guessing |
+| SSH-Patator | T1110.001 |
 | Bot | T1071 — Application Layer Protocol |
-| Infiltration | T1190 — Exploit Public-Facing Application |
-| Web Attack – Brute Force | T1110.001 |
-| Web Attack – XSS | T1059.007 |
-| Web Attack – SQL Injection | T1190 |
-| Heartbleed | T1203 — Exploitation for Client Execution |
+| Infiltration | T1041 — Exfiltration Over C2 Channel, T1071 |
+| Web Attack – Brute Force | T1110 — Brute Force |
+| Web Attack – XSS | T1059.007 — JavaScript |
+| Web Attack – Sql Injection | T1190 — Exploit Public-Facing Application |
+| Heartbleed | T1190 |
+
+These labels are CIC-IDS2017 style. The classes the shipped models emit (UNSW-NB15: `Exploits`, `Fuzzers`, `Reconnaissance`, ...) have no entry in this map, so in practice the techniques on an alert come from the rule triggers. The wiki page [MITRE ATT&CK Mapping](../wiki/MITRE-ATT%26CK-Mapping.md) has the full tables.
 
 #### Alert Deduplication (`src/pipeline.py`)
-- In-memory LRU cache keyed by `(src_ip, attack_type)`.
-- TTL: `DEDUP_WINDOW_SECS` (default: 60 s).
+- In-memory dict keyed by `(src_ip, attack_type)` holding the last time the pair fired; stale entries are purged every 300 s.
+- Window: `DEDUP_WINDOW_SECS` (default: 300 s).
 - Prevents alert storms from high-frequency attacks.
 
 #### Confidence Decay (`confidence_decay.py`)
 - Exponential score reduction for repeat alerts from the same source.
-- Factor: `CONFIDENCE_DECAY_FACTOR` (default: 0.9 per repeat within window).
-- Decayed alerts may fall below threshold and not fire.
+- Factor: `CONFIDENCE_DECAY_FACTOR` (default: 0.9 per repeat within `CONFIDENCE_DECAY_WINDOW`).
+- Applied on the `POST /api/predict` path only; the capture pipeline does not call it.
 
 #### Alert Suppression (`suppression.py`)
 - Suppression rules stored in database, cached in memory with 10-second TTL.
 - Cache invalidated on rule create/delete.
-- Match criteria: `src_ip`, `dst_ip`, `attack_type`, `min_severity`, optional expiry.
-- Rules checked before DB insertion; matching alerts are silently dropped.
+- Match criteria: `src_ip`, `dst_ip`, `src_port`, `dst_port`, `attack_type`, `min_severity`. Every rule has an expiry (`expires_at` is not nullable).
+- Rules are checked before DB insertion on both paths; a matching alert is not stored. The capture pipeline logs it as `[SUPPRESSED] ... rule=#<id>`.
 
 #### Incident Correlation (`correlation.py`)
-- When a source IP generates `CORRELATION_THRESHOLD` (default: 5) alerts within `CORRELATION_WINDOW_SECS` (default: 300 s), a new incident is auto-created and subsequent alerts are linked to it.
+- When a source IP generates `CORRELATION_THRESHOLD` (default: 5) alerts within `CORRELATION_WINDOW_SECS` (default: 300 s), a new incident is auto-created and subsequent alerts are linked to it. `POST /api/predict` path only.
 
 #### Adaptive Weights (`adaptive_weights.py`)
 - Analysts label alerts as true positive or false positive via `PATCH /api/alerts/{id}`.
-- When `ADAPTIVE_WEIGHTS_ENABLED=true` and `ADAPTIVE_MIN_SAMPLES` is reached, the system computes new engine weights from TP/FP rates.
-- New weights applied to `EnsembleScorer` until next recomputation.
+- When `ADAPTIVE_WEIGHTS_ENABLED=true` and at least `ADAPTIVE_MIN_SAMPLES` (default 100) alerts are acknowledged, `compute_adaptive_weights()` derives weights for the supervised, Isolation Forest, LSTM and rules engines from their share in true and false positives (the baseline engine is not included).
+- The result is only reported (`GET /api/adaptive-weights`, `adaptive_weight` in `GET /api/engines`). It is not applied to `EnsembleScorer`; to use it, copy the values into the `WEIGHT_*` settings.
 
 #### GeoIP (`geoip.py`)
-- MaxMind GeoLite2-City database.
-- Caches `src_ip → {country, city, latitude, longitude}`.
+- MaxMind GeoLite2-City database, read through `geoip2` (no cache of its own).
+- Returns `{country, city, lat, lon}` for an IP.
 - Stored in `src_geo` JSON column on alert.
 - Optional: disabled when `GEOIP_DB_PATH` is empty.
 
 #### Notifications (`notifications.py`)
-- Webhook push: POST JSON alert to all `WEBHOOK_URLS` (space-separated list).
+- Webhook push: POST JSON alert to all `WEBHOOK_URLS` (comma-separated list).
 - Telegram: Send message to `TELEGRAM_CHAT_ID` via `TELEGRAM_BOT_TOKEN`.
 - ntfy: publish a JSON message to `NTFY_URL` (topic `NTFY_TOPIC`, default `cnds`; auth with `NTFY_TOKEN` or `NTFY_USER` + `NTFY_PASSWORD`). Priority follows severity (low 2, medium 3, high 4, critical 5). Empty `NTFY_URL` disables it; a failed publish is logged and never raises.
 - Minimum severity gate: `NOTIFY_MIN_SEVERITY` (default: `high`).
+- Called for alerts created through `POST /api/predict`, for logwatch alerts, by the Guardian and for feature-drift notices; alerts from the capture pipeline are not notified.
 
 ---
 
 ### API Layer (`src/api/`)
 
 #### `FastAPI` Application (`src/api/main.py`)
-- Lifespan context manager: initializes DB, starts periodic cleanup task.
+- Lifespan context manager: initializes DB (Alembic migrations), starts the periodic cleanup task and, when enabled, the Guardian tasks.
 - CORS middleware (configured via `CORS_ORIGINS`).
-- Optional legacy API-key auth via `X-API-Key` header.
-- Prometheus exporter at `/metrics`.
+- API-key auth via `X-API-Key` header when `API_KEY` is set. The API refuses to start unless `API_KEY`, `JWT_SECRET` or `AUTH_DISABLED=true` is set.
+- Prometheus exporter at `/metrics` (`PROMETHEUS_ENABLED`, default `false`).
 - OpenTelemetry tracing via `OTEL_EXPORTER_OTLP_ENDPOINT`.
-- Per-IP rate limiting: `RATE_LIMIT_REQUESTS` per `RATE_LIMIT_WINDOW` seconds.
+- Per-IP rate limiting: `RATE_LIMIT_REQUESTS` (default 60) per `RATE_LIMIT_WINDOW` (default 60) seconds.
 
 #### Authentication (`auth.py`)
 - JWT tokens issued at `POST /api/auth/token`.
@@ -357,7 +373,7 @@ triggered_rules: list[str]   # from rules engine
 - Supports both `sqlite+aiosqlite://` (dev) and `postgresql+asyncpg://` (prod).
 - Alembic migrations in `alembic/versions/`.
 
-See [api-reference.md](api-reference.md) for full endpoint documentation.
+See the wiki [API Reference](../wiki/API-Reference.md) for full endpoint documentation.
 
 ---
 
@@ -409,12 +425,15 @@ alerts
 ├── attack_type
 ├── severity {low, medium, high, critical}
 ├── ensemble_score (float)
-├── engine_scores (JSON: {supervised, iforest, lstm, rules})
+├── engine_scores (JSON: per-engine scores, baseline included when it scored)
 ├── triggered_rules (JSON: list[str])
+├── source ("detector" | "api" | "logwatch")
+├── flow_features, host_features, payload_matches (JSON snapshots)
 ├── src_geo (JSON: {country, city, lat, lon})
 ├── mitre_techniques (JSON: list[{id, name, tactic}])
 ├── ja3_hash, ja3_string
 ├── acknowledged (bool)
+├── label (analyst verdict: tp | fp | unknown)
 ├── notes (text)
 └── incident_id (FK → incidents)
 
@@ -432,11 +451,12 @@ suppression_rules
 ├── id (PK)
 ├── src_ip (nullable)
 ├── dst_ip (nullable)
+├── src_port, dst_port (nullable)
 ├── attack_type (nullable)
 ├── min_severity (nullable)
 ├── reason
 ├── created_at
-└── expires_at (nullable)
+└── expires_at (required)
 
 users
 ├── id (PK)
@@ -457,6 +477,22 @@ mitigation_actions
 ├── created_at
 ├── expires_at (nullable — null once confirmed permanent)
 └── resolved_at (nullable)
+
+host_profiles            (asset inventory)
+├── id (PK)
+├── ip (unique)
+├── first_seen, last_seen
+├── flows_out, flows_in
+├── listen_ports, out_ports, peers (JSON, capped)
+└── classification
+
+triage_annotations       (append-only, written by the triage agent)
+├── id (PK)
+├── alert_id (FK → alerts)
+├── created_at, status, mode
+├── verdict, model_verdict, confidence, recommendation
+├── summary, evidence (JSON), policy_notes (JSON)
+└── model, cost_usd, duration_ms, error
 ```
 
 ---
@@ -470,13 +506,13 @@ mitigation_actions
 - CIM (Common Information Model) field mapping for Splunk ES.
 
 #### Elastic / OpenSearch
-- `index-template.json`: Typed field mappings (keyword, float, geo_point for lat/lon).
-- `logstash-pipeline.conf`: Parse CNDS JSON logs → Elastic documents.
-- `filebeat.yml`: Tail CNDS log file, tag with `cnds` index.
+- `index_template.json`: Typed field mappings (keyword, float, geo_point for lat/lon).
+- `logstash_cnds.conf`: Parse CNDS JSON logs → Elastic documents.
+- `filebeat_cnds.yml`: Tail CNDS log file, tag with `cnds` index.
 
-#### CEF Syslog (`forwarder.py`)
-- Reads CNDS alert JSON from stdin or webhook.
-- Emits RFC 3164 syslog messages in ArcSight CEF format.
+#### CEF Syslog (`siem/syslog/forwarder.py`)
+- Polls the CNDS REST API (`--cnds-url`, `--poll-interval`) and remembers the last forwarded alert id in `~/.cnds_forwarder_state.json`.
+- Emits syslog lines (`<PRI>timestamp cnds CEF:0|CNDS|CognitiveNDS|...`) over UDP or TCP in ArcSight CEF format.
 - Compatible with QRadar, ArcSight Logger, Microsoft Sentinel.
 
 ---
@@ -490,7 +526,7 @@ Main Thread
 ├── Worker Thread 1  ──┤─── Dispatcher (CPU-bound feature extraction)
 ├── Worker Thread 2  ──┤
 ├── Worker Thread 3  ──┘
-├── DB Writer Thread (async queue → SQLAlchemy)
+├── Alert writer thread (bounded queue of 1000 → synchronous SQLAlchemy session)
 ├── FastAPI server (uvicorn, separate process or same process)
 └── Guardian background asyncio tasks (opt-in, run inside the API process)
     ├── guardian_loop           — poll + block
@@ -500,7 +536,7 @@ Main Thread
 
 The bounded queue between PacketCapture and the workers prevents unbounded memory growth. If workers fall behind, packets are dropped and the drop counter increments (visible at `/health`).
 
-ML inference (RF, IF, LSTM) runs synchronously inside worker threads. For high-throughput environments, the worker count can be increased via `PACKET_WORKERS`.
+ML inference (FT-Transformer or RF, IF, LSTM, baseline) runs synchronously inside worker threads. For high-throughput environments, the worker count can be increased via `PACKET_WORKERS`.
 
 ---
 
@@ -509,7 +545,7 @@ ML inference (RF, IF, LSTM) runs synchronously inside worker threads. For high-t
 ```
 Environment variables (.env file)
     ↓ loaded by
-src/config.py (50+ variables, validation on import)
+src/config.py (most of the ~140 variables read under src/, validation on import)
     ↓ imported by
 All modules that need configuration
 ```
@@ -519,16 +555,16 @@ Key configuration categories:
 | Category | Key Variables |
 |---|---|
 | Capture | `CAPTURE_INTERFACE`, `PACKET_WORKERS`, `PACKET_QUEUE_SIZE` |
-| Flow analysis | `FLOW_TIMEOUT`, `MAX_ACTIVE_FLOWS`, `MIN_PACKETS_FOR_ML` |
+| Flow analysis | `FLOW_TIMEOUT`, `MAX_ACTIVE_FLOWS` (`MIN_PACKETS_FOR_ML` is defined but no runtime code reads it) |
 | Host analysis | `HOST_WINDOW_SIZE`, `MAX_TRACKED_IPS` |
 | Ensemble | `WEIGHT_*`, `ENSEMBLE_THRESHOLD`, `ATTACK_TYPE_WEIGHTS` |
 | Calibration | `CALIBRATION_TEMPERATURE`, `FT_TEMPERATURE` |
 | Rules | `ICMP_FLOOD_THRESHOLD`, `PORT_SCAN_THRESHOLD`, `LARGE_PAYLOAD_BYTES` |
 | Models | `MODELS_DIR`, `FT_MODEL_FILE`, `FT_SCALER_FILE`, `RF_MODEL_FILE`, `IF_MODEL_FILE`, `LSTM_MODEL_FILE` |
 | Database | `DATABASE_URL` |
-| Auth | `JWT_SECRET`, `JWT_ALGORITHM`, `JWT_EXPIRE_MINUTES` |
+| Auth | `API_KEY`, `JWT_SECRET`, `JWT_ALGORITHM`, `JWT_EXPIRE_MINUTES`, `AUTH_DISABLED` |
 | Enrichment | `GEOIP_DB_PATH`, `CORRELATION_*`, `ADAPTIVE_WEIGHTS_ENABLED` |
-| Notifications | `WEBHOOK_URLS`, `NOTIFY_MIN_SEVERITY`, `TELEGRAM_*` |
+| Notifications | `WEBHOOK_URLS`, `NOTIFY_MIN_SEVERITY`, `TELEGRAM_*`, `NTFY_*` |
 | Observability | `PROMETHEUS_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT`, `LOG_FORMAT` |
 | IP filtering | `IP_ALLOWLIST`, `IP_BLOCKLIST`, `TRUSTED_OUTBOUND` |
 | Guardian auto-response | `GUARDIAN_ENABLED`, `GUARDIAN_MIN_SEVERITY`, `GUARDIAN_WHITELIST`, `GUARDIAN_BLOCK_MINUTES`, `GUARDIAN_CIRCUIT_*`, `ADGUARD_*` |
@@ -542,11 +578,11 @@ Key configuration categories:
 | FT-T checkpoint missing AND `rf_*.joblib` missing | Supervised engine `is_available=False`; weight redistributed to other engines |
 | FT-T checkpoint missing only | Registry falls back to `SupervisedEngine` (Random Forest); supervised slot stays active |
 | `lstm_autoencoder.pt` missing | LSTM engine unavailable; remaining engines continue |
-| All ML models missing | Rules engine runs at 100% weight; detections still fire |
-| PostgreSQL unreachable | Alert persisted to in-memory queue; retried on reconnect |
+| All ML models missing | Rules engine runs at 100% weight; detections still fire. (The bundled lite Random Forest keeps the supervised slot active in a normal checkout.) |
+| Database write fails | The writer thread logs `Failed to persist alert` and the alert is lost; there is no retry. If the 1000-entry alert queue is full, new alerts are dropped with a warning |
 | GeoIP database absent | `src_geo` field omitted from alert; pipeline continues |
 | JA3 hash file missing | JA3 matching disabled; fingerprint still computed and stored |
 | Packet queue full | Packets dropped; `dropped_packets` in `capture_stats` of `/health` increases (visible only with `main.py --api`) |
-| Worker thread crash | Remaining workers continue; crash logged with stack trace |
+| Exception while processing a packet | Caught in the worker loop and logged (`Packet processing error`); the worker keeps running |
 | Guardian's `MitigationBackend.block()`/`unblock()` fails | Exception is caught and logged; no `mitigation_actions` row is written/updated for a failed `block()`, so the audit trail never claims a block that didn't happen |
 | Guardian circuit breaker trips | Auto-blocking pauses for the batch (not replayed later); one notification fires; detection and manual response are unaffected |

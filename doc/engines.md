@@ -102,13 +102,14 @@ The lite model (1.6MB, 91% accuracy on CIC-UNSW-NB15) provides functional detect
 
 ```bash
 # Generate bundled lite model (50k sample, ~1.6MB, ships with repo)
-python scripts/train_rf.py --lite
+python scripts/train_rf.py --data-dir /path/to/CIC-UNSW-NB15 --lite
 
 # Train full production model (447k samples, ~124MB, gitignored)
-python scripts/train_rf.py
+# SMOTE needs imbalanced-learn (pip install imbalanced-learn), or pass --no-smote
+python scripts/train_rf.py --data-dir /path/to/CIC-UNSW-NB15
 
 # Train and register to MLflow
-python scripts/train_rf.py --mlflow-uri http://your-mlflow-host:5050
+python scripts/train_rf.py --data-dir /path/to/CIC-UNSW-NB15 --mlflow-uri http://your-mlflow-host:5050
 ```
 
 ### Extending

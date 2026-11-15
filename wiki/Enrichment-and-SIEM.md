@@ -63,6 +63,7 @@ Maps `attack_type` (from the supervised engine) and `triggered_rules` (from rule
 | attack_type=Infiltration | T1041, T1071 | Exfiltration Over C2 Channel, Application Layer Protocol |
 | rule=syn_scan | T1046 | Network Service Scanning |
 | rule=port_scan | T1046 | Network Service Scanning |
+| rule=brute_force | T1110 | Brute Force |
 | rule=malicious_ja3 | T1071, T1573 | Application Layer Protocol, Encrypted Channel |
 | rule=payload:sql_injection | T1190 | Exploit Public-Facing Application |
 

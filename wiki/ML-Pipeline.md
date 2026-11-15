@@ -129,12 +129,13 @@ Extracted by `src/features/payload_analyzer.py`. Per-flow numeric features from 
 | `icmp_flood` | Forward ICMP packets in the flow | > 50 (`ICMP_FLOOD_THRESHOLD`) |
 | `syn_scan` | SYN flag count (with fewer than 5 forward packets that carry data) | > 20 (`PORT_SCAN_THRESHOLD`) |
 | `port_scan` | Distinct destination ports of one target started by one source (TCP SYN) within a window | >= 15 within 60 s (`HOST_SCAN_PORTS`, `HOST_SCAN_WINDOW_SECS`) |
+| `brute_force` | Distinct TCP connections from one source to one watched service port within a window | >= 15 within 60 s (`HOST_BRUTE_CONNS`, `HOST_BRUTE_WINDOW_SECS`, ports in `HOST_BRUTE_PORTS`) |
 | `large_payload` | Largest forward packet (bytes) | > 10 000 (`LARGE_PAYLOAD_BYTES`) |
 | `asymmetric_upload` | Fwd/bwd byte ratio (> 10 forward packets) | > 50 (fixed) |
 | `payload:*` | 6 regex signatures (SQLi, XSS, command injection, path traversal, Log4j, Shellshock) | — |
 | `malicious_ja3` | JA3 hash in the known-bad list | — |
 
-Payload regex rules are skipped on encrypted or compressed payloads (TLS record header, or at least 256 bytes with entropy of 7.0 bits/byte or more). `CRITICAL_RULES` defaults to the six `payload:*` rules, `malicious_ja3`, `syn_scan` and `port_scan`.
+Payload regex rules are skipped on encrypted or compressed payloads (TLS record header, or at least 256 bytes with entropy of 7.0 bits/byte or more). `CRITICAL_RULES` defaults to the six `payload:*` rules, `malicious_ja3`, `syn_scan`, `port_scan` and `brute_force`.
 
 ---
 
@@ -285,6 +286,7 @@ Replays a `.pcap` file through the full detection pipeline without live capture.
 | Bot | T1071 | Application Layer Protocol | Command and Control |
 | `syn_scan` rule | T1046 | Network Service Scanning | Discovery |
 | `port_scan` rule | T1046 | Network Service Scanning | Discovery |
+| `brute_force` rule | T1110 | Brute Force | Credential Access |
 | `malicious_ja3` rule | T1071, T1573 | Application Layer Protocol, Encrypted Channel | Command and Control |
 | `payload:sql_injection` rule | T1190 | Exploit Public-Facing Application | Initial Access |
 | `payload:command_injection` rule | T1059 | Command and Scripting Interpreter | Execution |

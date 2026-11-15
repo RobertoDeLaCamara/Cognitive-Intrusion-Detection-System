@@ -110,7 +110,7 @@ CRITICAL_RULES = set(
         "CRITICAL_RULES",
         "payload:sql_injection,payload:command_injection,payload:log4j,"
         "payload:shellshock,payload:xss,payload:path_traversal,malicious_ja3,"
-        "syn_scan,port_scan",
+        "syn_scan,port_scan,brute_force",
     ).split(",") if x.strip()
 )
 
@@ -135,6 +135,14 @@ ALERT_COOLDOWN_SECS   = int(os.getenv("ALERT_COOLDOWN_SECS", "60"))
 HOST_SCAN_PORTS       = int(os.getenv("HOST_SCAN_PORTS", "15"))
 HOST_SCAN_WINDOW_SECS = float(os.getenv("HOST_SCAN_WINDOW_SECS", "60"))
 HOST_SCAN_ALLOWLIST   = [x.strip() for x in os.getenv("HOST_SCAN_ALLOWLIST", "").split(",") if x.strip()]
+# Host-level brute force (same module): one source starting at least HOST_BRUTE_CONNS distinct
+# TCP connections (distinct source ports) to one service port within HOST_BRUTE_WINDOW_SECS.
+# Only the ports in HOST_BRUTE_PORTS are watched (a browser opens many connections to 443).
+# 0 disables the rule. HOST_BRUTE_ALLOWLIST: source IPs never flagged (Ansible, backup jobs).
+HOST_BRUTE_CONNS       = int(os.getenv("HOST_BRUTE_CONNS", "15"))
+HOST_BRUTE_WINDOW_SECS = float(os.getenv("HOST_BRUTE_WINDOW_SECS", "60"))
+HOST_BRUTE_PORTS       = [int(x) for x in os.getenv("HOST_BRUTE_PORTS", "21,22,23,445,3389,5900").split(",") if x.strip()]
+HOST_BRUTE_ALLOWLIST   = [x.strip() for x in os.getenv("HOST_BRUTE_ALLOWLIST", "").split(",") if x.strip()]
 
 # ── Model paths ────────────────────────────────────────────────────────────────
 MODELS_DIR          = os.getenv("MODELS_DIR", "models")

@@ -43,7 +43,7 @@ Variables marked _reserved_ are defined in `src/config.py` but no runtime code r
 | `WEIGHT_BASELINE` | `0.15` | Unsupervised baseline engine weight |
 | `ATTACK_TYPE_WEIGHTS` | `{}` | JSON: per-attack-type engine weight overrides, keyed by the supervised label; engine keys are `supervised`, `isolation_forest`, `lstm`, `rules`, `baseline` |
 | `CALIBRATION_TEMPERATURE` | `1.0` | Platt scaling temperature (>1 softer, <1 sharper) |
-| `CRITICAL_RULES` | `payload:sql_injection,payload:command_injection,payload:log4j,payload:shellshock,payload:xss,payload:path_traversal,malicious_ja3,syn_scan,port_scan` | Comma-separated rules that force score 1.0 / alert regardless of the blend |
+| `CRITICAL_RULES` | `payload:sql_injection,payload:command_injection,payload:log4j,payload:shellshock,payload:xss,payload:path_traversal,malicious_ja3,syn_scan,port_scan,brute_force` | Comma-separated rules that force score 1.0 / alert regardless of the blend |
 | `FT_TEMPERATURE` | `2.0` | FT-Transformer logit temperature; `1.0` disables |
 
 ## Rules Engine Thresholds
@@ -57,6 +57,10 @@ Variables marked _reserved_ are defined in `src/config.py` but no runtime code r
 | `HOST_SCAN_PORTS` | `15` | `port_scan`: distinct destination ports of one target that one source starts TCP connections to within the window; `0` disables the rule |
 | `HOST_SCAN_WINDOW_SECS` | `60` | `port_scan`: sliding window in seconds |
 | `HOST_SCAN_ALLOWLIST` | _(empty)_ | `port_scan`: comma-separated source IPs that are never flagged (monitoring probes, your own scanners) |
+| `HOST_BRUTE_CONNS` | `15` | `brute_force`: distinct TCP connections (distinct source ports) from one source to one watched service port within the window; `0` disables the rule |
+| `HOST_BRUTE_WINDOW_SECS` | `60` | `brute_force`: sliding window in seconds |
+| `HOST_BRUTE_PORTS` | `21,22,23,445,3389,5900` | `brute_force`: service ports watched |
+| `HOST_BRUTE_ALLOWLIST` | _(empty)_ | `brute_force`: comma-separated source IPs that are never flagged (Ansible, backup jobs) |
 
 ## Alert Management
 

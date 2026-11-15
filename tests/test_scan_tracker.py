@@ -157,3 +157,94 @@ def test_normal_client_is_not_flagged():
             ts += 0.01
     d.flush_all()
     assert seen and all(v == [] for v in seen.values())
+
+
+# ── brute force (issue #88) ────────────────────────────────────────────────
+
+from src.features.scan_tracker import BruteForceTracker  # noqa: E402
+
+
+def test_many_connections_to_ssh_are_flagged():
+    t = BruteForceTracker(conn_threshold=15, window=60, ports=[22])
+    for i in range(15):
+        t.observe(ATTACKER, TARGET, 22, 51000 + i, 100.0 + i * 0.5)
+    assert t.hits(ATTACKER, TARGET, 22, 100.0) == ["brute_force"]
+    assert t.hits(ATTACKER, TARGET, 22, 106.0) == ["brute_force"]
+
+
+def test_retransmitted_syn_is_not_a_new_connection():
+    t = BruteForceTracker(conn_threshold=15, window=60, ports=[22])
+    for i in range(100):  # same source port every time: one connection, retransmitted
+        t.observe(ATTACKER, TARGET, 22, 51000, 100.0 + i * 0.1)
+    assert t.hits(ATTACKER, TARGET, 22, 100.0) == []
+
+
+def test_unwatched_port_is_ignored():
+    t = BruteForceTracker(conn_threshold=5, window=60, ports=[22])
+    for i in range(50):  # a browser opening many connections to 443
+        t.observe(ATTACKER, TARGET, 443, 51000 + i, 100.0 + i * 0.1)
+    assert t.hits(ATTACKER, TARGET, 443, 100.0) == []
+
+
+def test_brute_force_needs_the_same_service():
+    t = BruteForceTracker(conn_threshold=15, window=60, ports=[22, 3389])
+    for i in range(30):  # alternating services: 15 each
+        t.observe(ATTACKER, TARGET, 22 if i % 2 else 3389, 51000 + i, 100.0 + i * 0.1)
+    assert t.hits(ATTACKER, TARGET, 22, 102.5) == t.hits(ATTACKER, TARGET, 3389, 102.5) == ["brute_force"]
+    t2 = BruteForceTracker(conn_threshold=16, window=60, ports=[22, 3389])
+    for i in range(30):
+        t2.observe(ATTACKER, TARGET, 22 if i % 2 else 3389, 51000 + i, 100.0 + i * 0.1)
+    assert t2.hits(ATTACKER, TARGET, 22, 102.5) == []
+
+
+def test_brute_force_allowlist_and_disable():
+    t = BruteForceTracker(conn_threshold=5, window=60, ports=[22], allowlist=[ATTACKER])
+    for i in range(20):
+        t.observe(ATTACKER, TARGET, 22, 51000 + i, 100.0 + i * 0.1)
+    assert t.hits(ATTACKER, TARGET, 22, 100.0) == []
+    off = BruteForceTracker(conn_threshold=0, ports=[22])
+    for i in range(20):
+        off.observe(ATTACKER, TARGET, 22, 51000 + i, 100.0 + i * 0.1)
+    assert off.hits(ATTACKER, TARGET, 22, 100.0) == []
+
+
+def test_slow_logins_are_not_brute_force():
+    t = BruteForceTracker(conn_threshold=15, window=60, ports=[22])
+    for i in range(30):  # one login every 10 s: 6 per window
+        t.observe(ATTACKER, TARGET, 22, 51000 + i, 100.0 + i * 10)
+    assert t.hits(ATTACKER, TARGET, 22, 100.0) == []
+
+
+def test_host_extractor_feeds_both_trackers():
+    h = HostExtractor()
+    for i in range(20):
+        h.process_packet(_syn(ATTACKER, TARGET, 22, sport=52000 + i), timestamp=100.0 + i * 0.1)
+    assert h.host_hits(ATTACKER, TARGET, 22, 100.0) == ["brute_force"]
+    assert h.host_hits(ATTACKER, TARGET, 80, 100.0) == []
+
+
+def test_brute_force_is_critical_and_mapped():
+    from src.config import CRITICAL_RULES
+    from src.enrichment.mitre import enrich
+    assert "brute_force" in CRITICAL_RULES
+    assert enrich(None, ["brute_force"])[0]["id"] == "T1110"
+
+
+def test_dispatcher_marks_each_login_flow_of_a_brute_force():
+    seen = {}
+
+    def callback(record, flow_vec, host_vec, payload_matches, payload_features, ja3_info):
+        seen[record.key] = list(record.host_hits)
+
+    d = Dispatcher(flow_callback=callback)
+    ts = 1_700_000_000.0
+    for i in range(30):
+        for p in (_syn(ATTACKER, TARGET, 22, sport=53000 + i),
+                  _built(IP(src=TARGET, dst=ATTACKER) / TCP(sport=22, dport=53000 + i, flags="SA"))):
+            d._flow_extractor.process_packet(p, timestamp=ts)
+            d._host_extractor.process_packet(p, timestamp=ts)
+            ts += 0.2
+    d.flush_all()
+    assert len(seen) == 30
+    assert all("brute_force" in v for v in seen.values())
+    assert all("port_scan" not in v for v in seen.values())

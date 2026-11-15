@@ -234,6 +234,17 @@ of one target within HOST_SCAN_WINDOW_SECS
 - `port_scan` is in the default `CRITICAL_RULES`, so a hit forces an alert. It was added from a clean synthetic replay (0 of 389 benign flows flagged), not from a real capture: check it against your own traffic and add monitoring sources to `HOST_SCAN_ALLOWLIST`.
 - MITRE: T1046 (Network Service Scanning).
 
+#### Rule 2c: Brute Force (host level)
+```
+one source starts >= HOST_BRUTE_CONNS distinct TCP connections (distinct source ports) to one
+watched service port within HOST_BRUTE_WINDOW_SECS
+```
+- Same mechanism as `port_scan` (`BruteForceTracker` in `src/features/scan_tracker.py`, `FlowRecord.host_hits`), keyed by `(source, target, port)`. Distinct source ports count connections, so a retransmitted SYN is not a new attempt. The traffic is usually encrypted, so the rule counts connections, not failed logins.
+- Only `HOST_BRUTE_PORTS` are watched (default `21,22,23,445,3389,5900`); a browser opening many connections to 443 is not a brute force. Thresholds: `HOST_BRUTE_CONNS` (15, `0` disables), `HOST_BRUTE_WINDOW_SECS` (60). `HOST_BRUTE_ALLOWLIST` lists source IPs never flagged: automation that legitimately opens many SSH connections (Ansible without connection reuse, backup jobs, health checks) belongs there.
+- Limits: TCP only; low-and-slow guessing below the threshold per window is not seen; SSH on a non-default port must be added to `HOST_BRUTE_PORTS`.
+- `brute_force` is in the default `CRITICAL_RULES`. Like `port_scan`, it was set from a clean synthetic replay (0 of 389 benign flows flagged), not from a real capture.
+- MITRE: T1110 (Brute Force).
+
 #### Rule 3: Large Payload
 ```
 max(forward packet lengths in the flow) > LARGE_PAYLOAD_BYTES
@@ -272,7 +283,7 @@ ja3_hash in malicious_ja3_set
 - Rules return `1.0` when any rule fires, `0.0` otherwise.
 - `triggered_rules` list contains the names of all fired rules.
 - Multiple rules can fire for the same flow.
-- Default `CRITICAL_RULES` (each forces an alert on its own): the six `payload:*` rules (`sql_injection`, `command_injection`, `log4j`, `shellshock`, `xss`, `path_traversal`), `malicious_ja3`, `syn_scan` and `port_scan`.
+- Default `CRITICAL_RULES` (each forces an alert on its own): the six `payload:*` rules (`sql_injection`, `command_injection`, `log4j`, `shellshock`, `xss`, `path_traversal`), `malicious_ja3`, `syn_scan`, `port_scan` and `brute_force`.
 
 ---
 

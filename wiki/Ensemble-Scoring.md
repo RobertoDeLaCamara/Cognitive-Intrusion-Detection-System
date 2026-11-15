@@ -24,6 +24,8 @@ When an engine is unavailable (model not loaded) or has no data for a given flow
 - Isolation Forest: 20 / 75 × 100 ≈ 26.7%
 - Rules: 25 / 75 × 100 ≈ 33.3%
 
+A score of `0.0` is not "no data": the LSTM engine returns `0.0` until an IP has a full sequence buffer (20 completed flows), and that zero is blended with the full LSTM weight.
+
 ## Per-Attack-Type Overrides
 
 The `ATTACK_TYPE_WEIGHTS` config (JSON) lets you override weights for specific attack types. For example, you might want to trust the supervised engine more for DoS detection:

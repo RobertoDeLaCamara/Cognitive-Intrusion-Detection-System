@@ -48,7 +48,7 @@ Raw Packets (Scapy)
        ▼                                         │
   Detection Engines                              │
   ├── Supervised (30%) ← 76 flow features       │
-  │   ├── FT-Transformer (preferred, ~2.4M params)
+  │   ├── FT-Transformer (preferred, ~1.6M params)
   │   └── Random Forest (fallback when no FT ckpt)
   ├── Isolation Forest (20%) ← 18 host features │
   ├── LSTM Autoencoder (10%) ← temporal seq.    │

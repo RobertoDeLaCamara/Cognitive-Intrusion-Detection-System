@@ -308,7 +308,7 @@ Forest. Ambos motores comparten la misma interfaz, por lo que el
 
 FT-Transformer (Gorishniy et al., NeurIPS 2021) — tokenizador affine por
 feature + 3 bloques transformer encoder Pre-LN + cabeza linear. Total
-~2.4M parámetros. Hiperparámetros tunados con Optuna (25 trials,
+~1.6M parámetros. Hiperparámetros tunados con Optuna (25 trials,
 TPESampler + MedianPruner):
 
 ```python

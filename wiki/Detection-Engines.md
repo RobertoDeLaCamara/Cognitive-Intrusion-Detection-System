@@ -6,7 +6,7 @@ CNDS scores every expired flow with up to five engines (supervised, Isolation Fo
 
 | Engine | Input | Model | Detects |
 |---|---|---|---|
-| Supervised (preferred) | 76 CICFlowMeter flow features | FT-Transformer (~2.4M params, Optuna-tuned, F1 macro 0.6197) | 10 attack classes: Benign, Analysis, Backdoor, DoS, Exploits, Fuzzers, Generic, Reconnaissance, Shellcode, Worms |
+| Supervised (preferred) | 76 CICFlowMeter flow features | FT-Transformer (~1.6M params, Optuna-tuned, F1 macro 0.6197) | 10 attack classes: Benign, Analysis, Backdoor, DoS, Exploits, Fuzzers, Generic, Reconnaissance, Shellcode, Worms |
 | Supervised (fallback) | 76 CICFlowMeter flow features (+ 10 payload features if retrained) | Random Forest (sklearn Pipeline) | Same 10 classes, used only when no FT-T checkpoint is present |
 | Isolation Forest | 18 per-IP host features | IsolationForest + StandardScaler | Novel / zero-day volumetric anomalies |
 | LSTM Autoencoder | 18-feature time-series per IP | PyTorch sequence autoencoder | Slow attacks, temporal behaviour drift |
@@ -42,7 +42,7 @@ to Random Forest.
 
 - **Files:** `src/engines/ft_transformer_engine.py`, `src/models/ft_transformer.py`
 - **Model:** `models/unified/unified_ft_transformer.pt` (or MLflow registry `ml-ids-unified-ft-transformer/<latest>`).
-- **Architecture:** per-feature affine tokenizer → 3 Pre-LN Transformer encoder blocks → linear head. ~2.4M params, Optuna-tuned. See [`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](https://github.com/RobertoDeLaCamara/ML-IDS/blob/main/docs/UNIFIED_MODEL_ARCHITECTURE.md) for diagrams.
+- **Architecture:** per-feature affine tokenizer → 3 Pre-LN Transformer encoder blocks → linear head. ~1.6M params, Optuna-tuned. See [`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](https://github.com/RobertoDeLaCamara/ML-IDS/blob/main/docs/UNIFIED_MODEL_ARCHITECTURE.md) for diagrams.
 - **Input:** 76 CICFlowMeter-compatible flow features.
 - **Output:** attack type label + confidence score.
 - **Detects:** 10 UNSW-NB15 classes — Benign, Analysis, Backdoor, DoS, Exploits, Fuzzers, Generic, Reconnaissance, Shellcode, Worms.

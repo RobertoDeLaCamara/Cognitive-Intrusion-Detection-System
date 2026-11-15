@@ -94,13 +94,13 @@ A repeated-SYN scan against a single port (same 5-tuple, more than 20 SYNs) does
 **Actor:** Automated detection pipeline
 **Goal:** Detect repeated failed login attempts against SSH.
 
-**Current state: not detected by a dedicated rule.** `hydra` against SSH produces many short flows to port 22; no rule counts repeated short connections to one service (issue #88), and SSH is encrypted, so payload rules see nothing.
+`hydra` against SSH produces many short flows to port 22. SSH is encrypted, so payload rules see nothing, and each flow alone is unremarkable. The host-level `brute_force` rule (issue #88) counts connections instead: when one source starts `HOST_BRUTE_CONNS` (15) distinct TCP connections to one watched service port (`HOST_BRUTE_PORTS`: 21, 22, 23, 445, 3389, 5900) within `HOST_BRUTE_WINDOW_SECS` (60 s), every login flow of the burst carries `brute_force`, which is in the default `CRITICAL_RULES`. It cannot see failed logins, only the connection rate, and it is not live-verified: automation that opens many SSH connections (Ansible, backups) must go in `HOST_BRUTE_ALLOWLIST`. Flows are scored after `FLOW_TIMEOUT` (120 s) of idle time.
 
-What can still raise an alert:
+Other signals that can add to an alert:
 
 1. **Isolation Forest / LSTM / baseline**: elevated `packets_per_sec` with `unique_ports = 1`, and after 20 flows an unusual sequence for that source. Example scores 0.67 and 0.73.
 2. **Supervised engine**: there is no brute-force class in the UNSW-NB15 label set; it may report `Benign` (score 0.0) or another class.
-3. Example blend with the supervised engine at 0.0: `(0.30×0.0 + 0.20×0.67 + 0.10×0.73 + 0.25×0.0) / 0.85 ≈ 0.24` → no alert. A `Benign` supervised vote outweighing anomaly signals is tracked in issue #90.
+3. Example blend with the supervised engine at 0.0: `(0.30×0.0 + 0.20×0.67 + 0.10×0.73 + 0.25×0.0) / 0.85 ≈ 0.24` → no alert. A `Benign` supervised vote outweighing anomaly signals is tracked in issue #90; `brute_force` bypasses that blend because it is a critical rule.
 
 For exposed services with application logs, the logwatch rules (`rules/gitea.yaml`: login brute force, sign-up floods) cover this case from the log side, but only through `python -m src.logwatch.replay` today; no live log tailer is wired in.
 

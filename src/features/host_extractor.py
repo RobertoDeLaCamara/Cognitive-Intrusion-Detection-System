@@ -18,8 +18,9 @@ from scapy.all import IP, TCP, UDP, ICMP, Raw
 from ..config import (
     HOST_WINDOW_SIZE, MAX_TRACKED_IPS, COMMON_PORTS,
     HOST_SCAN_PORTS, HOST_SCAN_WINDOW_SECS, HOST_SCAN_ALLOWLIST,
+    HOST_BRUTE_CONNS, HOST_BRUTE_WINDOW_SECS, HOST_BRUTE_PORTS, HOST_BRUTE_ALLOWLIST,
 )
-from .scan_tracker import ScanTracker
+from .scan_tracker import BruteForceTracker, ScanTracker
 from .utils import byte_entropy
 from ..failure_streak import FailureStreak
 from ..unsupervised.artifact_schema import HOST_FEATURE_SCHEMA  # noqa: F401  (re-exported)
@@ -98,6 +99,8 @@ class HostExtractor:
         self._data: Dict[str, HostHistory] = defaultdict(HostHistory)
         self._lock = threading.RLock()
         self.scan_tracker = ScanTracker(HOST_SCAN_PORTS, HOST_SCAN_WINDOW_SECS, HOST_SCAN_ALLOWLIST)
+        self.brute_tracker = BruteForceTracker(
+            HOST_BRUTE_CONNS, HOST_BRUTE_WINDOW_SECS, HOST_BRUTE_PORTS, HOST_BRUTE_ALLOWLIST)
         # Without a host vector the IsolationForest, LSTM and baseline engines do not score.
         self._compute_streak = FailureStreak(logger, "Host feature extraction")
 
@@ -110,10 +113,18 @@ class HostExtractor:
             if len(self._data) >= MAX_TRACKED_IPS and src not in self._data:
                 self._evict_least_active()
             self._data[src].add_packet(packet, ts)
-        # Start of a TCP connection (SYN, no ACK): input of the host-level port-scan rule.
+        # Start of a TCP connection (SYN, no ACK): input of the host-level port-scan and
+        # brute-force rules.
         if TCP in packet and (int(packet[TCP].flags) & 0x12) == 0x02:
-            self.scan_tracker.observe(src, packet[IP].dst, int(packet[TCP].dport), ts)
+            tcp = packet[TCP]
+            dst = packet[IP].dst
+            self.scan_tracker.observe(src, dst, int(tcp.dport), ts)
+            self.brute_tracker.observe(src, dst, int(tcp.dport), int(tcp.sport), ts)
         return src
+
+    def host_hits(self, src: str, dst: str, dport: int, start: float) -> List[str]:
+        """Host-level rules (port_scan, brute_force) that a flow starting at *start* belongs to."""
+        return self.scan_tracker.hits(src, dst, start) + self.brute_tracker.hits(src, dst, dport, start)
 
     def extract_features(self, ip: str, now: Optional[float] = None) -> Optional[np.ndarray]:
         """Host feature vector; *now* (default wall clock) is the end of the rate window (replay passes capture time)."""

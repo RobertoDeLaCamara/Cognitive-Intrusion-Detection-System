@@ -2,6 +2,13 @@
 
 This document describes operational scenarios for CNDS across different deployment contexts and user roles.
 
+How to read the detection scenarios (2 to 7):
+
+- **Scores are illustrative.** The per-engine numbers are examples, not measurements. Ensemble sums use the default weights in `src/config.py` (supervised 0.30, Isolation Forest 0.20, LSTM 0.10, rules 0.25, baseline 0.15) with the baseline engine not yet trained, so the other four are renormalised over 0.85.
+- **Labels.** The shipped models (FT-Transformer, Random Forest fallback) emit UNSW-NB15 classes: `Benign`, `Analysis`, `Backdoor`, `DoS`, `Exploits`, `Fuzzers`, `Generic`, `Reconnaissance`, `Shellcode`, `Worms`. CIC-IDS2017 names such as `PortScan` or `SSH-Patator` only appear with a model trained on that label set.
+- **Timing.** A flow is scored when it expires: no packet for `FLOW_TIMEOUT` (default 120 s), checked every 10 s. A flow that keeps receiving packets is not scored until it goes quiet. Detection is therefore minutes after onset, not seconds.
+- **Two alert paths.** WebSocket broadcast, webhook/Telegram/ntfy notifications, confidence decay and incident correlation run only for alerts created through `POST /api/predict`. Alerts written by the live detector are stored (with MITRE and GeoIP) and are read from the dashboard or the API.
+
 ---
 
 ## Use Case Index
@@ -32,16 +39,15 @@ This document describes operational scenarios for CNDS across different deployme
 
 **Workflow:**
 
-1. Analyst receives a webhook notification (or Telegram message) for a `high`-severity alert.
-2. Analyst opens the Streamlit dashboard or calls `GET /api/alerts?severity=high&acknowledged=false`.
-3. Alert record includes:
-   - `attack_type: "FTP-Patator"` — supervised engine label
-   - `engine_scores: {supervised: 0.92, iforest: 0.78, lstm: 0.65, rules: 0.0}` — cross-engine agreement
-   - `src_geo: {country: "Romania", city: "Bucharest"}` — geographic origin
-   - `mitre_techniques: [{id: "T1110", name: "Brute Force"}]` — framework context
-4. Three independent engines agree (supervised + IF + LSTM all elevated). Analyst escalates to Tier-2.
-5. Analyst calls `PATCH /api/alerts/42` to acknowledge and add a note: "Escalated to Tier-2 per brute-force SOP."
-6. Analyst creates an incident: `POST /api/incidents` with title "FTP brute force from Bucharest IP" and links the alert.
+1. Analyst sees a new `high`-severity alert in the Streamlit dashboard, or calls `GET /api/alerts?severity=high&acknowledged=false`. (A webhook, Telegram or ntfy message arrives only for alerts created through `POST /api/predict`.)
+2. Alert record includes:
+   - `attack_type: "Exploits"` — supervised engine label
+   - `engine_scores: {supervised: 0.92, isolation_forest: 0.78, lstm: 0.65, rules: 0.0}` — cross-engine agreement
+   - `src_geo: {country: "RO", city: "Bucharest", lat: ..., lon: ...}` — geographic origin (only with `GEOIP_DB_PATH` set)
+   - `triggered_rules` and `mitre_techniques` — filled when a rule fired
+3. Three independent engines agree (supervised + IF + LSTM all elevated). Analyst escalates to Tier-2.
+4. Analyst calls `PATCH /api/alerts/42` with `{"acknowledged": true, "label": "tp", "notes": "Escalated to Tier-2 per SOP."}`.
+5. Analyst creates an incident: `POST /api/incidents` with title "Exploit attempts from Bucharest IP", then links the alert with `PATCH /api/alerts/42` `{"incident_id": <id>}`.
 
 **Value:** Engine-level transparency eliminates the "why did this fire?" question — analysts immediately see which signals agreed and why.
 
@@ -50,20 +56,19 @@ This document describes operational scenarios for CNDS across different deployme
 ## 2. Detecting a DoS Attack
 
 **Actor:** Automated detection pipeline
-**Goal:** Alert on volumetric attack within seconds of onset.
+**Goal:** Alert on a volumetric attack.
 
 **Signal chain:**
 
-1. Attacker begins HTTP flood at 5,000 requests/second against web server `10.0.0.5`.
-2. **Rules Engine fires immediately**: the flow carries more than `ICMP_FLOOD_THRESHOLD` forward ICMP packets (rule `icmp_flood`, evaluated when the flow expires).
-3. **Isolation Forest score spikes**: `bytes_per_sec` and `packets_per_sec` features diverge sharply from the baseline distribution. Score: 0.89.
-4. **Supervised engine labels** the flow: "DoS Hulk" at 0.87 confidence (high forward packet counts, IAT drops to near-zero).
-5. **LSTM score** is moderate (0.55) — not enough sequence history yet for the new source IP.
-6. **Ensemble**: `0.40×0.87 + 0.30×0.89 + 0.20×0.55 + 0.10×1.0 = 0.82` → `critical` severity.
-7. Alert fires. WebSocket broadcast to dashboard. Webhook POSTed to Splunk HEC.
-8. Telegram notification sent to on-call engineer.
+1. Attacker sends a SYN flood against web server `10.0.0.5:80` from one source port, so all packets fall on one flow.
+2. When the flow expires, the **Rules Engine** fires `syn_scan`: more than `PORT_SCAN_THRESHOLD` (20) SYNs and fewer than 5 forward packets carrying data. `syn_scan` is in the default `CRITICAL_RULES`, so the score is forced to 1.0 and the alert is `critical` whatever the other engines say.
+3. **Isolation Forest**: `bytes_per_sec` and `packets_per_sec` of the source host diverge from what the model was fit on. Example score: 0.89.
+4. **Supervised engine** may label the flow `DoS`. Example confidence: 0.87.
+5. **LSTM**: 0.0 until the source IP has 20 completed flows in its buffer.
+6. Without the critical-rule override the blend would be `(0.30×0.87 + 0.20×0.89 + 0.10×0.0 + 0.25×1.0) / 0.85 ≈ 0.81` → `high`.
+7. The alert is written to the database. For ICMP floods the equivalent rule is `icmp_flood` (more than `ICMP_FLOOD_THRESHOLD` forward ICMP packets in the flow); it is not a critical rule, so it only contributes through the blend.
 
-**Response time:** First alert within 1–3 seconds of attack onset (limited by `MIN_PACKETS_FOR_ML` threshold for flow feature stability).
+**Response time:** the alert appears after the flood flow has been idle for `FLOW_TIMEOUT` seconds (120 by default) plus up to 10 s. A flood that never pauses on the same 5-tuple is not scored until it stops or the flow is evicted.
 
 ---
 
@@ -72,17 +77,15 @@ This document describes operational scenarios for CNDS across different deployme
 **Actor:** Automated detection pipeline
 **Goal:** Detect nmap-style TCP SYN scan.
 
-**Signal chain:**
+**Current state: partial.** `nmap -sS` sends one SYN per destination port, so every probe is its own flow with a single SYN. The `syn_scan` rule counts SYNs inside one flow and does not fire, and each flow on its own is unremarkable to the supervised engine. This gap is tracked in issue #87 (no host-level scan rule).
 
-1. Attacker runs `nmap -sS 192.168.1.0/24` from `10.0.0.99`.
-2. **Rules Engine fires**: `syn_flag_count > PORT_SCAN_THRESHOLD AND tot_fwd_pkts < 3`. Rule: `syn_scan`.
-3. **Supervised engine**: "PortScan" label at 0.85 confidence. The combination of high SYN count, low packet total, and near-zero backward traffic is characteristic.
-4. **Isolation Forest**: Host features show massive `unique_ports` and `uncommon_port_ratio` values. Score: 0.91.
-5. **LSTM**: After 20+ packets from `10.0.0.99`, the sequence of increasing port diversity scores high. Score: 0.72.
-6. **Ensemble**: `0.40×0.85 + 0.30×0.91 + 0.20×0.72 + 0.10×1.0 = 0.85` → `critical`.
-7. Alert: `mitre_techniques: [{id: "T1046", name: "Network Service Scanning", tactic: "Discovery"}]`.
+What can still raise an alert:
 
-**Low false-positive risk:** The rule requires both elevated SYN count AND low forward traffic — a legitimate TLS handshake or HTTP keep-alive does not match.
+1. **Isolation Forest / baseline engine**: the scanning host's vector shows very high `unique_ports` and `uncommon_port_ratio`. Whether that crosses `ENSEMBLE_THRESHOLD` depends on the weights; with the defaults, a host-engine score alone usually does not.
+2. **Supervised engine**: may label individual probe flows `Reconnaissance`.
+3. **Threat intelligence**: a scanner whose IP is in a configured feed gets +0.30.
+
+A repeated-SYN scan against a single port (same 5-tuple, more than 20 SYNs) does trigger `syn_scan` and a critical alert, with `mitre_techniques: [{id: "T1046", name: "Network Service Scanning", tactic: "Discovery"}]`.
 
 ---
 
@@ -91,16 +94,15 @@ This document describes operational scenarios for CNDS across different deployme
 **Actor:** Automated detection pipeline
 **Goal:** Detect repeated failed login attempts against SSH.
 
-**Signal chain:**
+**Current state: not detected by a dedicated rule.** `hydra` against SSH produces many short flows to port 22; no rule counts repeated short connections to one service (issue #88), and SSH is encrypted, so payload rules see nothing.
 
-1. Attacker runs `hydra -t 4 -l root -P rockyou.txt ssh://192.168.1.20`.
-2. **Supervised engine**: "SSH-Patator" label at 0.81 confidence. The feature pattern — many short bidirectional flows to port 22 with consistent byte sizes — matches the training data.
-3. **Isolation Forest**: Elevated `packets_per_sec` and `unique_ports = 1` (all traffic to port 22) produces an anomaly score of 0.67.
-4. **LSTM**: Repeated short-duration flows over time create an unusual temporal pattern. Score: 0.73 after 20 flows.
-5. **Rules Engine**: No rule fires (threshold counts target faster attacks).
-6. **Ensemble**: `0.40×0.81 + 0.30×0.67 + 0.20×0.73 + 0.10×0.0 = 0.67` → `medium`.
-7. After 5 alerts from the same IP within 300 seconds, the correlation module auto-creates an incident.
-8. All subsequent alerts from `10.0.0.99` are linked to the incident.
+What can still raise an alert:
+
+1. **Isolation Forest / LSTM / baseline**: elevated `packets_per_sec` with `unique_ports = 1`, and after 20 flows an unusual sequence for that source. Example scores 0.67 and 0.73.
+2. **Supervised engine**: there is no brute-force class in the UNSW-NB15 label set; it may report `Benign` (score 0.0) or another class.
+3. Example blend with the supervised engine at 0.0: `(0.30×0.0 + 0.20×0.67 + 0.10×0.73 + 0.25×0.0) / 0.85 ≈ 0.24` → no alert. A `Benign` supervised vote outweighing anomaly signals is tracked in issue #90.
+
+For exposed services with application logs, the logwatch rules (`rules/gitea.yaml`: login brute force, sign-up floods) cover this case from the log side, but only through `python -m src.logwatch.replay` today; no live log tailer is wired in.
 
 ---
 
@@ -113,16 +115,17 @@ This document describes operational scenarios for CNDS across different deployme
 
 **Signal chain:**
 
-1. Rules engine sees no threshold violations (rate is deliberately low).
+1. Rate-based signals stay low (the rate is deliberately low).
 2. Supervised engine sees no single anomalous flow (each individual flow looks normal).
-3. **Isolation Forest**: Over time, `fwd_bytes / bwd_bytes` ratio (asymmetric upload feature) gradually increases. Eventually the ratio exceeds 10× normal and IF scores 0.72.
-4. **LSTM** is the primary detector here: Per-IP sequence buffer accumulates 20 vectors showing a persistent, slow increase in upload ratio. Reconstruction error grows to 0.81.
-5. **Ensemble**: `0.40×0.15 + 0.30×0.72 + 0.20×0.81 + 0.10×0.0 = 0.54` — just below the default 0.55 threshold!
+3. **Rules engine**: `asymmetric_upload` fires on any flow with more than 10 forward packets, at least one backward packet and a forward/backward byte ratio above 50. Rules score 1.0, MITRE T1041.
+4. **Isolation Forest**: the host features have no upload/download ratio, so the IF only reacts if payload size or entropy for the host drifts. Example score: 0.40.
+5. **LSTM**: once the source has 20 completed flows, a sustained change in its host vectors raises the reconstruction error. Example score: 0.81.
+6. **Ensemble**: `(0.30×0.15 + 0.20×0.40 + 0.10×0.81 + 0.25×1.0) / 0.85 ≈ 0.54` — just below the default 0.55 threshold.
 
 **Tuning for this scenario:**
 - Lower `ENSEMBLE_THRESHOLD` to 0.50, or
-- Increase LSTM weight: `WEIGHT_LSTM=0.35`, reduce supervised: `WEIGHT_SUPERVISED=0.30`
-- The `ATTACK_TYPE_WEIGHTS` config can set higher LSTM weight for suspected exfiltration patterns.
+- Add `asymmetric_upload` to `CRITICAL_RULES` so a hit always alerts (expect false positives from backups and uploads; pair it with suppression rules), or
+- Shift weight towards rules and LSTM (`WEIGHT_RULES`, `WEIGHT_LSTM`); the five weights must still sum to 1.0.
 
 This illustrates the **tuning knobs** available: the system can be made more or less sensitive per attack category.
 
@@ -135,15 +138,14 @@ This illustrates the **tuning knobs** available: the system can be made more or 
 
 **Signal chain:**
 
-1. Attacker sends `GET /login?user=admin' OR '1'='1 HTTP/1.1` to port 443.
-2. **Payload Analyzer**: SQLi pattern regex matches. `payload_features[0] = 1.0`. Triggered rule: `payload:sql_injection`.
-3. **Rules Engine fires**: `any(payload_features[0:6]) == 1` → rules_score = 1.0.
-4. **Supervised engine**: "Web Attack – SQL Injection" at 0.79 confidence.
-5. **JA3 fingerprint** stored: fingerprint identifies the HTTP client (curl, sqlmap, etc.).
-6. **Ensemble**: High rules score pulls ensemble above threshold. `severity: high`.
-7. **MITRE techniques**: T1190 (Exploit Public-Facing Application).
+1. Attacker sends `GET /login?user=admin' OR '1'='1 HTTP/1.1` to port 80. (Payload rules need plaintext: TLS records and high-entropy payloads are skipped, so HTTPS traffic must be inspected after TLS termination.)
+2. **Payload Analyzer**: the SQLi pattern matches and returns the name `sql_injection`.
+3. **Rules Engine**: adds `payload:sql_injection` to the triggered rules; rules score = 1.0.
+4. `payload:sql_injection` is in the default `CRITICAL_RULES`: the ensemble score is forced to 1.0 and the alert is `critical`, whatever the supervised label is.
+5. **JA3 fingerprint** is stored only for TLS flows (there is none for plaintext HTTP).
+6. **MITRE techniques**: T1190 (Exploit Public-Facing Application).
 
-**Multi-attack scenario:** If same IP sends both SQLi and XSS probes, both pattern flags fire and multiple triggered_rules are stored. After 5 alerts, the correlation engine groups them into an incident titled "Web application probing from X.X.X.X".
+**Multi-attack scenario:** If the same IP sends both SQLi and XSS probes in one flow, both names are stored in `triggered_rules`. On the `POST /api/predict` path, once the IP reaches `CORRELATION_THRESHOLD` (5) alerts within `CORRELATION_WINDOW_SECS` (300 s), the correlation module creates an incident titled "Correlated attack from X.X.X.X" and links later alerts to it. Alerts from the live detector are not correlated automatically.
 
 ---
 
@@ -158,13 +160,13 @@ This illustrates the **tuning knobs** available: the system can be made more or 
 
 1. Workstation connects to `203.0.113.5:443` via TLS.
 2. **JA3 fingerprinter** extracts ClientHello fields.
-3. JA3 hash `a0e9f5d64349fb13191bc781f81f42e1` matches an entry in `MALICIOUS_JA3_FILE` (e.g., from SSLBL or custom threat intel feed).
+3. JA3 hash `a0e9f5d64349fb13191bc781f81f42e1` matches an entry in `MALICIOUS_JA3_FILE` (e.g., exported from SSLBL or a custom list).
 4. **Rules Engine fires**: `malicious_ja3` rule. rules_score = 1.0.
-5. Even if supervised and IF scores are low (traffic volume looks benign), the rules engine weight (10%) pushes the ensemble above threshold.
+5. `malicious_ja3` is in the default `CRITICAL_RULES`, so the alert fires at `critical` severity even if supervised and IF scores are low (traffic volume looks benign).
 6. Alert: `triggered_rules: ["malicious_ja3"]`, `ja3_hash: "a0e9f5d..."`, `ja3_string: "771,49195..."`.
 7. Analyst can use the JA3 string to identify the specific TLS implementation (e.g., known Cobalt Strike profile, Metasploit default).
 
-**Maintaining the JA3 list:** Update `MALICIOUS_JA3_FILE` with new hashes from threat intel. CNDS reloads the file on startup.
+**Maintaining the JA3 list:** Update `MALICIOUS_JA3_FILE` with new hashes; `main.py` reads the file at startup only, so restart the detector. Alternatively set `MALICIOUS_JA3_URL`: the threat-intel store fetches that list and a match adds +0.30 to the score and the `threat_intel_malicious_ja3` entry (it does not force an alert).
 
 ---
 
@@ -195,12 +197,12 @@ def score_zeek_conn(conn_record):
     host_features = get_host_history(conn_record["id.orig_h"])  # 18 features
 
     resp = httpx.post("http://cnds:8000/api/predict",
-        headers={"Authorization": f"Bearer {TOKEN}"},
+        headers={"Authorization": f"Bearer {TOKEN}"},  # or {"X-API-Key": API_KEY}
         json={
             "src_ip": conn_record["id.orig_h"],
             "dst_ip": conn_record["id.resp_h"],
             "dst_port": conn_record["id.resp_p"],
-            "protocol": conn_record["proto"],
+            "protocol": 6,  # IP protocol number (6 TCP, 17 UDP, 1 ICMP)
             "flow_features": flow_features,
             "host_features": host_features
         }
@@ -208,7 +210,7 @@ def score_zeek_conn(conn_record):
     return resp.json()
 ```
 
-This mode runs the API without `--api` flag equivalent, using `uvicorn src.api.main:app` in prediction-only mode (no live capture).
+Run the API on its own with `uvicorn src.api.main:app` (no live capture). `flow_features` must hold exactly 76 values and `host_features` exactly 18. This path also applies IP allow/block lists, confidence decay, correlation and notifications.
 
 ---
 
@@ -221,7 +223,7 @@ This mode runs the API without `--api` flag equivalent, using `uvicorn src.api.m
 
 1. `GET /api/incidents?status=open` — retrieves all open incidents.
 2. There is no `GET /api/incidents/{id}`: read the incident from the list above and its alerts with `GET /api/alerts?src_ip=10.0.0.99` (each alert carries `incident_id`).
-3. Analyst reviews alert timeline: 8 alerts from `10.0.0.99` over 10 minutes, mix of PortScan and SSH-Patator types.
+3. Analyst reviews alert timeline: 8 alerts from `10.0.0.99` over 10 minutes, a mix of `Reconnaissance` and `Exploits` labels.
 4. Analyst updates incident: `PATCH /api/incidents/7` `{status: "investigating", assigned_to: "alice", notes: "Possible external attacker testing perimeter"}`.
 5. Analyst creates a suppression rule for the IP while investigation continues (if authorized): `POST /api/suppression-rules` with `src_ip: "10.0.0.99"`, `min_severity: "low"`, `duration_minutes: 1440` (the server computes `expires_at`), `reason: "Under investigation — suppressing low-severity alerts"`.
 6. After firewall block is confirmed, analyst resolves: `PATCH /api/incidents/7` `{status: "resolved", notes: "Blocked at perimeter firewall. No lateral movement detected."}`.
@@ -245,13 +247,15 @@ This mode runs the API without `--api` flag equivalent, using `uvicorn src.api.m
 
 | Tactic | Techniques |
 |---|---|
-| Reconnaissance | T1046 (Network Service Scanning) |
-| Initial Access | T1190 (Exploit Public-Facing App) |
-| Execution | T1059.007 (XSS), T1203 (Client Exploitation) |
-| Command & Control | T1071 (App Layer Protocol), T1071.001 (Web) |
-| Exfiltration | T1048 (Alt Protocol), T1030 (Size Limits) |
-| Impact | T1498 (DoS — Network), T1499 (DoS — Endpoint) |
-| Credential Access | T1110 (Brute Force), T1110.001 (Password Guessing) |
+| Discovery | T1046 (Network Service Scanning), T1083 (File and Directory Discovery) |
+| Initial Access | T1190 (Exploit Public-Facing Application) |
+| Execution | T1059 (Command and Scripting Interpreter), T1059.007 (JavaScript), T1203 (Exploitation for Client Execution) |
+| Command and Control | T1071 (Application Layer Protocol), T1573 (Encrypted Channel) |
+| Exfiltration | T1041 (Exfiltration Over C2 Channel), T1030 (Data Transfer Size Limits) |
+| Impact | T1498 (Network Denial of Service), T1498.001 (Direct Network Flood) |
+| Credential Access | T1110 (Brute Force), T1110.001 (Password Guessing): only with a model that emits CIC-IDS2017 labels |
+
+The table lists what `src/enrichment/mitre.py` can attach. With the shipped models the techniques come from the rules that fired, because the UNSW-NB15 class names have no entry in the label map.
 
 This coverage maps directly to PCI DSS Requirement 11.4 (intrusion detection) and NIST CSF DE.CM-1 (network monitoring).
 
@@ -269,13 +273,13 @@ This coverage maps directly to PCI DSS Requirement 11.4 (intrusion detection) an
 {
   "src_ip": "192.168.1.20",
   "reason": "Authorized Nessus scan — change #2026-042",
-  "expires_at": "2026-03-29T20:00:00Z"
+  "duration_minutes": 240
 }
 ```
-2. During scan: All alerts matching `src_ip=192.168.1.20` are silently suppressed.
-3. After scan window: Rule expires automatically at `expires_at`. Or manually delete with `DELETE /api/suppression-rules/3`.
+2. During scan: alerts matching `src_ip=192.168.1.20` are not stored (the detector logs them as `[SUPPRESSED]`).
+3. After scan window: the rule expires automatically (the server computes `expires_at` from `duration_minutes`; default 120, at most 7 days for an IP-wide rule). Or delete it with `DELETE /api/suppression-rules/3` (admin).
 
-**Granular suppression:** The rule can match on `attack_type` (suppress only "PortScan" from the scanner IP while still alerting on unusual payloads). This allows suppressing known-benign scan behaviors while maintaining detection for unexpected activity from the same IP.
+**Granular suppression:** The rule can also match on `dst_ip`, `src_port`, `dst_port`, `attack_type` and `min_severity` (for example, suppress only `Reconnaissance` from the scanner IP while still alerting on payload signatures). This allows suppressing known-benign scan behaviors while maintaining detection for unexpected activity from the same IP.
 
 ---
 
@@ -288,28 +292,31 @@ This coverage maps directly to PCI DSS Requirement 11.4 (intrusion detection) an
 
 **Workflow:**
 
-1. Analysts label 200 alerts over two weeks:
-   - `PATCH /api/alerts/{id}` `{notes: "FP — NAS backup traffic", acknowledged: true}`
-   - A labeling convention: alerts noted "FP" are tracked internally.
-2. After 200+ labels, call `GET /api/adaptive-weights`:
+1. Set `ADAPTIVE_WEIGHTS_ENABLED=true`. Analysts label alerts over two weeks:
+   - `PATCH /api/alerts/{id}` `{"acknowledged": true, "label": "fp", "notes": "NAS backup traffic"}`
+   - An acknowledged alert counts as a false positive when `label` is `fp` (or its notes contain the words "false positive"); every other acknowledged alert counts as a true positive.
+2. Once at least `ADAPTIVE_MIN_SAMPLES` (100) alerts are acknowledged, `GET /api/adaptive-weights` returns suggested weights for four engines (the baseline engine is not part of the calculation; the values below are an example):
    ```json
    {
-     "suggested_weights": {
-       "supervised": 0.50,
-       "iforest": 0.20,  ← reduced due to FP pattern
-       "lstm": 0.22,
-       "rules": 0.08
+     "status": "ok",
+     "weights": {
+       "supervised": 0.31,
+       "isolation_forest": 0.17,
+       "lstm": 0.27,
+       "rules": 0.25
      }
    }
    ```
-3. Update `.env`:
+   Before that it returns `{"status": "insufficient_data", "weights": null}`.
+3. The suggestion is not applied automatically. Copy it into `.env`, leaving room for the baseline weight so the five values sum to 1.0, for example:
    ```
-   WEIGHT_SUPERVISED=0.50
-   WEIGHT_IFOREST=0.20
-   WEIGHT_LSTM=0.22
-   WEIGHT_RULES=0.08
+   WEIGHT_SUPERVISED=0.27
+   WEIGHT_IFOREST=0.14
+   WEIGHT_LSTM=0.23
+   WEIGHT_RULES=0.21
+   WEIGHT_BASELINE=0.15
    ```
-4. Restart CNDS. New weights reduce false positive rate from NAS traffic.
+4. Restart CNDS for the new weights to take effect.
 
 Alternatively, add a suppression rule for the NAS IP to achieve the same effect without reweighting.
 
@@ -350,7 +357,7 @@ Alternatively, add a suppression rule for the NAS IP to achieve the same effect 
 **Actor:** Network administrator in a home/lab network
 **Goal:** Prevent CNDS from alerting on known-benign outbound traffic from specific devices.
 
-**Context:** The lab has a NAS that regularly syncs with NAS QuickConnect (relay.nas-provider.com) and a Git Server server that fetches GitHub updates. These generate "Bot" and "Infiltration" false positives from the supervised engine.
+**Context:** The lab has a NAS that regularly syncs with NAS QuickConnect (relay.nas-provider.com) and a Git Server server that fetches GitHub updates. These generate false positives from the supervised and anomaly engines.
 
 **Configuration in `.env`:**
 ```
@@ -362,11 +369,11 @@ TRUSTED_OUTBOUND='{
 ```
 
 **Behavior:**
-- Packets from trusted IPs to their listed domains skip the detection pipeline entirely.
-- Alerts are not generated, suppression rules are not needed.
-- Other traffic from the same IPs (unusual destinations) still goes through detection.
+- When a flow from a listed source IP expires, CNDS reverse-resolves the destination IP (PTR lookup, 2 s timeout). If the hostname ends with one of the listed domains, the flow is dropped before scoring.
+- The match is on the reverse-DNS name of the destination, not on the name the device queried, so it only works for destinations whose PTR record ends in the listed suffix (many CDN and cloud addresses do not).
+- Other traffic from the same IPs still goes through detection.
 
-This is distinct from the IP allowlist (which skips all detection from an IP) — trusted outbound is per-destination-domain.
+This is distinct from the IP allowlist (`IP_ALLOWLIST`, applied on the `POST /api/predict` path) — trusted outbound is per source IP and destination domain, on the capture path.
 
 ---
 
@@ -383,11 +390,11 @@ This is distinct from the IP allowlist (which skips all detection from an IP) �
    cd demo
    python run_demo.py
    ```
-3. The demo generates synthetic PCAPs for 5+ attack scenarios, replays them through the detection pipeline, and produces a summary report.
+3. The demo generates synthetic PCAPs for the scenarios in `demo/generate_traffic.py`, replays them through the detection pipeline, and prints a summary.
 4. Review detection rates per scenario, false positive counts, and MITRE technique coverage.
 5. Use `scripts/pcap_replay.py` for custom PCAP evaluation:
    ```bash
-   python scripts/pcap_replay.py captures/lab_traffic.pcap --output results.json
+   python scripts/pcap_replay.py captures/lab_traffic.pcap --output results.json --report results.md
    ```
 
 See [digital-twin-sandbox.md](digital-twin-sandbox.md) for the full demo documentation.

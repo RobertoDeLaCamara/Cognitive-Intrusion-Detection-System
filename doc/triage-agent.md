@@ -5,7 +5,7 @@ evidence and a recommendation for the analyst. It is phase 2 of the roadmap in
 [`mcp-server.md`](mcp-server.md): *it annotates; it does not act.*
 
 ```
-alerts (unacknowledged, ≥ TRIAGE_MIN_SEVERITY, not yet annotated)
+alerts (unacknowledged, ≥ TRIAGE_MIN_SEVERITY, last TRIAGE_LOOKBACK_HOURS, not yet annotated)
    │
    ▼
 runner  ── builds context through the sanitising MCP query layer

@@ -21,7 +21,7 @@ judgement:
 
 | Mechanism | What it waits for |
 |---|---|
-| `enrichment/adaptive_weights.py` | `ADAPTIVE_MIN_SAMPLES` (100) **acknowledged** alerts before weights adapt at all |
+| `enrichment/adaptive_weights.py` | `ADAPTIVE_MIN_SAMPLES` (100) **acknowledged** alerts before it computes suggested engine weights at all (they are reported by the API, not applied to the scorer) |
 | `guardian/engine.py` | A human to confirm a block; otherwise every block silently rolls back after `GUARDIAN_BLOCK_MINUTES` |
 
 Both need an analyst to decide *"true positive or not?"* — the expensive, tedious work
@@ -247,10 +247,10 @@ Example questions this answers without writing a query:
 | No engine health tool | `/health` needs the loaded engine singletons; importing them would pull in torch and make the server heavy to spawn |
 | No threat-intel lookup | Feeds live in an in-memory set inside the detector process, same constraint as the DNS log |
 | No live capture stats | Held on `app.state` in the API process |
-| Acknowledgement as FP proxy | `acknowledged` means "a human looked at it", not "confirmed false positive". A dedicated verdict field would be needed for a real signal |
+| Acknowledgement as FP proxy | `acknowledged` means "a human looked at it", not "confirmed false positive". The analyst verdict now exists as `alerts.label` (`tp` / `fp` / `unknown`), but no tool returns it yet |
 
-None require a schema change to lift; all are consequences of running as a separate
-process. An HTTP-backed variant could reach the in-memory ones, at the cost of requiring
+None require a schema change to lift; all but the last are consequences of running as a
+separate process. An HTTP-backed variant could reach the in-memory ones, at the cost of requiring
 the API to be up and holding a JWT.
 
 ---
@@ -313,7 +313,7 @@ This is phase 1 of three. Phase 2 is implemented; phase 3 is **not**:
   writes an advisory verdict, evidence and recommendation to a separate, append-only
   `triage_annotations` table. It annotates; it does not act. `get_alert` now returns
   the latest annotation as `agent_triage`, marked advisory. Acknowledgement stays
-  human, so `adaptive_weights` still learns from analyst decisions only — the agent
+  human, so `adaptive_weights` still counts analyst decisions only — the agent
   makes those decisions faster, it does not make them.
 - **Phase 3 — propose-and-confirm.** Agent-suggested mitigations routed through the
   existing Telegram Confirm/Undo handshake, so a human remains the actuator.

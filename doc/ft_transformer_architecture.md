@@ -104,7 +104,7 @@ flowchart TD
     G["Linear(256 → 10)\nRaw logits for 10 classes"]
     H["Divide by FT_TEMPERATURE\nDefault T=2.0 — reduces over-confidence\nSkipped if T=1.0"]
     I["Softmax(-1)\nProbability distribution over 10 classes"]
-    J["Argmax → predicted class\nmax prob → confidence\nP(Benign) → anomaly_score = 1 - P(Benign)"]
+    J["Argmax → predicted class\nmax prob → confidence\n(ensemble score: confidence, 0 if Benign)"]
 
     A --> B
     B --> C
@@ -270,7 +270,7 @@ FT_TEMPERATURE=1.0   # disable temperature scaling
 
 ### Relationship to ensemble-level calibration
 
-`FT_TEMPERATURE` operates at the **model output level** — it calibrates the probability distribution before the anomaly score `1 - P(Benign)` is computed. This is distinct from `CALIBRATION_TEMPERATURE`, which applies Platt scaling to the **ensemble score** (the weighted average of all four engine scores). Normally only `FT_TEMPERATURE` needs adjustment; `CALIBRATION_TEMPERATURE` should remain at 1.0 unless the entire ensemble is miscalibrated.
+`FT_TEMPERATURE` operates at the **model output level** — it calibrates the probability distribution before the pipeline takes the predicted-class confidence as the supervised score (`0.0` when the class is `Benign`; the engine's `anomaly_score()`, `1 - P(Benign)`, is not called at runtime). This is distinct from `CALIBRATION_TEMPERATURE`, which applies Platt scaling to the **ensemble score** (the weighted average of the available engine scores). Normally only `FT_TEMPERATURE` needs adjustment; `CALIBRATION_TEMPERATURE` should remain at 1.0 unless the entire ensemble is miscalibrated.
 
 ---
 
@@ -283,7 +283,7 @@ FT_TEMPERATURE=1.0   # disable temperature scaling
 | `src/config.py` | `FT_TEMPERATURE`, `FT_MODEL_PATH`, `FT_SCALER_PATH`, `FT_USE_GPU`, `FT_SCORE_THRESHOLD`, `MLFLOW_FT_REGISTRY_NAME` |
 | `models/unified/unified_ft_transformer.pt` | Checkpoint bundle: `state_dict`, `config`, `n_features`, `n_classes`, `feature_names` |
 | `models/unified/unified_scaler.pkl` | `sklearn.preprocessing.StandardScaler` fitted on the training split |
-| `models/unified/unified_metadata.json` | Hyperparameters, metrics, training history, class counts |
+| `models/unified/unified_metadata.json` | Hyperparameters, metrics, training history, class counts. The file in the repository is from the untuned run (`d_token=128`, test F1 macro 0.5446); the Optuna-tuned values live in the checkpoint's own `config` |
 | `scripts/smoke_test_ft_unified.py` | Reproduces test F1 macro on the held-out 15% split (~0.6194) |
 | `tests/test_ft_transformer_engine.py` | 7 integration tests: load, scale, forward, softmax, benign/attack prediction |
 | `doc/UNIFIED_FT_LIVE_RUNBOOK.md` | Manual end-to-end test with hping3 / nmap on live traffic |

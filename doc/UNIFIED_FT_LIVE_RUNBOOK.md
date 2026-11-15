@@ -25,11 +25,10 @@ override; that does not affect production runs of `main.py`.
 
 ## Capture interface
 
-On Hawkeye (this host, WSL2), choose an interface that actually carries
-traffic. `eth0`/`eth4` map to the host adapter via WSL2's mirrored
-networking. For a clean test, ssh in from another host (e.g. raspi-62)
-to generate inbound traffic, or generate from this same host to a LAN
-target so the loopback shortcut isn't taken.
+Choose an interface that actually carries traffic. Under WSL2 with mirrored
+networking, `eth0`/`eth4` map to the host adapter. For a clean test, ssh in
+from another host to generate inbound traffic, or generate from the capture
+host to a LAN target so the loopback shortcut isn't taken.
 
 ```bash
 ip -4 addr | awk '/inet /{print $NF, $2}'
@@ -39,23 +38,24 @@ ip -4 addr | awk '/inet /{print $NF, $2}'
 ## Start cnds with the FT engine
 
 ```bash
-cd /home/roberto/repos/cnds
+cd /path/to/cnds
 # venv: torch CPU build + the rest of cnds requirements
 source venv/bin/activate
 
-# Make MLflow + MinIO reachable so the engine can fall back to
-# the registry (the local checkpoint takes priority anyway).
+# Optional: MLflow + MinIO. With MLFLOW_TRACKING_URI set, the engine tries the
+# registry first and uses the local checkpoint when the registry has no model.
 export MLFLOW_TRACKING_URI=http://your-mlflow-host:5050
 export MLFLOW_S3_ENDPOINT_URL=http://your-minio-host:9000
-export AWS_ACCESS_KEY_ID=roberto
-export AWS_SECRET_ACCESS_KEY=patilla1
-# The proxy must be bypassed for all 192.168.1.x traffic.
-export NO_PROXY=localhost,127.0.0.1,192.168.1.0/24
+export AWS_ACCESS_KEY_ID=<minio-access-key>
+export AWS_SECRET_ACCESS_KEY=<minio-secret-key>
+# If an HTTP proxy is configured, bypass it for the local subnet.
+export NO_PROXY=localhost,127.0.0.1,<your-lan-cidr>
 export no_proxy=$NO_PROXY
 
-# WEIGHT_FT default rides on the existing supervised slot.
+# The FT engine uses the supervised slot (WEIGHT_SUPERVISED); there is no separate weight.
+# FLOW_TIMEOUT=15 makes flows expire (and get scored) sooner than the default 120 s.
 sudo --preserve-env=MLFLOW_TRACKING_URI,MLFLOW_S3_ENDPOINT_URL,AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY,NO_PROXY,no_proxy \
-  venv/bin/python main.py --iface eth4 --api --duration 600
+  FLOW_TIMEOUT=15 venv/bin/python main.py --iface eth4 --api --duration 600
 ```
 
 Look for these log lines on startup:
@@ -79,21 +79,21 @@ ping -c 5 8.8.8.8
 ```
 
 Expect: no alerts in the cnds log, or only low-severity rule-based ones.
-Tail the log:
-
-```bash
-tail -F /tmp/cnds_*.log 2>/dev/null || journalctl --user -fn 100
-```
+`main.py` logs to the terminal (stderr); there is no log file unless you redirect it. A flow is only scored after it has been idle for `FLOW_TIMEOUT` seconds.
 
 ## Generate synthetic attacks
 
 ### SYN flood (target: a non-production host)
 
 ```bash
-sudo hping3 -S -p 80 --flood -c 200 <TARGET_IP>
+sudo hping3 -S -p 80 -s 40000 -k --flood -c 200 <TARGET_IP>
 ```
 
-Expected detection: `attack_type=DoS` (class 3) with high `score`.
+`-s 40000 -k` keeps one source port, so all SYNs fall on one flow. Expected
+detection: the `syn_scan` rule (more than 20 SYNs, no data), which is a
+critical rule and forces `score=1.000`; the label may be `DoS` (class 3).
+Without `-k`, hping3 increments the source port, every SYN is its own flow
+and the rule does not fire.
 
 ### Port scan
 
@@ -101,8 +101,10 @@ Expected detection: `attack_type=DoS` (class 3) with high `score`.
 sudo nmap -sS -p 1-1000 -T4 <TARGET_IP>
 ```
 
-Expected detection: `attack_type=Reconnaissance` (class 7) and the
-`port_scan` rule firing.
+Expected: possibly `attack_type=Reconnaissance` (class 7) on some probe
+flows. There is no `port_scan` rule: a sweep sends one SYN per port, each
+its own flow, so `syn_scan` does not fire and an alert is not guaranteed
+(tracked in issue #87).
 
 ### UDP fuzzing
 
@@ -117,10 +119,10 @@ sometimes mislabel as DoS.
 
 After each attack:
 
-- [ ] cnds logged `[ALERT]` with `engines=[..., 'supervised', ...]`
+- [ ] cnds logged an `[ALERT]` line whose `engines=` list includes `supervised`
 - [ ] `attack_type` matches expectation ±1 class (Fuzzers/DoS often
   blur on synthetic flows)
-- [ ] `ensemble_score >= 0.55` (default threshold)
+- [ ] `score >= 0.55` (default threshold), or a critical rule in `rules=`
 - [ ] Alert visible at `GET http://localhost:8000/api/alerts`
 - [ ] Alert persisted in `cnds.db` (`sqlite3 cnds.db "SELECT
   attack_type, severity, ensemble_score FROM alerts ORDER BY id DESC LIMIT
@@ -146,5 +148,4 @@ sqlite3 cnds.db "DELETE FROM alerts WHERE attack_type IN ('DoS','Reconnaissance'
   Confirm with `curl http://localhost:8000/health` and the startup logs.
 - **WSL2 capture sees no traffic** — WSL2's mirrored networking only
   exposes the host's outbound, not arbitrary inbound. Use an attack target
-  that is reachable from WSL2 (e.g. raspi-62) and generate the attack from
-  this host outward.
+  that is reachable from WSL2 and generate the attack from this host outward.

@@ -44,28 +44,29 @@ Paquete de red (Scapy)
                │
                ▼
 ┌─────────────────────────────────────────────────────────────┐
-│               Inference (4 motores en paralelo)             │
+│      Inference (al expirar el flujo, hasta 5 motores)       │
 │                                                             │
 │  FT-T ─── 76 flow features ──────→ (attack_type, conf)     │  ← preferido
 │  RF   ─── 76 flow features ──────→ (attack_type, conf)     │  ← fallback sin ckpt
 │  IF   ─── 18 host features ──────→ anomaly_score [0,1]     │
 │  LSTM ─── seq de 20 × 18 feat. ──→ reconstruction_error    │
-│  Rules ── flow + host + payload ─→ (1.0 si regla dispara)  │
+│  Rules ── flujo + payload + JA3 ─→ (1.0 si regla dispara)  │
+│  Baseline ─ 18 host features ───→ anomaly_score [0,1]      │  ← entrenado en vivo
 └──────────────┬──────────────────────────────────────────────┘
                │ EngineScores
                ▼
 ┌─────────────────────────────────────────────────────────────┐
 │               EnsembleScorer                                │
 │                                                             │
-│  weighted_avg(w_rf×s_rf, w_if×s_if, w_lstm×s_lstm,        │
-│               w_rules×s_rules)                             │
+│  weighted_avg(supervised, iforest, lstm, rules, baseline)  │
+│  → +0.30 si hay hit de threat intel; CRITICAL_RULES → 1.0  │
 │  → temperature scaling (Platt)                             │
 │  → umbral ENSEMBLE_THRESHOLD (0.55)                        │
 │  → severidad (low/medium/high/critical)                    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Los tres modelos ML operan sobre **representaciones de features distintas** y detectan **tipos de amenaza complementarios**:
+Los modelos ML operan sobre **representaciones de features distintas** y detectan **tipos de amenaza complementarios**:
 
 | Modelo | Input | Detecta | Requisito |
 |---|---|---|---|
@@ -73,6 +74,7 @@ Los tres modelos ML operan sobre **representaciones de features distintas** y de
 | Random Forest (fallback) | 76 flow features | Ataques conocidos con nombre | Sin checkpoint FT-T disponible |
 | Isolation Forest | 18 host features | Anomalías volumétricas/comportamentales | Tráfico normal de referencia |
 | LSTM Autoencoder | Secuencias temporales 20×18 | Cambios lentos / beaconing | Tráfico normal de al menos 2h |
+| Baseline (IF + LSTM entrenados en vivo) | 18 host features | Desviación respecto a lo normal en esta red | Una ventana entrenada por `src/unsupervised/` (ver [unsupervised.md](unsupervised.md)) |
 
 ---
 
@@ -82,7 +84,7 @@ Los tres modelos ML operan sobre **representaciones de features distintas** y de
 
 **Archivo:** `src/features/flow_extractor.py`
 
-Los features de flujo replican exactamente el esquema del dataset **CIC-IDS2017** del Canadian Institute for Cybersecurity, lo que permite entrenar el RF directamente sobre datos públicos sin transformación.
+Los features de flujo replican el esquema de CICFlowMeter (76 columnas, el mismo que usa la redistribución CIC de **UNSW-NB15** con la que se entrenan los modelos). Los nombres en código son snake_case; los CSV de CICFlowMeter usan otros nombres (`Flow Duration`, ...), así que la correspondencia es por posición.
 
 Cada flujo se identifica por la 5-tupla `(src_ip, dst_ip, src_port, dst_port, protocol)`. El primer paquete determina la dirección "forward" (cliente→servidor); el resto son "backward".
 
@@ -175,21 +177,23 @@ FLOW_FEATURE_NAMES = [
 |---|---|---|
 | `FLOW_TIMEOUT` | 120s | Tiempo sin paquetes para flush del flujo |
 | `ACTIVE_IDLE_THRESH` | 1.0s | Gap de tiempo que divide períodos activo/inactivo |
-| `MAX_ACTIVE_FLOWS` | 50,000 | Techo de flujos concurrentes (LRU eviction) |
-| `MIN_PACKETS_FOR_ML` | 10 | Paquetes mínimos antes de enviar a los modelos ML |
+| `MAX_ACTIVE_FLOWS` | 50,000 | Techo de flujos concurrentes (al llegar se expulsa el flujo más antiguo) |
+| `MIN_PACKETS_FOR_ML` | 10 | Definido en `src/config.py`, pero ningún código en ejecución lo lee |
 | `MAX_PAYLOAD_SAMPLES` | 50 | Samples de payload guardados por flujo |
 | `PAYLOAD_SAMPLE_BYTES` | 4,096 | Bytes por sample de payload |
 
-**Invariante:** La función `to_feature_vector()` valida que el vector resultante tenga exactamente 76 elementos; si no, retorna `None` y el flujo no se envía a los motores.
+**Invariante:** el extractor comprueba que el vector resultante tenga exactamente 76 elementos; si no, retorna `None` y el flujo no se envía a los motores.
 
 ### Extensión a 86 features (con payload)
 
 Al ejecutar el script de reentrenamiento con payload, se concatenan los 10 `PAYLOAD_FEATURE_NAMES` al final del vector de 76, produciendo un vector de 86 features. El motor supervisado detecta automáticamente el tamaño al cargar el modelo:
 
 ```python
-n = getattr(self._model, "n_features_in_", 76)
+n = _get_n_features(self._model)
 self._expects_payload = (n == len(EXTENDED_FEATURE_NAMES))  # 76 + 10 = 86
 ```
+
+Esto solo aplica al Random Forest (`SupervisedEngine`). El FT-Transformer usa siempre los 76 features de flujo.
 
 ---
 
@@ -197,7 +201,7 @@ self._expects_payload = (n == len(EXTENDED_FEATURE_NAMES))  # 76 + 10 = 86
 
 **Archivo:** `src/features/host_extractor.py`
 
-Los host features agregan el comportamiento de una IP fuente a lo largo de una ventana deslizante de los últimos `HOST_WINDOW_SIZE` (default: 100) paquetes. Son la entrada para Isolation Forest y LSTM Autoencoder.
+Los host features agregan el comportamiento de una IP fuente a lo largo de una ventana deslizante de los últimos `HOST_WINDOW_SIZE` (default: 100) paquetes. Son la entrada para Isolation Forest, LSTM Autoencoder y el motor baseline.
 
 ```python
 HOST_FEATURE_NAMES = [
@@ -213,7 +217,7 @@ HOST_FEATURE_NAMES = [
     "iat_mean",                # 6: media de tiempos entre llegadas
     "iat_std",                 # 7: desviación estándar de IAT
     "burst_rate",              # 8: paquetes en últimos 5s / 5
-    "session_duration",        # 9: tiempo desde primer paquete
+    "session_duration",        # 9: duración de la ventana (hasta "ahora")
 
     # ── Protocolo (3) ────────────────────────────────────────────────
     "tcp_ratio",               # 10: fracción de paquetes TCP
@@ -222,7 +226,7 @@ HOST_FEATURE_NAMES = [
 
     # ── Puertos (2) ──────────────────────────────────────────────────
     "unique_ports",            # 13: número de puertos destino distintos
-    "uncommon_port_ratio",     # 14: puertos > 1024 / total
+    "uncommon_port_ratio",     # 14: puertos fuera de COMMON_PORTS / total
 
     # ── Payload (3) ──────────────────────────────────────────────────
     "avg_payload_entropy",     # 15: entropía media de payload (bytes)
@@ -236,11 +240,12 @@ HOST_FEATURE_NAMES = [
 - **`burst_rate`** (índice 8): cuenta paquetes en los últimos 5 segundos y divide por 5. Muy sensible a ráfagas como floods.
 - **`unique_ports`** (índice 13): puertos destino distintos en la ventana. Un port scan hace que este valor se dispare.
 - **`avg_payload_entropy`** (índice 15): entropía de Shannon en bits por byte. Tráfico cifrado/comprimido tiene entropía ~7.5-8.0; texto plano ~4.0-6.0.
-- **LRU eviction**: cuando se alcanza `MAX_TRACKED_IPS` (5,000), se expulsa la IP cuya `HostHistory` tiene menos paquetes. El LSTM también aplica esta política, eliminando el buffer del IP víctima.
+- **Evicción**: cuando se alcanza `MAX_TRACKED_IPS` (5,000), `HostExtractor` expulsa la IP cuyo último paquete es más antiguo. El LSTM tiene su propio límite y expulsa la IP con el buffer más corto.
+- **Esquema 2**: las tasas, totales y `session_duration` se calculan sobre la ventana deslizante de los últimos `HOST_WINDOW_SIZE` paquetes, no desde que se vio la IP por primera vez (ver "Host feature schema" en [unsupervised.md](unsupervised.md)).
 
 **`COMMON_PORTS`** usados para calcular `uncommon_port_ratio`:
 ```python
-COMMON_PORTS = {80, 443, 53, 22, 25, 110, 143, 993, 995, 587, 8080, 8443, 21, 20, 3306, 5432}
+COMMON_PORTS = {20, 21, 22, 23, 25, 53, 80, 110, 143, 443, 465, 587, 993, 995, 3306, 5432, 6379, 8080, 8443}
 ```
 
 ---
@@ -255,9 +260,9 @@ Extraídos de los bytes crudos del payload forward del flujo. Se pasan al motor 
 
 | Índice | Nombre | Patrón regex |
 |---|---|---|
-| 0 | `has_sqli` | `union select`, `drop table`, `' OR '1'='1`, etc. |
-| 1 | `has_xss` | `<script`, `javascript:`, `onerror=`, `alert(`, etc. |
-| 2 | `has_cmdi` | `; ls`, `&& curl`, `\| bash`, backticks, `$(...)` |
+| 0 | `has_sqli` | `union select`, `drop table`, `' or `, `'='`, `'--`, `'; drop ...`, `xp_cmdshell`, etc. |
+| 1 | `has_xss` | `<script`, `javascript:`, `onerror=`, `onload=`, `<img `, `<svg `, `alert(` |
+| 2 | `has_cmdi` | Un operador de shell (`;`, `\|`, `&&`, backtick, `$(`) seguido de un comando conocido (`ls`, `cat`, `curl`, `bash`, ...) y un delimitador |
 | 3 | `has_traversal` | `../`, `..\`, `%2e%2e%2f`, `%252e%252e` |
 | 4 | `has_log4j` | `${jndi:`, `${env:`, `${sys:`, `${java:` |
 | 5 | `has_shellshock` | `() { ...; }` (CVE-2014-6271) |
@@ -271,29 +276,23 @@ Extraídos de los bytes crudos del payload forward del flujo. Se pasan al motor 
 | 8 | `mean_payload_length` | Longitud media de los payloads en el flujo |
 | 9 | `suspicious_char_ratio` | Ratio de caracteres sospechosos (null bytes, control chars) |
 
-**Protección anti-ReDoS:**
-```python
-def _match_with_timeout(pattern, data, timeout=1.0):
-    """Ejecuta regex con timeout via threading para evitar bloqueo del pipeline."""
-    result = [False]
-    def _run():
-        result[0] = bool(pattern.search(data))
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    t.join(timeout)
-    return result[0]
-```
+**Coste acotado (no hay timeout por patrón):**
 
-Cada patrón se pre-filtra con una regex barata antes de ejecutar el patrón completo para evitar overhead en tráfico benigno de alto volumen.
+- Solo se analizan los primeros `PAYLOAD_SAMPLE_BYTES` (4096) de cada paquete, y como mucho `MAX_PAYLOAD_SAMPLES` (50) muestras por flujo.
+- Una única regex combinada (`_PRESCREEN`) se ejecuta primero; los seis patrones solo se prueban si esa pre-criba encuentra algo.
+- Los payloads que parecen cifrados o comprimidos se saltan (`looks_encrypted()`: cabecera de registro TLS, o al menos 256 bytes con entropía ≥ 7.0 bits/byte).
 
 ---
 
 ## 3. Modelo 1: Supervisado (FT-Transformer preferido + Random Forest fallback)
 
 El slot supervisado tiene dos implementaciones intercambiables. Ambas
-consumen el mismo vector de 76 features de flujo CICFlowMeter, devuelven
-`(label, confidence)` desde `predict()`, y un score calibrado en `[0, 1]`
-desde `anomaly_score()`. El registry elige **FT-Transformer cuando hay
+consumen el mismo vector de 76 features de flujo CICFlowMeter y devuelven
+`(label, confidence)` desde `predict()`, que es el único método que usan el
+pipeline y `POST /api/predict`: el score supervisado es `0.0` si la clase es
+benigna y la confianza de la clase predicha en caso contrario. Ambos tienen
+también `anomaly_score()` (`1 − P(Benign)` con umbral), pero ningún camino en
+ejecución lo llama. El registry elige **FT-Transformer cuando hay
 checkpoint disponible**, en caso contrario degrada al pipeline Random
 Forest. Ambos motores comparten la misma interfaz, por lo que el
 `pipeline.py`, el ensemble y la API funcionan sin cambios.
@@ -302,7 +301,7 @@ Forest. Ambos motores comparten la misma interfaz, por lo que el
 
 **Archivos:** `src/engines/ft_transformer_engine.py`, `src/models/ft_transformer.py`
 **Checkpoint local:** `models/unified/unified_ft_transformer.pt`
-**MLflow registry:** `models:/ml-ids-unified-ft-transformer/<latest>`
+**MLflow registry:** modelo `ml-ids-unified-ft-transformer`, stage `MLFLOW_FT_STAGE`
 
 #### Arquitectura
 
@@ -361,7 +360,7 @@ from src.engines.ft_transformer_engine import FTTransformerEngine
 
 engine = FTTransformerEngine()        # carga MLflow → fallback local
 label, conf = engine.predict(flow_vec_76)         # ('DoS', 0.91)
-score       = engine.anomaly_score(flow_vec_76)   # 1 - P(Benign), thresholded
+score       = engine.anomaly_score(flow_vec_76)   # 1 - P(Benign) con umbral; no se usa en ejecución
 ```
 
 Pipeline interno (autocast bfloat16 si CUDA disponible):
@@ -400,16 +399,16 @@ al Random Forest descrito abajo.
 | `FT_MODEL_FILE` | `unified/unified_ft_transformer.pt` | Path relativo a `MODELS_DIR` |
 | `FT_SCALER_FILE` | `unified/unified_scaler.pkl` | StandardScaler emparejado |
 | `FT_USE_GPU` | `false` | Inferencia en CUDA si disponible |
-| `FT_SCORE_THRESHOLD` | `0.50` | Score mínimo (1 − P(Benign)) para contribuir |
+| `FT_SCORE_THRESHOLD` | `0.50` | Umbral de `anomaly_score()` (1 − P(Benign)). Sin efecto hoy: ningún camino en ejecución llama a ese método |
 | `FT_TEMPERATURE` | `2.0` | Factor de temperature scaling aplicado a logits antes de softmax (T > 1 reduce over-confidence; 1.0 desactiva). Ver [sección de calibración](#nota-sobre-temperature-scaling). |
 | `MLFLOW_FT_REGISTRY_NAME` | `ml-ids-unified-ft-transformer` | Nombre del modelo registrado en MLflow |
-| `MLFLOW_FT_STAGE` | `None` | Stage MLflow a fijar (default = última versión) |
+| `MLFLOW_FT_STAGE` | `None` | Stage de MLflow del que se toma la versión (por defecto el stage `None`, el de las versiones recién registradas) |
 
 #### Smoke test y validación
 
 ```bash
 # Reproducir F1 macro sobre el test split completo (~64 s en CPU)
-python scripts/smoke_test_ft_unified.py --device cpu
+python scripts/smoke_test_ft_unified.py --device cpu --data-dir /ruta/al/dataset
 
 # Tests de integración (carga, predicciones, validación dataset-driven)
 pytest tests/test_ft_transformer_engine.py -v   # 7 tests
@@ -423,76 +422,41 @@ pytest tests/test_ft_transformer_engine.py -v   # 7 tests
 ### 3.1 Random Forest (fallback)
 
 **Archivo:** `src/engines/supervised.py`
-**Modelo:** `models/rf_model.joblib` (scikit-learn `Pipeline`)
+**Modelo:** `models/rf_model.joblib` (completo, no versionado) o `models/rf_lite_model.joblib` (incluido en el repo)
 
 ### Arquitectura del modelo
 
-El joblib contiene un `sklearn.pipeline.Pipeline` con dos etapas:
+El joblib contiene un `sklearn.pipeline.Pipeline` con cuatro etapas (`scripts/train_rf.py`):
 
 ```
 Pipeline
-├── ("scaler") → StandardScaler  — normalización z-score de los 76/86 features
-└── ("rf")     → RandomForestClassifier — clasificador principal
+├── ("clip")       → ClipNegativeTransformer    — recorta valores negativos
+├── ("log1p")      → SelectiveLog1pTransformer  — log1p en features muy sesgados (|skew| > 5)
+├── ("scaler")     → StandardScaler             — normalización z-score
+└── ("classifier") → RandomForestClassifier
 ```
 
-La inclusión del scaler en el Pipeline garantiza que en inferencia los features se normalizan con los parámetros estadísticos del conjunto de entrenamiento, no con los del tráfico en tiempo real.
+Al ir el preprocesado dentro del Pipeline, en inferencia los features se transforman con los parámetros del conjunto de entrenamiento, no con los del tráfico en tiempo real.
 
-### Dataset de entrenamiento: CIC-IDS2017
+### Dataset de entrenamiento: UNSW-NB15 (redistribución CIC)
 
-El Random Forest se entrena sobre el **CIC-IDS2017** dataset:
+El Random Forest se entrena con el mismo dataset que el FT-Transformer: la redistribución del Canadian Institute for Cybersecurity de **UNSW-NB15** (~447k flujos etiquetados, 76 features CICFlowMeter, 10 clases; la carpeta local se llama `CIC-IDS2017/` por motivos históricos). `train_rf.py` espera dos ficheros en `--data-dir`: `Data.csv` (los 76 features) y `Label.csv` (columna `Label` con el índice de clase).
 
-| Característica | Valor |
-|---|---|
-| Fuente | Canadian Institute for Cybersecurity |
-| Duración captura | 5 días (lunes–viernes) |
-| Volumen | ~2.8 millones de flujos etiquetados |
-| Features | 78 columnas (76 features + Label + Flow ID) |
-| Formato | CSV generado por CICFlowMeter |
-| Disponibilidad | Descarga pública en cicresearch.ca |
+Las clases son las de la tabla del apartado 3.0 (`Benign`, `Analysis`, `Backdoor`, `DoS`, `Exploits`, `Fuzzers`, `Generic`, `Reconnaissance`, `Shellcode`, `Worms`). Las etiquetas de CIC-IDS2017 (`PortScan`, `DoS Hulk`, `SSH-Patator`, ...) no las emite ningún modelo incluido.
 
-**Clases en el dataset:**
-
-| Etiqueta | Tipo | Día |
-|---|---|---|
-| BENIGN | Tráfico normal | Todos |
-| DoS Hulk | HTTP flood tool Hulk | Miércoles |
-| DoS GoldenEye | HTTP DoS | Miércoles |
-| DoS Slowloris | Slow HTTP headers | Miércoles |
-| DoS Slowhttptest | Slow HTTP body | Miércoles |
-| PortScan | Nmap TCP scan | Viernes |
-| FTP-Patator | Brute force FTP | Martes |
-| SSH-Patator | Brute force SSH | Martes |
-| Bot | Botnet C2 | Jueves |
-| Infiltration | Infiltración de red | Jueves |
-| Web Attack – Brute Force | Login brute force | Miércoles |
-| Web Attack – XSS | Cross-site scripting | Miércoles |
-| Web Attack – SQL Injection | SQLi | Miércoles |
-| Heartbleed | CVE-2014-0160 | Viernes |
-
-**Nota sobre desbalanceo:** El dataset CIC-IDS2017 es **altamente desbalanceado** — BENIGN representa ~80% de las muestras. Random Forest maneja esto razonablemente con `class_weight='balanced'`, aunque el script de reentrenamiento usa `stratify=y` en el split.
+**Desbalanceo:** `Benign` es ~80 % de las muestras. `train_rf.py` sobremuestrea con SMOTE las clases minoritarias (se desactiva con `--no-smote`) y hace el split estratificado.
 
 ### Hiperparámetros de entrenamiento
 
-```python
-# src/scripts/retrain_with_payload.py
-RandomForestClassifier(
-    n_estimators  = 100,    # número de árboles (configurable con --n-estimators)
-    random_state  = 42,     # reproducibilidad
-    n_jobs        = -1,     # usar todos los cores disponibles
-)
+| Parámetro | Modelo completo (`train_rf.py`) | Modelo lite (`--lite`) |
+|---|---|---|
+| `n_estimators` | 200 (`--estimators`) | 25 |
+| `max_depth` | 20 (`--max-depth`) | 10 |
+| `min_samples_leaf` / `min_samples_split` | 2 / 5 | 2 / 5 |
+| Muestras | todas (~447k) | 50,000 estratificadas, sin SMOTE |
+| `test_size` | 0.20 (`--test-size`) | 0.20 |
 
-train_test_split(
-    X, y,
-    test_size    = 0.2,    # 80% train, 20% test
-    random_state = 42,
-    stratify     = y,      # mantener proporciones de clases
-)
-```
-
-**Notas:**
-- `n_estimators=100` es conservador; para producción se recomienda 200–500 con `min_samples_leaf=2`.
-- No se configura `max_depth` ni `max_features` — se usan los defaults de sklearn (`max_features='sqrt'`).
-- El script reporta `classification_report` completo con precision/recall/F1 por clase al finalizar.
+El modelo lite (1.6 MB, accuracy 0.91 según `models/rf_lite_model_meta.json`) es el que se incluye en el repositorio. `scripts/retrain_with_payload.py` es un script distinto: entrena un Pipeline `StandardScaler` + `RandomForestClassifier` (100 árboles por defecto, `--n-estimators`) sobre 86 features a partir de un CSV con columna `Label`.
 
 ### Inferencia
 
@@ -503,42 +467,36 @@ def predict(self, flow_features, payload_features=None):
     if self._expects_payload and payload_features is not None:
         vec = np.concatenate([flow_features, payload_features])  # shape (86,)
 
-    vec = vec.reshape(1, -1)
+    vec = vec.ravel().reshape(1, -1)
     label = self._model.predict(vec)[0]       # clase predicha
     proba = self._model.predict_proba(vec)[0]  # probabilidades por clase
     confidence = float(proba.max())            # confianza = prob de la clase ganadora
     return str(label), confidence
 ```
 
-**Conversión a anomaly_score para el ensemble:**
-- Si `label == "BENIGN"` → `score = 0.0`
-- Si `label != "BENIGN"` → `score = confidence` (la probabilidad de la clase de ataque)
+**Conversión a score para el ensemble** (en `src/pipeline.py` y `routers/predict.py`):
+- Si la etiqueta es benigna (`is_benign(label)`, sin distinguir mayúsculas) → `score = 0.0`
+- Si no → `score = confidence` (la probabilidad de la clase de ataque)
+
+`RF_SCORE_THRESHOLD` (0.90) solo actúa dentro de `anomaly_score()`, que no se llama en ejecución.
 
 ### Carga y degradación
 
-```python
-def _load(self):
-    # 1. Intentar desde MLflow registry (si MLFLOW_TRACKING_URI configurado)
-    model = mlflow_registry.load_latest("supervised")
-    if model is not None:
-        self._model = model
-        return
+Orden de carga en `SupervisedEngine._load()`:
 
-    # 2. Fallback a archivo local
-    if os.path.exists(self._model_path):
-        self._model = joblib.load(self._model_path)
-        return
+1. MLflow registry (`cnds-supervised`, stage `Production`), si `MLFLOW_TRACKING_URI` está configurado.
+2. `models/rf_model.joblib` (`RF_MODEL_FILE`), el modelo completo entrenado localmente.
+3. `models/rf_lite_model.joblib`, el modelo lite incluido en el repo.
+4. Si no hay ninguno, el motor queda deshabilitado (`is_available = False`).
 
-    # 3. Motor deshabilitado — is_available = False
-    logger.warning("RF model not found — supervised engine disabled")
-```
+Los joblib locales se cargan con `model_integrity.load_joblib()`, que según `MODEL_INTEGRITY_MODE` comprueba el fichero contra `models/MANIFEST.sha256`.
 
 ---
 
 ## 4. Modelo 2: Isolation Forest (No Supervisado)
 
 **Archivos:** `src/engines/isolation_forest.py`
-**Modelos:** `models/isolation_forest.joblib` + `models/if_scaler.joblib`
+**Modelos:** `models/isolation_forest.joblib` + `models/if_scaler.joblib` (no incluidos en el repo; `scripts/generate_demo_models.py` crea unos de demostración con datos sintéticos). Con MLflow configurado se intenta antes `cnds-isolation_forest` en stage `Production`.
 
 ### Fundamento teórico
 
@@ -622,7 +580,7 @@ Input: (batch=1, seq_len=20, n_features=18)
 │  LSTM(input=18, hidden=64,      │
 │       num_layers=2,             │
 │       dropout=0.2)              │
-│  → hidden state (latent_dim=32) │
+│  → Linear(64 → 32) por paso     │
 └──────────────┬──────────────────┘
                │ latent representation
                ▼
@@ -636,7 +594,7 @@ Input: (batch=1, seq_len=20, n_features=18)
 └─────────────────────────────────┘
 ```
 
-**Parámetros exactos del modelo en producción** (de `models/lstm_config.json`):
+**Contenido de `models/lstm_config.json`** (incluido en el repo; el fichero de pesos `.pt` no lo está):
 
 ```json
 {
@@ -646,8 +604,7 @@ Input: (batch=1, seq_len=20, n_features=18)
   "num_layers":      2,
   "dropout":         0.2,
   "n_features":      18,
-  "threshold":       1.1036977231502532,
-  "saved_at":        "2026-02-04T19:58:48.383248"
+  "reconstruction_threshold": 2.9730082154273987
 }
 ```
 
@@ -661,13 +618,13 @@ self._buffers: dict[str, deque] = defaultdict(
 )
 ```
 
-- En cada paquete de la IP `X`, se añade su vector de 18 host features al deque.
+- Cada vez que expira un flujo de la IP `X`, se añade su vector de 18 host features al deque (un vector por flujo, no por paquete).
 - El deque tiene `maxlen=20` → los features más antiguos se descartan automáticamente.
 - Cuando el deque está **lleno** (exactamente 20 vectores), se ejecuta el autoencoder.
 
-**Cold-start:** Los primeros 19 paquetes de cualquier IP nueva no producen score LSTM. Durante ese período, el peso del LSTM se redistribuye a los otros motores.
+**Cold-start:** Los primeros 19 flujos de cualquier IP nueva no producen score LSTM real: `anomaly_score()` devuelve `0.0`, y ese cero entra en la mezcla con todo el peso del LSTM. El peso solo se redistribuye cuando el motor no está disponible (sin modelo cargado).
 
-**Evicción LRU:** Cuando `len(self._buffers) >= MAX_TRACKED_IPS`, el IP con el buffer más corto (menos datos) es expulsado:
+**Evicción:** Cuando `len(self._buffers) >= MAX_TRACKED_IPS`, el IP con el buffer más corto (menos datos) es expulsado:
 
 ```python
 victim = min(self._buffers, key=lambda k: len(self._buffers[k]))
@@ -691,12 +648,12 @@ def anomaly_score(self, ip: str) -> float:
     # Error de reconstrucción = MSE entre input y output
     error = float(torch.mean((x - reconstructed) ** 2).item())
 
-    # Normalizar con threshold (1.104 en producción)
+    # Normalizar con reconstruction_threshold de lstm_config.json
     score = min(error / max(self._threshold, 1e-9), 1.0)
     return float(score)
 ```
 
-**Threshold de reconstrucción:** El `threshold` en `lstm_config.json` (1.1037) es el **MSE máximo observado en el conjunto de validación de tráfico normal**. Es el punto de normalización: un error igual al threshold produce score=1.0. Errores menores producen scores en (0, 1).
+**Threshold de reconstrucción:** la clave `reconstruction_threshold` de `lstm_config.json` (2.973 en el fichero incluido; 0.1 si la clave falta) es el punto de normalización: un error igual o superior produce score=1.0 y los errores menores producen scores en (0, 1). El motor no lee una clave llamada `threshold`.
 
 ### Dataset de entrenamiento
 
@@ -724,11 +681,13 @@ El Rules Engine no tiene parámetros aprendidos pero sí **umbrales configurable
 | Regla | Condición | Umbral configurable |
 |---|---|---|
 | `icmp_flood` | `n_fwd > ICMP_FLOOD_THRESHOLD` (proto=ICMP) | `ICMP_FLOOD_THRESHOLD=50` |
-| `syn_scan` | `syn_flag_cnt > PORT_SCAN_THRESHOLD AND tot_fwd_pkts < 5` | `PORT_SCAN_THRESHOLD=20` |
+| `syn_scan` | `syn_flag_cnt > PORT_SCAN_THRESHOLD AND fwd_act_data_pkts < 5` | `PORT_SCAN_THRESHOLD=20` |
 | `large_payload` | `max(fwd_lengths) > LARGE_PAYLOAD_BYTES` | `LARGE_PAYLOAD_BYTES=10000` |
 | `payload:*` | Cualquier match de los 6 patrones de payload | — (regex fijos) |
-| `asymmetric_upload` | `sum(fwd_bytes) / max(sum(bwd_bytes),1) > 50` | Hardcoded ratio=50 |
+| `asymmetric_upload` | más de 10 paquetes forward, al menos 1 backward y `sum(fwd_bytes) / max(sum(bwd_bytes),1) > 50` | Hardcoded ratio=50 |
 | `malicious_ja3` | `ja3_hash in malicious_set` | Lista en `MALICIOUS_JA3_FILE` |
+
+Las reglas listadas en `CRITICAL_RULES` (por defecto las seis `payload:*`, `malicious_ja3` y `syn_scan`) fuerzan el score a 1.0 y generan alerta con independencia de la mezcla ponderada.
 
 **Nota:** Los valores default son **más conservadores** de lo que parecen. Por ejemplo, `ICMP_FLOOD_THRESHOLD=50` significa 50 paquetes en el flujo acumulado, no 50/segundo. Para redes con alto tráfico ICMP legítimo (monitoreo Nagios, etc.), conviene subirlo a 200–500.
 
@@ -742,11 +701,11 @@ El Rules Engine no tiene parámetros aprendidos pero sí **umbrales configurable
 
 ```python
 _BASE_WEIGHTS = {
-    "supervised":       WEIGHT_SUPERVISED,    # 0.30 (config.py default; .env.example: 0.35)
-    "isolation_forest": WEIGHT_IFOREST,       # 0.20 (.env.example: 0.25)
-    "lstm":             WEIGHT_LSTM,          # 0.10 (.env.example: 0.15)
-    "rules":            WEIGHT_RULES,         # 0.25 (.env.example: 0.05)
-    "baseline":         WEIGHT_BASELINE,      # 0.15 (.env.example: 0.20)
+    "supervised":       WEIGHT_SUPERVISED,    # 0.30 (config.py default; .env.example: 0.40)
+    "isolation_forest": WEIGHT_IFOREST,       # 0.20 (.env.example: 0.10)
+    "lstm":             WEIGHT_LSTM,          # 0.10 (.env.example: 0.00)
+    "rules":            WEIGHT_RULES,         # 0.25 (.env.example: 0.20)
+    "baseline":         WEIGHT_BASELINE,      # 0.15 (.env.example: 0.30)
 }
 ```
 
@@ -754,7 +713,7 @@ _BASE_WEIGHTS = {
 
 ### Redistribución dinámica
 
-Cuando un motor no está disponible, su peso se distribuye proporcionalmente a los demás:
+Cuando un motor no está disponible (su score es `None`; un `0.0` cuenta como disponible), su peso se distribuye proporcionalmente a los demás:
 
 ```python
 total_base = sum(base_weights.get(e, 0.0) for e in available)
@@ -772,11 +731,10 @@ Después: iforest=0.20/0.70≈0.29, lstm=0.10/0.70≈0.14, rules=0.25/0.70≈0.3
 
 Configuración en `.env`:
 ```
-ATTACK_TYPE_WEIGHTS={"PortScan": {"rules": 0.50, "supervised": 0.30, "isolation_forest": 0.20, "lstm": 0.00},
-                     "Bot": {"lstm": 0.50, "supervised": 0.30, "isolation_forest": 0.20, "rules": 0.00}}
+ATTACK_TYPE_WEIGHTS={"DoS": {"supervised": 0.60, "rules": 0.20}, "Reconnaissance": {"rules": 0.50}}
 ```
 
-Esto permite optimizar la sensibilidad del ensemble **por clase de ataque** sin reentrenar los modelos. Los overrides reemplazan los pesos base solo cuando el motor supervisado clasifica el tráfico con el `attack_type` especificado.
+Esto permite optimizar la sensibilidad del ensemble **por clase de ataque** sin reentrenar los modelos. Los overrides reemplazan los pesos base de los motores que nombran solo cuando el motor supervisado clasifica el tráfico con ese `attack_type` (la clave debe coincidir con la etiqueta que emite el modelo: clases UNSW-NB15 con los modelos incluidos). No se valida que sumen 1.0; se renormalizan sobre los motores con score.
 
 ### Calibración por temperatura (Platt scaling)
 
@@ -804,7 +762,7 @@ Para calibrar empíricamente, trazar el histograma de scores en tráfico normal:
 ```python
 def severity_from_score(score: float, attack_type: str | None = None) -> str:
     # Boost a critical para tipos de ataque severos
-    if attack_type and attack_type not in ("BENIGN", None):
+    if attack_type and not is_benign(attack_type):
         critical_types = {"DDoS", "DoS", "Infiltration", "Web Attack"}
         if any(t in attack_type for t in critical_types) and score >= 0.70:
             return "critical"
@@ -825,7 +783,7 @@ Los ataques DoS, Infiltration y Web Attack tienen un umbral reducido para `criti
 
 ### Mecanismo
 
-El sistema aprende de las etiquetas de los analistas. Cuando un analista etiqueta una alerta como falso positivo (notes contiene "false positive"), el sistema registra qué motor contribuyó más al score incorrecto.
+El sistema calcula pesos sugeridos a partir de las etiquetas de los analistas. Una alerta reconocida (`acknowledged`) cuenta como falso positivo si su `label` es `fp` o sus notas contienen "false positive"; cualquier otra alerta reconocida cuenta como verdadero positivo. El cálculo cubre cuatro motores (`supervised`, `isolation_forest`, `lstm`, `rules`); el baseline no entra.
 
 **Fórmula de contribución relativa:**
 ```python
@@ -862,16 +820,18 @@ weights = {e: w / total for e, w in weights.items()}
 1. Activar: ADAPTIVE_WEIGHTS_ENABLED=true en .env
 
 2. Analistas etiquetan alertas durante 2–4 semanas:
-   PATCH /api/alerts/{id} {"notes": "false positive — NAS backup", "acknowledged": true}
-   PATCH /api/alerts/{id} {"notes": "confirmed DoS", "acknowledged": true}
+   PATCH /api/alerts/{id} {"label": "fp", "notes": "NAS backup", "acknowledged": true}
+   PATCH /api/alerts/{id} {"label": "tp", "notes": "confirmed DoS", "acknowledged": true}
 
 3. Después de 100+ muestras:
    GET /api/adaptive-weights
-   → {"suggested_weights": {"supervised": 0.48, "isolation_forest": 0.22, ...}}
+   → {"status": "ok", "weights": {"supervised": 0.31, "isolation_forest": 0.17, "lstm": 0.27, "rules": 0.25}}
+   (antes de llegar al mínimo: {"status": "insufficient_data", "weights": null})
 
-4. Aplicar manualmente en .env:
-   WEIGHT_SUPERVISED=0.48
-   WEIGHT_IFOREST=0.22
+4. Aplicar manualmente en .env, dejando sitio a WEIGHT_BASELINE para que los
+   cinco pesos sumen 1.0:
+   WEIGHT_SUPERVISED=0.27
+   WEIGHT_IFOREST=0.14
    ...
 
 5. Reiniciar CNDS para aplicar los nuevos pesos.
@@ -888,7 +848,7 @@ weights = {e: w / total for e, w in weights.items()}
 ### Configuración
 
 ```bash
-MLFLOW_TRACKING_URI=http://mlflow-server:5000   # Servidor MLflow
+MLFLOW_TRACKING_URI=http://mlflow-server:5050   # Servidor MLflow (vacío = deshabilitado)
 MLFLOW_REGISTRY_NAME=cnds                        # Prefijo de modelo en registry
 ```
 
@@ -896,13 +856,15 @@ Cuando `MLFLOW_TRACKING_URI` está vacío, toda la funcionalidad MLflow se desha
 
 ### Registro de modelos
 
-Todos los modelos ML son registrados bajo nombres con prefijo `cnds-`:
+Estos modelos se registran bajo nombres con prefijo `cnds-` (`MLFLOW_REGISTRY_NAME`):
 
 | Motor | Registry name | Función de carga |
 |---|---|---|
 | Random Forest | `cnds-supervised` | `mlflow.sklearn.load_model()` |
 | Isolation Forest | `cnds-isolation_forest` | `mlflow.sklearn.load_model()` |
 | LSTM Autoencoder | `cnds-lstm` | `mlflow.pytorch.load_model()` |
+| FT-Transformer | `ml-ids-unified-ft-transformer` (`MLFLOW_FT_REGISTRY_NAME`) | descarga del bundle `.pt` |
+| Baseline (IF + LSTM en vivo) | `cnds-unsupervised-baseline` | artefactos de `src/unsupervised/` |
 
 ### Registrar un modelo entrenado
 
@@ -915,9 +877,8 @@ log_model(
     artifact_path = "rf_model",
     model_name    = "supervised",         # → registrado como "cnds-supervised"
     metrics       = {                     # métricas opcionales del entrenamiento
-        "accuracy": 0.987,
-        "f1_weighted": 0.985,
-        "test_samples": 56000,
+        "accuracy": ...,              # valores de tu entrenamiento
+        "f1_weighted": ...,
     }
 )
 
@@ -927,9 +888,7 @@ log_pytorch_model(
     artifact_path = "lstm_autoencoder",
     model_name    = "lstm",
     metrics       = {
-        "val_reconstruction_error": 1.1037,
-        "threshold": 1.1037,
-        "training_hours": 8.0,
+        "threshold": ...,             # valores de tu entrenamiento
     }
 )
 ```
@@ -947,7 +906,7 @@ model_uri = f"models:/{MLFLOW_REGISTRY_NAME}-{model_name}/Production"
 2. Registrarlo con `log_model()` (crea version N en stage "None").
 3. En MLflow UI o CLI: transicionar versión N a "Staging".
 4. Validar con `pcap_replay.py` en tráfico de referencia.
-5. Transicionar a "Production". CNDS cargará el nuevo modelo en el próximo restart.
+5. Transicionar a "Production". CNDS cargará el nuevo modelo en el próximo restart (los motores RF, IF y LSTM solo consultan MLflow al arrancar).
 6. Archivar la versión anterior.
 
 ---
@@ -956,100 +915,81 @@ model_uri = f"models:/{MLFLOW_REGISTRY_NAME}-{model_name}/Production"
 
 ### 10.1 Random Forest — Entrenamiento inicial
 
+**Script:** `scripts/train_rf.py`
+
 **Paso 1: Obtener el dataset**
 
-```bash
-# Descargar CIC-IDS2017 desde cicresearch.ca
-# El dataset MachineLearningCSV.zip contiene 8 archivos CSV (uno por día)
-# Combinar en un solo archivo:
-head -1 Monday-WorkingHours.pcap_ISCX.csv > combined.csv
-tail -n +2 -q *.csv >> combined.csv
-```
+El script espera la redistribución CIC de UNSW-NB15 en un directorio con dos ficheros: `Data.csv` (las 76 columnas de CICFlowMeter, en el mismo orden que `FLOW_FEATURE_NAMES`) y `Label.csv` (columna `Label` con enteros 0-9, que el script traduce a `Benign`, `Analysis`, `Backdoor`, `DoS`, `Exploits`, `Fuzzers`, `Generic`, `Reconnaissance`, `Shellcode`, `Worms`). Las columnas se toman por posición, no por nombre.
 
-**Paso 2: Verificar compatibilidad de columnas**
-
-```python
-import pandas as pd
-df = pd.read_csv("combined.csv")
-df.columns = df.columns.str.strip()
-
-from src.features.flow_extractor import FLOW_FEATURE_NAMES
-missing = [c for c in FLOW_FEATURE_NAMES if c not in df.columns]
-print("Missing:", missing)
-# Si hay columnas faltantes, revisar el mapeo de nombres CICFlowMeter
-```
-
-**Paso 3: Entrenar**
+**Paso 2: Entrenar**
 
 ```bash
-# Modelo estándar (76 features)
-python -c "
-import pandas as pd, numpy as np
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import classification_report
-from joblib import dump
-from src.features.flow_extractor import FLOW_FEATURE_NAMES
+# SMOTE necesita imbalanced-learn, que no está en requirements.txt
+pip install imbalanced-learn        # o usar --no-smote
 
-df = pd.read_csv('combined.csv')
-df.columns = df.columns.str.strip()
-df = df.replace([np.inf, -np.inf], np.nan).dropna(subset=FLOW_FEATURE_NAMES)
-
-X = df[FLOW_FEATURE_NAMES].values.astype(np.float32)
-y = df['Label'].str.strip().values
-
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42, stratify=y
-)
-
-pipeline = Pipeline([
-    ('scaler', StandardScaler()),
-    ('rf', RandomForestClassifier(n_estimators=100, random_state=42, n_jobs=-1))
-])
-pipeline.fit(X_train, y_train)
-print(classification_report(y_test, pipeline.predict(X_test)))
-dump(pipeline, 'models/rf_model.joblib')
-print('Saved: models/rf_model.joblib')
-"
+python scripts/train_rf.py --data-dir /path/to/CIC-UNSW-NB15
 ```
 
-**Paso 4 (opcional): Modelo extendido con payload (86 features)**
+Pasar siempre `--data-dir`: el valor por defecto es una ruta del equipo del autor.
+
+El script recorta negativos a 0, aplica `log1p` a los features con |asimetría| > 5, escala con `StandardScaler`, sobremuestrea con SMOTE las clases minoritarias (solo en train) y entrena un `RandomForestClassifier(class_weight="balanced")`. Guarda el `Pipeline` completo en `<output-dir>/rf_model.joblib`, de modo que `SupervisedEngine` no necesita un scaler aparte. Si `MLFLOW_TRACKING_URI` (o `--mlflow-uri`) está definido, también registra el run en MLflow.
+
+| Opción | Default | Descripción |
+|---|---|---|
+| `--data-dir` | (ruta local del autor) | Directorio con `Data.csv` y `Label.csv` |
+| `--output-dir` | `models` | Dónde se escribe `rf_model.joblib` (sobrescribe el existente) |
+| `--estimators` | 200 | Árboles |
+| `--max-depth` | 20 | Profundidad máxima (`None` = sin límite) |
+| `--test-size` | 0.20 | Fracción de test |
+| `--jobs` | -1 | Núcleos |
+| `--no-smote` | — | Omitir el sobremuestreo |
+| `--lite` | — | Modelo incluido en el repo: muestra estratificada de 50k filas, 25 árboles, profundidad 10, sin SMOTE; escribe `rf_lite_model.joblib` |
+
+**Paso 3 (opcional): Modelo extendido con payload (86 features)**
 
 ```bash
-# Requiere dataset con columnas de payload ya extraídas
 python scripts/retrain_with_payload.py \
     --dataset combined_with_payload.csv \
     --output models/rf_model_v2.joblib \
     --n-estimators 200
 ```
 
+A diferencia de `train_rf.py`, este script selecciona las columnas **por nombre**: el CSV debe tener las 76 columnas llamadas como `FLOW_FEATURE_NAMES` (snake_case, no los nombres originales de CICFlowMeter) y una columna `Label` con texto. Las 10 columnas de payload que falten se rellenan con ceros. El pipeline es solo `StandardScaler` + Random Forest (sin recorte, `log1p` ni SMOTE). Defaults: `--n-estimators 100`, `--test-size 0.2`, `--random-state 42`.
+
 ---
 
 ### 10.2 Isolation Forest — Entrenamiento inicial
 
+El repositorio no incluye un script que entrene el IF estático a partir de tráfico real. `scripts/generate_demo_models.py` genera uno con datos sintéticos (50 árboles, `contamination=0.05`) solo para demos. La vía soportada para aprender el tráfico normal de una red es el pipeline baseline en vivo (`src/unsupervised/`, ver [unsupervised.md](unsupervised.md)), que entrena su propio IF + LSTM sin intervención. Los pasos siguientes son un procedimiento manual orientativo para producir `isolation_forest.joblib` e `if_scaler.joblib`.
+
 **Paso 1: Capturar baseline**
 
 ```bash
-# Capturar tráfico normal en producción (30–60 minutos mínimo)
+# Capturar tráfico normal (30–60 minutos mínimo)
 sudo tcpdump -i eth0 -w baseline_normal.pcap -G 3600 -W 1
-
-# O usar el replay script con PCAPs etiquetados como BENIGN
-python scripts/pcap_replay.py baseline_normal.pcap --output baseline_replay.json   # sin --labels/--attacks todo el tráfico cuenta como BENIGN
 ```
 
 **Paso 2: Extraer host features del baseline**
 
 ```python
-# El replay script extrae features; para entrenamiento necesitas los vectores
-import json, numpy as np
+# Boceto: no hay un script equivalente en el repo. En ejecución el vector de host
+# se calcula al expirar cada flujo; aquí se muestrea cada 50 paquetes.
+import numpy as np
+from scapy.all import PcapReader
 from src.features.host_extractor import HostExtractor
 
 extractor = HostExtractor()
-# Procesar paquetes del PCAP y acumular host features
-# [código de captura de features...]
-X_baseline = np.array(host_feature_vectors, dtype=np.float32)  # shape (N, 18)
+vectors = []
+with PcapReader("baseline_normal.pcap") as pcap:
+    for i, pkt in enumerate(pcap):
+        ts = float(pkt.time)
+        ip = extractor.process_packet(pkt, ts)
+        if ip and i % 50 == 0:
+            vec = extractor.extract_features(ip, now=ts)   # None con menos de 3 paquetes
+            if vec is not None:
+                vectors.append(vec)
+
+X_baseline = np.array(vectors, dtype=np.float32)  # shape (N, 18)
 ```
 
 **Paso 3: Entrenar IF + Scaler**
@@ -1076,7 +1016,7 @@ model.fit(X_scaled)
 dump(model,  'models/isolation_forest.joblib')
 dump(scaler, 'models/if_scaler.joblib')
 print(f"IF trained on {len(X)} samples")
-print(f"Anomaly threshold: {model.threshold_:.4f}")
+print(f"Offset de decisión: {model.offset_:.4f}")
 ```
 
 ---
@@ -1102,6 +1042,8 @@ sequences = make_sequences(X_host_features)  # shape (N-19, 20, 18)
 ```
 
 **Paso 2: Definir arquitectura**
+
+La clase vive en `src/engines/lstm_model.py`; para entrenar basta `from src.engines.lstm_model import LSTMAutoencoder`. Se reproduce aquí como referencia:
 
 ```python
 import torch
@@ -1144,6 +1086,7 @@ class LSTMAutoencoder(nn.Module):
 ```python
 from torch.utils.data import DataLoader, TensorDataset, random_split
 import json
+from src.engines.lstm_model import LSTMAutoencoder
 
 # Parámetros
 HIDDEN_DIM  = 64
@@ -1195,14 +1138,15 @@ for epoch in range(EPOCHS):
     val_mse = np.mean(val_errors)
     if val_mse < best_val_loss:
         best_val_loss = val_mse
-        torch.save(model.cpu(), 'models/lstm_autoencoder.pt')
-        model.to(DEVICE)
+        best_val_errors = val_errors
+        # El motor carga con load_state_dict(weights_only=True): guardar solo los pesos
+        torch.save(model.state_dict(), 'models/lstm_autoencoder.pt')
 
     if (epoch + 1) % 10 == 0:
         print(f"Epoch {epoch+1}/{EPOCHS} — val_mse={val_mse:.6f}")
 
-# Calcular threshold: percentil 99 del error de reconstrucción en validación
-threshold = float(np.percentile(val_errors, 99))
+# Calcular threshold: percentil 99 del error de reconstrucción en validación (mejor época)
+threshold = float(np.percentile(best_val_errors, 99))
 print(f"Reconstruction threshold (p99): {threshold:.6f}")
 
 # Guardar config
@@ -1213,8 +1157,7 @@ config = {
     "num_layers":      NUM_LAYERS,
     "dropout":         DROPOUT,
     "n_features":      18,
-    "threshold":       threshold,
-    "saved_at":        datetime.now().isoformat(),
+    "reconstruction_threshold": threshold,   # el motor solo lee esta clave
 }
 with open('models/lstm_config.json', 'w') as f:
     json.dump(config, f, indent=2)
@@ -1239,13 +1182,11 @@ print("Config saved: models/lstm_config.json")
 ### 11.1 Reentrenar Random Forest
 
 ```bash
-# Opción A: Solo 76 features (compatible con modelo original)
-python -c "
-# ... [código de entrenamiento estándar del paso 10.1] ...
-dump(pipeline, 'models/rf_model_v2.joblib')
-"
+# Opción A: 76 features. train_rf.py siempre escribe rf_model.joblib dentro de
+# --output-dir, así que usar un directorio aparte para no pisar el modelo activo
+python scripts/train_rf.py --data-dir /path/to/CIC-UNSW-NB15 --output-dir models_new
 
-# Opción B: 86 features con payload (rompe compatibilidad — actualizar RF_MODEL_FILE)
+# Opción B: 86 features con payload
 python scripts/retrain_with_payload.py \
     --dataset combined_with_payload.csv \
     --output models/rf_model_v2.joblib \
@@ -1253,12 +1194,14 @@ python scripts/retrain_with_payload.py \
     --test-size 0.2
 
 # Validar el nuevo modelo antes de reemplazar el existente
-python scripts/pcap_replay.py test_attacks.pcap --attacks attacks.csv --report report.md   # el modelo se toma de models/ (ver doc/evaluation.md)
+python scripts/pcap_replay.py test_attacks.pcap --attacks attacks.csv --report report.md   # el modelo se toma de models/ (ver wiki/Evaluation.md)
 
 # Si la validación es satisfactoria, activar:
-# En .env: RF_MODEL_FILE=rf_model_v2.joblib
+# En .env: RF_MODEL_FILE=rf_model_v2.joblib   (nombre relativo a MODELS_DIR, por defecto models/)
 # Reiniciar CNDS
 ```
+
+El orden de carga del motor supervisado es: FT-Transformer si su checkpoint está disponible; si no, el Random Forest de MLflow (`cnds-supervised`, stage Production), luego `RF_MODEL_FILE` y por último `rf_lite_model.joblib`. Un fichero local nuevo no tiene efecto mientras exista una fuente anterior en esa lista.
 
 ### 11.2 Reentrenar Isolation Forest
 
@@ -1303,9 +1246,10 @@ import json
 with open('models/lstm_config.json') as f:
     config = json.load(f)
 
-# Subir threshold → menos FPs (más permisivo)
-# Bajar threshold → menos FNs (más agresivo)
-config['threshold'] = 1.5  # ajustar según observación
+# score = min(error / reconstruction_threshold, 1.0)
+# Subir threshold → scores más bajos, menos FPs (más permisivo)
+# Bajar threshold → scores más altos, menos FNs (más agresivo)
+config['reconstruction_threshold'] = 3.5  # ajustar según observación
 
 with open('models/lstm_config.json', 'w') as f:
     json.dump(config, f, indent=2)
@@ -1336,7 +1280,7 @@ uri = log_model(
     model         = new_model,
     artifact_path = 'rf_model_v2',
     model_name    = 'supervised',
-    metrics       = {'f1_weighted': 0.988, 'test_samples': 72000}
+    metrics       = {'f1_weighted': ..., 'test_samples': ...}   # valores de tu entrenamiento
 )
 print('Registered:', uri)
 "
@@ -1353,13 +1297,15 @@ print('Registered:', uri)
 
 ### Métricas disponibles
 
+`EvalResult` guarda una predicción por flujo (`true_label`, `is_anomaly`, `ensemble_score`, ...) y deriva de ellas los contadores y las métricas:
+
 ```python
 @dataclass
 class EvalResult:
-    tp: int   # Verdaderos positivos
-    fp: int   # Falsos positivos
-    tn: int   # Verdaderos negativos
-    fn: int   # Falsos negativos
+    predictions: List[dict]
+
+    # tp / fp / tn / fn: propiedades calculadas sobre predictions
+    # (ataque = true_label distinto de BENIGN; acierto = is_anomaly)
 
     @property
     def precision(self):  return self.tp / max(self.tp + self.fp, 1)
@@ -1382,30 +1328,30 @@ class EvalResult:
 python scripts/pcap_replay.py test_attacks.pcap \
     --output results.json --report report.md \
     --labels labels.csv          # src_ip,dst_ip,src_port,dst_port,protocol,label
-# o --attacks attacks.csv (label,src_ip,dst_ip,dst_port,start,end); ver doc/evaluation.md
+# o --attacks attacks.csv (label,src_ip,dst_ip,dst_port,start,end); ver wiki/Evaluation.md
 ```
 
 ### Evaluación con el digital twin
 
 ```bash
 cd demo
-python run_demo.py            # options: --no-generate, --scenario NAME (it has no JSON output option)
+python run_demo.py            # opciones: --no-generate, --scenario NAME
 ```
 
-La salida JSON contiene scores por escenario, detecciones, falsos positivos del tráfico normal y técnicas MITRE observadas.
+La salida es solo por terminal (no hay opción de JSON): las alertas de cada escenario, una tabla resumen con el número de alertas por escenario, el desglose por severidad y las técnicas MITRE observadas.
 
 ### Benchmark de rendimiento mínimo recomendado
 
 | Escenario | Detection rate mínima | FP rate máxima |
 |---|---|---|
 | ICMP Flood | 99% | < 1% |
-| SYN Scan (>50 SYNs) | 95% | < 2% |
+| SYN flood/scan sobre un mismo flujo (>20 SYNs, `PORT_SCAN_THRESHOLD`) | 95% | < 2% |
 | Brute Force SSH/FTP | 85% | < 5% |
 | Web SQLi/XSS | 90% | < 3% |
 | Data Exfiltration (lenta) | 70% | < 5% |
 | Tráfico normal | — | < 2% |
 
-Si un modelo recién entrenado no alcanza estos umbrales en `pcap_replay.py`, no debería promoverse a producción.
+Estos valores son objetivos recomendados, no resultados medidos. Si un modelo recién entrenado no los alcanza en `pcap_replay.py`, no debería promoverse a producción. Dos de las filas no son alcanzables hoy: un barrido de puertos tipo `nmap -sS` genera un flujo por puerto y la regla `syn_scan` (que cuenta SYNs dentro de un mismo flujo) no dispara (issue #87), y no existe una regla para fuerza bruta SSH/FTP (issue #88). Ver [use-cases.md](use-cases.md).
 
 ---
 
@@ -1418,7 +1364,7 @@ Todos los parámetros configurables vía `.env`, con sus valores por defecto y s
 | Variable | Default | Rango | Descripción |
 |---|---|---|---|
 | `FT_TEMPERATURE` | 2.0 | [0.1, 10.0] | Temperature scaling sobre logits antes de softmax. T > 1 reduce over-confidence; T = 1.0 desactiva. |
-| `FT_SCORE_THRESHOLD` | 0.50 | [0, 1] | Score mínimo de `1 − P(Benign)` para contribuir al ensemble |
+| `FT_SCORE_THRESHOLD` | 0.50 | [0, 1] | Umbral de `anomaly_score()` (1 − P(Benign)). Sin efecto hoy: ningún camino en ejecución llama a ese método |
 | `FT_USE_GPU` | false | — | Inferencia en CUDA con autocast bfloat16 si `true` |
 
 **Nota sobre dependencias Python:** `scikit-learn` está pinado a `>=1.6.1,<2.0` para proteger la compatibilidad del `StandardScaler` serializado en `unified_scaler.pkl`. Una actualización a scikit-learn 2.0+ puede invalidar el scaler existente — si se actualiza la dependencia, regenerar el scaler con el mismo conjunto de entrenamiento.
@@ -1439,18 +1385,23 @@ Todos los parámetros configurables vía `.env`, con sus valores por defecto y s
 
 ### Parámetros del Random Forest
 
-| Variable | Default | Descripción |
+No son variables de entorno: se fijan al entrenar.
+
+| Parámetro | Default | Descripción |
 |---|---|---|
-| RF `n_estimators` | 100 | Solo en script de entrenamiento (`--n-estimators`) |
-| RF `random_state` | 42 | Semilla de reproducibilidad |
-| RF `test_size` | 0.2 | Fracción de test (`--test-size`) |
+| `n_estimators` | 200 (`train_rf.py --estimators`), 100 (`retrain_with_payload.py --n-estimators`) | Árboles |
+| `max_depth` | 20 (`train_rf.py --max-depth`); sin límite en `retrain_with_payload.py` | Profundidad máxima |
+| `random_state` | 42 | Semilla de reproducibilidad |
+| `test_size` | 0.2 | Fracción de test (`--test-size`) |
 
 ### Parámetros del Isolation Forest
 
-| Variable | Default | Descripción |
+| Parámetro | Valor | Descripción |
 |---|---|---|
-| IF `contamination` | 0.01 | Fracción de anomalías asumida en training data |
-| IF sigmoid steepness | 5.0 | Hardcoded en `isolation_forest.py:score()` |
+| `contamination` | 0.01 | Valor que usa el pipeline baseline en vivo (`window_trainer.py`, 200 árboles) y el ejemplo de la sección 10.2 |
+| Sigmoid steepness | 5.0 | Hardcoded en `isolation_forest.py:score()` |
+
+`IF_CONTAMINATION` (0.05), `IF_N_ESTIMATORS` (200), `IF_MIN_SAMPLES` e `IF_TRAINING_STATUS_FILE` están definidos en `src/config.py`, pero ningún código en ejecución los lee.
 
 ### Parámetros del LSTM
 
@@ -1461,7 +1412,8 @@ Todos los parámetros configurables vía `.env`, con sus valores por defecto y s
 | `latent_dim` | 32 | Dimensión de la representación latente |
 | `num_layers` | 2 | Capas LSTM apiladas |
 | `dropout` | 0.2 | Dropout entre capas LSTM |
-| `threshold` | 1.1037 | MSE máximo normal (percentil 99 en validación) |
+| `n_features` | 18 | Host features por paso |
+| `reconstruction_threshold` | 2.973 | Error de reconstrucción (MSE) que se normaliza a score 1.0; 0.1 si la clave falta |
 
 ### Parámetros de Extracción
 
@@ -1469,7 +1421,7 @@ Todos los parámetros configurables vía `.env`, con sus valores por defecto y s
 |---|---|---|
 | `FLOW_TIMEOUT` | 120s | Más largo → features más completos; más memoria |
 | `ACTIVE_IDLE_THRESH` | 1.0s | Gap que separa períodos activos/inactivos |
-| `MIN_PACKETS_FOR_ML` | 10 | Mínimo de paquetes antes de inferencia |
+| `MIN_PACKETS_FOR_ML` | 10 | Sin efecto: definido en `src/config.py`, ningún código en ejecución lo lee |
 | `HOST_WINDOW_SIZE` | 100 | Más grande → estadísticas más estables |
 | `MAX_TRACKED_IPS` | 5,000 | Más grande → más estado en memoria |
 | `MAX_ACTIVE_FLOWS` | 50,000 | Límite de flujos concurrentes |
@@ -1478,10 +1430,10 @@ Todos los parámetros configurables vía `.env`, con sus valores por defecto y s
 
 | Variable | Default | Notas |
 |---|---|---|
-| `ICMP_FLOOD_THRESHOLD` | 50 | Paquetes ICMP en el flujo acumulado |
-| `PORT_SCAN_THRESHOLD` | 20 | SYN flags para detectar scan |
-| `LARGE_PAYLOAD_BYTES` | 10,000 | Tamaño máximo payload forward |
-| Ratio asimétrico | 50 | Hardcoded en `rules.py`: fwd_bytes/bwd_bytes |
+| `ICMP_FLOOD_THRESHOLD` | 50 | `icmp_flood`: paquetes forward de un flujo ICMP por encima de este valor |
+| `PORT_SCAN_THRESHOLD` | 20 | `syn_scan`: SYNs en un mismo flujo por encima de este valor y menos de 5 paquetes forward con datos |
+| `LARGE_PAYLOAD_BYTES` | 10,000 | `large_payload`: tamaño del mayor paquete forward del flujo |
+| Ratio asimétrico | 50 | Hardcoded en `rules.py`: bytes forward / bytes backward, con más de 10 paquetes forward y al menos uno backward |
 
 ### Parámetros de Pesos Adaptativos
 

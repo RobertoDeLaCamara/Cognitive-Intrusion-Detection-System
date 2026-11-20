@@ -94,7 +94,6 @@ WEIGHT_LSTM         = float(os.getenv("WEIGHT_LSTM",      "0.10"))
 WEIGHT_RULES        = float(os.getenv("WEIGHT_RULES",     "0.25"))
 WEIGHT_BASELINE     = float(os.getenv("WEIGHT_BASELINE",  "0.15"))
 ENSEMBLE_THRESHOLD  = float(os.getenv("ENSEMBLE_THRESHOLD", "0.55"))
-RF_SCORE_THRESHOLD  = float(os.getenv("RF_SCORE_THRESHOLD", "0.90"))  # min confidence for RF to contribute a non-zero score
 
 # Rule names that are unambiguous signature matches for a known attack pattern
 # (not statistical hints) — any one of these forces is_anomaly=True and a
@@ -164,7 +163,6 @@ FT_SCALER_PATH      = os.path.join(
     MODELS_DIR, os.getenv("FT_SCALER_FILE", "unified/unified_scaler.pkl")
 )
 FT_USE_GPU          = os.getenv("FT_USE_GPU", "false").lower() == "true"
-FT_SCORE_THRESHOLD  = float(os.getenv("FT_SCORE_THRESHOLD", "0.50"))
 # Temperature scaling applied to logits before softmax (T > 1 reduces over-confidence).
 # Transformer classifiers are typically over-confident out of the box; T=2.0 is the
 # empirically motivated default. Set to 1.0 to disable.

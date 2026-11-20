@@ -73,3 +73,26 @@ def test_ja3_not_overwritten_by_later_handshake(monkeypatch):
     seen = _flush([a, a, b, b], field="ja3")
     assert seen[("10.0.0.5", "10.0.0.9", 42000, 443, 6)]["hash"] == "ja3-42000"
     assert seen[("10.0.0.5", "10.0.0.10", 42001, 443, 6)]["hash"] == "ja3-42001"
+
+
+def test_payload_rules_skipped_on_port_22():
+    """Short encrypted SSH packets can spell an attack string by chance: no payload rule."""
+    ssh = IP(src="10.0.0.5", dst="10.0.0.9") / TCP(sport=44298, dport=22) / Raw(_ATTACK)
+    seen = _flush([ssh, ssh])
+    assert seen[("10.0.0.5", "10.0.0.9", 44298, 22, 6)] == []
+
+
+def test_payload_rules_skipped_after_ssh_banner_on_other_port():
+    """SSH on a non-standard port is recognised from its banner; earlier hits are dropped too."""
+    hit = IP(src="10.0.0.5", dst="10.0.0.9") / TCP(sport=45000, dport=2223) / Raw(_ATTACK)
+    banner = IP(src="10.0.0.9", dst="10.0.0.5") / TCP(sport=2223, dport=45000) / Raw(b"SSH-2.0-Go\r\n")
+    seen = _flush([hit, banner, hit])
+    assert seen[("10.0.0.5", "10.0.0.9", 45000, 2223, 6)] == []
+
+
+def test_payload_rules_still_fire_on_other_tcp_flows():
+    """The SSH exemption must not leak onto a plaintext flow between the same hosts."""
+    ssh = IP(src="10.0.0.5", dst="10.0.0.9") / TCP(sport=44298, dport=22) / Raw(b"SSH-2.0-OpenSSH_9.6\r\n")
+    web = IP(src="10.0.0.5", dst="10.0.0.9") / TCP(sport=44300, dport=8080) / Raw(_ATTACK)
+    seen = _flush([ssh, ssh, web, web])
+    assert seen[("10.0.0.5", "10.0.0.9", 44300, 8080, 6)] == ["command_injection"]

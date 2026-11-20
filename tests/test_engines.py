@@ -57,20 +57,20 @@ class TestSupervisedEngine:
 
         mock_model = MagicMock()
         mock_model.classes_ = ["Benign", "PortScan"]
-        mock_model.predict_proba.return_value = np.array([[0.95, 0.05]])  # 1-0.95=0.05 < threshold
+        mock_model.predict_proba.return_value = np.array([[0.95, 0.05]])  # 1 - P(Benign) = 0.05, no floor
         mock_model.n_features_in_ = 76
 
         with patch("src.engines.supervised.mlflow_registry.load_latest", return_value=mock_model):
             engine = SupervisedEngine()
             score = engine.anomaly_score(np.zeros(76))
-            assert score == 0.0
+            assert score == pytest.approx(0.05)
 
     def test_anomaly_score_attack(self):
         from src.engines.supervised import SupervisedEngine
 
         mock_model = MagicMock()
         mock_model.classes_ = ["Benign", "PortScan"]
-        mock_model.predict_proba.return_value = np.array([[0.05, 0.95]])  # 1-0.05=0.95 >= threshold
+        mock_model.predict_proba.return_value = np.array([[0.05, 0.95]])  # 1 - P(Benign) = 0.95
         mock_model.n_features_in_ = 76
 
         with patch("src.engines.supervised.mlflow_registry.load_latest", return_value=mock_model):

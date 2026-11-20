@@ -16,7 +16,7 @@ import numpy as np
 from typing import Optional, Tuple
 
 
-from ..config import RF_MODEL_PATH, RF_LITE_MODEL_PATH, RF_SCORE_THRESHOLD
+from ..config import RF_MODEL_PATH, RF_LITE_MODEL_PATH
 from ..features.flow_extractor import FLOW_FEATURE_NAMES
 from ..features.payload_analyzer import PAYLOAD_FEATURE_NAMES
 from .. import mlflow_registry
@@ -138,8 +138,9 @@ class SupervisedEngine:
     ) -> float:
         """Return calibrated anomaly score in [0, 1].
 
-        Computed as 1 - P(Benign).  Returns 0.0 when below RF_SCORE_THRESHOLD
-        to suppress low-confidence false positives.
+        Computed as 1 - P(Benign), without a floor, so offline evaluation
+        (``scripts/eval_engines.py``) sees the full score range. The live
+        ensemble does not call this method: it uses ``predict()``.
         """
         if not self.is_available:
             return 0.0
@@ -151,7 +152,7 @@ class SupervisedEngine:
             else:
                 label = str(self._model.predict(vec)[0])
                 score = 0.0 if label == BENIGN_LABEL else float(proba.max())
-            return score if score >= RF_SCORE_THRESHOLD else 0.0
+            return score
         except Exception as e:
             logger.error("SupervisedEngine.anomaly_score error: %s", e)
             return 0.0

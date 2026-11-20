@@ -28,7 +28,6 @@ import numpy as np
 from ..config import (
     FT_MODEL_PATH,
     FT_SCALER_PATH,
-    FT_SCORE_THRESHOLD,
     FT_TEMPERATURE,
     FT_USE_GPU,
 )
@@ -234,7 +233,7 @@ class FTTransformerEngine:
                 score = float(1.0 - probs[self._benign_idx])
             else:
                 score = float(probs.max())
-            return score if score >= FT_SCORE_THRESHOLD else 0.0
+            return score
         except Exception as e:
             logger.error("FTTransformerEngine.anomaly_score error: %s", e)
             return 0.0

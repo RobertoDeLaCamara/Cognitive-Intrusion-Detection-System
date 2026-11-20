@@ -360,7 +360,7 @@ from src.engines.ft_transformer_engine import FTTransformerEngine
 
 engine = FTTransformerEngine()        # carga MLflow → fallback local
 label, conf = engine.predict(flow_vec_76)         # ('DoS', 0.91)
-score       = engine.anomaly_score(flow_vec_76)   # 1 - P(Benign) con umbral; no se usa en ejecución
+score       = engine.anomaly_score(flow_vec_76)   # 1 - P(Benign); no se usa en ejecución
 ```
 
 Pipeline interno (autocast bfloat16 si CUDA disponible):
@@ -399,7 +399,6 @@ al Random Forest descrito abajo.
 | `FT_MODEL_FILE` | `unified/unified_ft_transformer.pt` | Path relativo a `MODELS_DIR` |
 | `FT_SCALER_FILE` | `unified/unified_scaler.pkl` | StandardScaler emparejado |
 | `FT_USE_GPU` | `false` | Inferencia en CUDA si disponible |
-| `FT_SCORE_THRESHOLD` | `0.50` | Umbral de `anomaly_score()` (1 − P(Benign)). Sin efecto hoy: ningún camino en ejecución llama a ese método |
 | `FT_TEMPERATURE` | `2.0` | Factor de temperature scaling aplicado a logits antes de softmax (T > 1 reduce over-confidence; 1.0 desactiva). Ver [sección de calibración](#nota-sobre-temperature-scaling). |
 | `MLFLOW_FT_REGISTRY_NAME` | `ml-ids-unified-ft-transformer` | Nombre del modelo registrado en MLflow |
 | `MLFLOW_FT_STAGE` | `None` | Stage de MLflow del que se toma la versión (por defecto el stage `None`, el de las versiones recién registradas) |
@@ -478,7 +477,7 @@ def predict(self, flow_features, payload_features=None):
 - Si la etiqueta es benigna (`is_benign(label)`, sin distinguir mayúsculas) → `score = 0.0`
 - Si no → `score = confidence` (la probabilidad de la clase de ataque)
 
-`RF_SCORE_THRESHOLD` (0.90) solo actúa dentro de `anomaly_score()`, que no se llama en ejecución.
+`anomaly_score()` (1 − P(Benign), sin umbral) solo lo usa la evaluación offline (`scripts/eval_engines.py`); no se llama en ejecución.
 
 ### Carga y degradación
 
@@ -1366,7 +1365,6 @@ Todos los parámetros configurables vía `.env`, con sus valores por defecto y s
 | Variable | Default | Rango | Descripción |
 |---|---|---|---|
 | `FT_TEMPERATURE` | 2.0 | [0.1, 10.0] | Temperature scaling sobre logits antes de softmax. T > 1 reduce over-confidence; T = 1.0 desactiva. |
-| `FT_SCORE_THRESHOLD` | 0.50 | [0, 1] | Umbral de `anomaly_score()` (1 − P(Benign)). Sin efecto hoy: ningún camino en ejecución llama a ese método |
 | `FT_USE_GPU` | false | — | Inferencia en CUDA con autocast bfloat16 si `true` |
 
 **Nota sobre dependencias Python:** `scikit-learn` está pinado a `>=1.6.1,<2.0` para proteger la compatibilidad del `StandardScaler` serializado en `unified_scaler.pkl`. Una actualización a scikit-learn 2.0+ puede invalidar el scaler existente — si se actualiza la dependencia, regenerar el scaler con el mismo conjunto de entrenamiento.

@@ -541,11 +541,9 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `MODELS_DIR` | `models` | Directory containing model files |
 | `RF_MODEL_FILE` | `rf_model.joblib` | Full RF model (gitignored, fallback only) |
 | `RF_LITE_MODEL_FILE` | `rf_lite_model.joblib` | Bundled lite RF model (committed, second-tier fallback) |
-| `RF_SCORE_THRESHOLD` | `0.90` | Floor applied by `SupervisedEngine.anomaly_score()`. No runtime path calls that method, so it currently has no effect |
 | `FT_MODEL_FILE` | `unified/unified_ft_transformer.pt` | FT-Transformer checkpoint (gitignored, preferred) |
 | `FT_SCALER_FILE` | `unified/unified_scaler.pkl` | StandardScaler matched to the FT checkpoint |
 | `FT_USE_GPU` | `false` | Run FT-T inference on CUDA when available |
-| `FT_SCORE_THRESHOLD` | `0.50` | Floor applied by `FTTransformerEngine.anomaly_score()` (1 − P(Benign)). No runtime path calls that method (the ensemble uses the predicted-class confidence), so it currently has no effect |
 | `MLFLOW_FT_REGISTRY_NAME` | `ml-ids-unified-ft-transformer` | MLflow registered model name to load FT from |
 | `MLFLOW_FT_STAGE` | `None` | MLflow stage to pin (default = latest version) |
 | `IF_CONTAMINATION`, `IF_N_ESTIMATORS`, `IF_MIN_SAMPLES`, `IF_TRAINING_STATUS_FILE` | `0.05`, `200`, `100`, `/tmp/cnds_if_training_status.json` | Reserved — defined in `src/config.py` but not read; the baseline `WindowTrainer` uses its own constructor defaults (contamination 0.01, 200 estimators) |

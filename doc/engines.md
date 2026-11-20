@@ -24,8 +24,8 @@ same 76 CICFlowMeter flow-feature vector and return `(label, confidence)` from
 (`_score_supervised()` in `src/pipeline.py`) and `POST /api/predict` set the
 supervised score to `0.0` when the label is benign and to the confidence of the
 predicted class otherwise. Each engine also has an `anomaly_score()` method
-(`1 - P(Benign)`, zeroed below a threshold), but no runtime path calls it, so
-`FT_SCORE_THRESHOLD` and `RF_SCORE_THRESHOLD` currently have no effect on alerts. The
+(`1 - P(Benign)`, no floor); only offline evaluation (`scripts/eval_engines.py`)
+calls it, so it has no effect on alerts. The
 registry picks **FT-Transformer when its checkpoint is present**, otherwise
 falls back to the Random Forest pipeline.
 
@@ -46,7 +46,7 @@ F1 on minority attacks than the legacy RF and produces the named
 - **Test metric:** F1 macro **0.6197** (vs XGBoost baseline 0.6095, default FT-T 0.5446).
 - **Class-weighting strategy:** `sqrt_inverse` — full inverse over-corrects on minorities, focal loss adds nothing over sqrt-weighted CE.
 - **Score used by the ensemble:** confidence of the predicted class (softmax over logits divided by `FT_TEMPERATURE`, default `2.0`), or `0.0` when the class is `Benign`.
-- **`anomaly_score()`:** `1 - P(Benign)`, zeroed below `FT_SCORE_THRESHOLD` (default `0.50`). Not called at runtime (see above).
+- **`anomaly_score()`:** `1 - P(Benign)`. Not called at runtime (see above).
 - **Architecture diagrams:** see [`ML-IDS/docs/UNIFIED_MODEL_ARCHITECTURE.md`](https://github.com/RobertoDeLaCamara/ML-IDS/blob/main/docs/UNIFIED_MODEL_ARCHITECTURE.md).
 
 #### Model load chain (priority order)
@@ -71,7 +71,7 @@ Classify network flows into one of 9 known attack categories or `Benign`. This e
 - **Features:** 76 CICFlowMeter flow features (see `FlowExtractor`).
 - **Training dataset:** CIC-UNSW-NB15 — 447k labeled flows from the Canadian Institute for Cybersecurity / UNSW.
 - **Score used by the ensemble:** confidence of the predicted class, or `0.0` when the class is `Benign`.
-- **`anomaly_score()`:** `1 - P(Benign)`, zeroed below `RF_SCORE_THRESHOLD` (default `0.90`). Not called at runtime (see above).
+- **`anomaly_score()`:** `1 - P(Benign)`. Not called at runtime (see above).
 
 ### Model load chain (priority order)
 

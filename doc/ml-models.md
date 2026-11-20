@@ -280,7 +280,7 @@ Extraídos de los bytes crudos del payload forward del flujo. Se pasan al motor 
 
 - Solo se analizan los primeros `PAYLOAD_SAMPLE_BYTES` (4096) de cada paquete, y como mucho `MAX_PAYLOAD_SAMPLES` (50) muestras por flujo.
 - Una única regex combinada (`_PRESCREEN`) se ejecuta primero; los seis patrones solo se prueban si esa pre-criba encuentra algo.
-- Los payloads que parecen cifrados o comprimidos se saltan (`looks_encrypted()`: cabecera de registro TLS, o al menos 256 bytes con entropía ≥ 7.0 bits/byte).
+- Los payloads que parecen cifrados o comprimidos se saltan (`looks_encrypted()`: cabecera de registro TLS, o al menos 256 bytes con entropía ≥ 7.0 bits/byte). También se saltan los flujos SSH (puerto 22 en cualquier extremo, o banner `SSH-` visto en el flujo): sus paquetes interactivos son cifrados pero demasiado cortos para el umbral de entropía.
 
 ---
 

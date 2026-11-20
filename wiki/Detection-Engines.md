@@ -88,7 +88,7 @@ to Random Forest.
   - `malicious_ja3` — JA3 hash matches the known-malicious list
 - The rules marked in `CRITICAL_RULES` (by default the six `payload:*` rules, `malicious_ja3`, `syn_scan`, `port_scan` and `brute_force`) force an alert regardless of the weighted blend. There is no rate-spike rule.
 
-Payload regex rules are skipped on payloads that look encrypted or compressed (#68): a TLS record header at the start of the payload, or a sample of at least 256 bytes with Shannon entropy of 7.0 bits/byte or more. This stops chance regex matches inside bulk TLS or backup transfers from raising `CRITICAL_RULES` alerts; plaintext attacks are unaffected.
+Payload regex rules are skipped on payloads that look encrypted or compressed (#68): a TLS record header at the start of the payload, or a sample of at least 256 bytes with Shannon entropy of 7.0 bits/byte or more. This stops chance regex matches inside bulk TLS or backup transfers from raising `CRITICAL_RULES` alerts; plaintext attacks are unaffected. SSH flows are skipped too (either end on port 22, or an `SSH-` version banner seen in the flow): interactive SSH packets are encrypted but too short for the entropy check, and chance matches in them raised `CRITICAL_RULES` alerts on plain SSH sessions.
 
 ## Logwatch (log-based rules, outside the ensemble)
 

@@ -135,7 +135,7 @@ Extracted by `src/features/payload_analyzer.py`. Per-flow numeric features from 
 | `payload:*` | 6 regex signatures (SQLi, XSS, command injection, path traversal, Log4j, Shellshock) | — |
 | `malicious_ja3` | JA3 hash in the known-bad list | — |
 
-Payload regex rules are skipped on encrypted or compressed payloads (TLS record header, or at least 256 bytes with entropy of 7.0 bits/byte or more). `CRITICAL_RULES` defaults to the six `payload:*` rules, `malicious_ja3`, `syn_scan`, `port_scan` and `brute_force`.
+Payload regex rules are skipped on encrypted or compressed payloads (TLS record header, or at least 256 bytes with entropy of 7.0 bits/byte or more). SSH flows are skipped too (either end on port 22, or an `SSH-` version banner seen in the flow): interactive SSH packets are encrypted but too short for the entropy check, and chance matches in them raised `CRITICAL_RULES` alerts on plain SSH sessions. `CRITICAL_RULES` defaults to the six `payload:*` rules, `malicious_ja3`, `syn_scan`, `port_scan` and `brute_force`.
 
 ---
 

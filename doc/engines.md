@@ -259,7 +259,7 @@ for each pattern name returned by the payload analyzer: add "payload:<name>"
 ```
 - Fires when any of the 6 payload patterns (SQLi, XSS, CMDi, traversal, Log4J, Shellshock) matches.
 - Each matching pattern adds a separate triggered rule entry to the alert.
-- Payloads that look encrypted or compressed are skipped (#68): a TLS record header at the start of the payload, or a sample of at least 256 bytes with Shannon entropy of 7.0 bits/byte or more (`looks_encrypted()` in `src/features/payload_analyzer.py`). Plaintext attacks sit well below that entropy, while chance regex matches inside bulk TLS or backup transfers used to surface as `CRITICAL_RULES` alerts.
+- Payloads that look encrypted or compressed are skipped (#68): a TLS record header at the start of the payload, or a sample of at least 256 bytes with Shannon entropy of 7.0 bits/byte or more (`looks_encrypted()` in `src/features/payload_analyzer.py`). Plaintext attacks sit well below that entropy, while chance regex matches inside bulk TLS or backup transfers used to surface as `CRITICAL_RULES` alerts. SSH flows are skipped too (either end on port 22, or an `SSH-` version banner seen in the flow): interactive SSH packets are encrypted but too short for the entropy check, and chance matches in them raised `CRITICAL_RULES` alerts on plain SSH sessions.
 - MITRE (`src/enrichment/mitre.py`): T1190 for `sql_injection`, `log4j` (plus T1203) and `shellshock`; T1059.007 for `xss`; T1059 for `command_injection`; T1083 for `path_traversal`.
 
 #### Rule 5: Asymmetric Upload

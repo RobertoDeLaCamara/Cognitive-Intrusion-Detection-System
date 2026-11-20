@@ -25,6 +25,22 @@ from ..config import MAX_ACTIVE_FLOWS
 
 logger = logging.getLogger(__name__)
 
+# SSH is encrypted after the version exchange, and its interactive packets are
+# too short for the entropy check in payload_analyzer.looks_encrypted() (which
+# needs >= 256 bytes), so a few random bytes spelling "../" or "; id " raised
+# CRITICAL payload rules on plain SSH sessions. A flow counts as SSH when either
+# end uses port 22 or either side sends the "SSH-" version banner (SSH on other
+# ports, e.g. Gitea's 2223; the banner is missed if capture starts mid-session).
+_SSH_PORTS = frozenset({22})
+_SSH_BANNER = b"SSH-"
+
+
+def _is_ssh_packet(flow_key: FlowKey, packet) -> bool:
+    if flow_key[2] in _SSH_PORTS or flow_key[3] in _SSH_PORTS:
+        return True
+    raw = packet.getlayer("Raw")
+    return raw is not None and bytes(raw.load[:4]) == _SSH_BANNER
+
 
 class Dispatcher:
     """Routes each packet to all feature extraction pipelines.
@@ -62,6 +78,10 @@ class Dispatcher:
         self._ja3_hits: OrderedDict[FlowKey, dict] = OrderedDict()
         self._ja3_lock = threading.Lock()
 
+        # Flows identified as SSH (LRU, same bound): their payload matches are
+        # dropped, see _is_ssh_packet().
+        self._ssh_flows: OrderedDict[FlowKey, None] = OrderedDict()
+
     def dispatch(self, packet) -> None:
         """Process one packet through all pipelines."""
         # 1. Flow-level features
@@ -87,6 +107,9 @@ class Dispatcher:
                 self._ja3_hits[flow_key] = {"hash": ja3_hash, "string": ja3_str, "malicious": is_malicious_ja3(ja3_hash)}
                 self._ja3_hits.move_to_end(flow_key)
 
+        if flow_ref is not None and self._mark_ssh(flow_ref[0], packet):
+            matches = []
+
         if matches and flow_ref is not None and flow_ref[1]:
             flow_key = flow_ref[0]
             with self._payload_lock:
@@ -98,6 +121,20 @@ class Dispatcher:
                 combined = list(set(existing + matches))[-20:]
                 self._payload_hits[flow_key] = combined
                 self._payload_hits.move_to_end(flow_key)
+
+    def _mark_ssh(self, flow_key: FlowKey, packet) -> bool:
+        """Return True if *flow_key* is SSH, recording it the first time it is seen."""
+        with self._payload_lock:
+            if flow_key in self._ssh_flows:
+                return True
+            if not _is_ssh_packet(flow_key, packet):
+                return False
+            if len(self._ssh_flows) >= self._max_payload_entries:
+                self._ssh_flows.popitem(last=False)
+            self._ssh_flows[flow_key] = None
+            # Drop matches collected before the banner showed up.
+            self._payload_hits.pop(flow_key, None)
+            return True
 
     def _flush_loop(self) -> None:
         while not self._stop.is_set():
@@ -112,6 +149,7 @@ class Dispatcher:
                 record.src_ip, record.dst_ip, record.key[3], record.start_time)
             with self._payload_lock:
                 payload_matches = self._payload_hits.pop(record.key, [])
+                self._ssh_flows.pop(record.key, None)
             with self._ja3_lock:
                 ja3_info = self._ja3_hits.pop(record.key, None)
             payload_features = extract_payload_features(record.fwd_payloads)
@@ -128,6 +166,7 @@ class Dispatcher:
                 record.src_ip, record.dst_ip, record.key[3], record.start_time)
             with self._payload_lock:
                 payload_matches = self._payload_hits.pop(record.key, [])
+                self._ssh_flows.pop(record.key, None)
             with self._ja3_lock:
                 ja3_info = self._ja3_hits.pop(record.key, None)
             payload_features = extract_payload_features(record.fwd_payloads)

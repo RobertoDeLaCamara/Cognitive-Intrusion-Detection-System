@@ -124,3 +124,110 @@ def test_benign_label_of_any_casing_scores_zero(monkeypatch, label):
     import numpy as np
     pred = rp.run_detection(Rec(), np.zeros(76, dtype=np.float32), None, [])
     assert pred["engine_scores"]["supervised"] == 0.0
+
+
+# ── per-flow export and Hopfield novelty ───────────────────────────────────
+
+def _no_other_engines(rp, monkeypatch):
+    off = type("X", (), {"is_available": False})()
+    for name in ("iforest", "lstm", "baseline"):
+        monkeypatch.setattr(rp, name, off)
+    monkeypatch.setattr(rp, "rules", type("R", (), {"evaluate": staticmethod(lambda *a, **k: (0.0, []))})())
+
+
+class _Rec:
+    key = ("10.0.0.1", "10.0.0.2", 1234, 80, 6)
+    start_time = 100.0
+    fwd_payloads = []
+
+
+def test_novelty_comes_from_predict_with_novelty(monkeypatch):
+    rp = _load("pcap_replay")
+
+    class FT:
+        is_available = True
+        def predict(self, vec, payload=None): raise AssertionError("must use predict_with_novelty")
+        def predict_with_novelty(self, vec, payload=None): return "DoS", 0.8, -0.42
+
+    monkeypatch.setattr(rp, "supervised", FT())
+    _no_other_engines(rp, monkeypatch)
+    import numpy as np
+    pred = rp.run_detection(_Rec(), np.zeros(76, dtype=np.float32), None, [])
+    assert pred["novelty"] == -0.42
+    assert pred["engine_scores"]["supervised"] == 0.8
+    assert pred["attack_type"] == "DoS"
+    assert (pred["src_port"], pred["protocol"], pred["start_time"]) == (1234, 6, 100.0)
+
+
+def test_engine_without_novelty_api_gives_none(monkeypatch):
+    rp = _load("pcap_replay")
+
+    class RF:
+        is_available = True
+        def predict(self, vec, payload=None): return "DoS", 0.7
+
+    monkeypatch.setattr(rp, "supervised", RF())
+    _no_other_engines(rp, monkeypatch)
+    import numpy as np
+    pred = rp.run_detection(_Rec(), np.zeros(76, dtype=np.float32), None, [])
+    assert pred["novelty"] is None
+    assert pred["engine_scores"]["supervised"] == 0.7
+
+
+def test_replay_predictions_carry_flow_fields(replay):
+    _, result = replay
+    p = result.predictions[0]
+    for k in ("file", "src_port", "protocol", "start_time", "novelty"):
+        assert k in p
+    assert "features" not in p                     # only kept when asked
+
+
+def _pred(label, novelty, rules=(), **kw):
+    p = {"file": "x.pcap", "flow_key": "k", "src_ip": "a", "dst_ip": "b", "src_port": 1, "dst_port": 2,
+         "protocol": 6, "start_time": 1.0, "true_label": label, "ensemble_score": 0.3,
+         "is_anomaly": False, "attack_type": "Benign", "triggered_rules": list(rules),
+         "engine_scores": {"supervised": 0.0, "isolation_forest": None, "lstm": None,
+                           "baseline": None, "rules": 0.0},
+         "novelty": novelty}
+    p.update(kw)
+    return p
+
+
+def test_flows_csv_columns_and_features(tmp_path):
+    rp = _load("pcap_replay")
+    import csv
+    preds = [_pred("BENIGN", -0.9, rules=("a", "b"), features=list(range(76))),
+             _pred("port_scan", None)]
+    out = tmp_path / "f.csv"
+    assert rp.write_flows_csv(preds, str(out), with_features=True) == 2
+    rows = list(csv.DictReader(open(out)))
+    assert list(rows[0])[:len(rp.FLOW_CSV_FIELDS)] == list(rp.FLOW_CSV_FIELDS)
+    assert len(rows[0]) == len(rp.FLOW_CSV_FIELDS) + 76
+    assert rows[0]["triggered_rules"] == "a;b"
+    assert rows[0]["novelty"] == "-0.9" and rows[1]["novelty"] == ""
+    assert rows[0][f"f_{rp.FLOW_FEATURE_NAMES[5]}"] == "5"
+    assert rows[1][f"f_{rp.FLOW_FEATURE_NAMES[0]}"] == ""   # flow without stored features
+    rp.write_flows_csv(preds, str(out))
+    assert len(next(csv.reader(open(out)))) == len(rp.FLOW_CSV_FIELDS)
+
+
+def test_novelty_summary(monkeypatch):
+    rp = _load("pcap_replay")
+    agg = rp.EvalResult()
+    agg.predictions = ([_pred("BENIGN", -1.0 + i / 100) for i in range(100)]
+                       + [_pred("port_scan", -0.5), _pred("port_scan", -0.98)])
+    s = rp.novelty_summary(agg, current=-0.95)
+    assert s["benign_flows"] == 100
+    assert s["suggested_threshold"] == pytest.approx(-0.02)       # q0.99 of benign
+    assert s["per_label"]["BENIGN"]["above_current"] == pytest.approx(0.95)
+    assert s["per_label"]["port_scan"]["above_suggested"] == 0.0
+    assert s["per_label"]["port_scan"]["above_current"] == 0.5
+    lines = "\n".join(rp.novelty_report_lines(s))
+    assert "## Hopfield novelty (shadow mode)" in lines and "| port_scan | 2 |" in lines
+
+
+def test_novelty_summary_absent_without_scores():
+    rp = _load("pcap_replay")
+    agg = rp.EvalResult()
+    agg.predictions = [_pred("BENIGN", None)]
+    assert rp.novelty_summary(agg, current=None) is None

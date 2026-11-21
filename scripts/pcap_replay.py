@@ -20,9 +20,15 @@ live-trained model (it is then the same model the detector serves). Not covered:
 boosts, dedup and suppression. The IF/LSTM files shipped in the repo are demo models, so the
 report lists which engines were actually available.
 
+Per-flow export (--flows-csv): one row per scored flow with its true label, ensemble score,
+every engine score, the rules that fired and the Hopfield novelty score (shadow mode), plus the
+76 flow features with --flows-features. The report then also has a novelty section with a
+threshold suggested from this capture's own benign traffic.
+
 Usage:
     python scripts/pcap_replay.py capture.pcap --attacks attacks.csv --report report.md
     python scripts/pcap_replay.py data/test.pcap --labels data/labels.csv --output results.json
+    python scripts/pcap_replay.py capture.pcap --attacks attacks.csv --flows-csv flows.csv
 """
 
 import argparse
@@ -39,7 +45,7 @@ from scapy.all import PcapReader, IP
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.features.flow_extractor import FlowExtractor
+from src.features.flow_extractor import FLOW_FEATURE_NAMES, FlowExtractor
 from src.features.host_extractor import HostExtractor
 from src.features.payload_analyzer import analyze_payload, extract_payload_features
 from src.labels import is_benign
@@ -228,7 +234,14 @@ def run_detection(record, flow_vec, host_vec, payload_matches) -> dict:
     # and benign labels are recognised by src.labels.is_benign ("Benign", "BENIGN", ...).
     payload_features = extract_payload_features(record.fwd_payloads)
     if flow_vec is not None and supervised.is_available:
-        result = supervised.predict(flow_vec, payload_features)
+        # Same choice as src/pipeline.py: the FT-Transformer also returns the Hopfield novelty.
+        if callable(getattr(type(supervised), "predict_with_novelty", None)):
+            result = supervised.predict_with_novelty(flow_vec, payload_features)
+            if result:
+                label, conf, scores.novelty = result
+                result = (label, conf)
+        else:
+            result = supervised.predict(flow_vec, payload_features)
         if result:
             label, conf = result
             scores.supervised = 0.0 if is_benign(label) else conf
@@ -271,7 +284,11 @@ def run_detection(record, flow_vec, host_vec, payload_matches) -> dict:
         "flow_key": flow_key_str(record.key),
         "src_ip": record.key[0],
         "dst_ip": record.key[1],
+        "src_port": record.key[2],
         "dst_port": record.key[3],
+        "protocol": record.key[4],
+        "start_time": getattr(record, "start_time", None),
+        "novelty": None if scores.novelty is None else round(float(scores.novelty), 6),
         "ensemble_score": round(result.score, 4),
         "is_anomaly": bool(result.is_anomaly),
         "attack_type": scores.attack_type,
@@ -280,7 +297,7 @@ def run_detection(record, flow_vec, host_vec, payload_matches) -> dict:
     }
 
 
-def replay_pcap(pcap_path: str, labels=None, attacks=None) -> EvalResult:
+def replay_pcap(pcap_path: str, labels=None, attacks=None, keep_features: bool = False) -> EvalResult:
     """Replay one PCAP, scoring flows as they expire (capture time), like the live path."""
     logger.info("Processing %s", pcap_path)
     flow_extractor = FlowExtractor()
@@ -300,6 +317,9 @@ def replay_pcap(pcap_path: str, labels=None, attacks=None) -> EvalResult:
             pred = run_detection(record, flow_vec, host_vec, matches)
             pred["true_label"] = true_label(
                 record.key, record.start_time, state["t0"], labels, attacks)
+            pred["file"] = pcap_path
+            if keep_features and flow_vec is not None:
+                pred["features"] = [float(x) for x in flow_vec]
             result.predictions.append(pred)
 
     pkt_count = 0
@@ -328,6 +348,88 @@ def replay_pcap(pcap_path: str, labels=None, attacks=None) -> EvalResult:
     score(flow_extractor.collect_all(), end)
     logger.info("Processed %d packets, scored %d flows", pkt_count, len(result.predictions))
     return result
+
+
+# ── per-flow export and novelty ────────────────────────────────────────────
+
+FLOW_CSV_FIELDS = (
+    "file", "flow_key", "src_ip", "dst_ip", "src_port", "dst_port", "protocol", "start_time",
+    "true_label", "ensemble_score", "is_anomaly", "attack_type", *ENGINE_FIELDS,
+    "triggered_rules", "novelty",
+)
+
+
+def write_flows_csv(predictions: List[dict], path: str, with_features: bool = False) -> int:
+    """One row per scored flow; the 76 flow features as f_<name> columns when asked."""
+    feature_cols = [f"f_{n}" for n in FLOW_FEATURE_NAMES] if with_features else []
+    with open(path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(FLOW_CSV_FIELDS) + feature_cols, extrasaction="ignore")
+        w.writeheader()
+        for p in predictions:
+            row = {k: p.get(k) for k in FLOW_CSV_FIELDS}
+            row.update(p["engine_scores"])
+            row["triggered_rules"] = ";".join(p.get("triggered_rules") or [])
+            row["novelty"] = "" if p.get("novelty") is None else p["novelty"]
+            if with_features:
+                feats = p.get("features") or [""] * len(feature_cols)
+                row.update(zip(feature_cols, feats))
+            w.writerow(row)
+    return len(predictions)
+
+
+def novelty_threshold() -> Optional[float]:
+    scorer = getattr(supervised, "novelty_scorer", None)
+    return None if scorer is None else float(scorer.threshold)
+
+
+def novelty_summary(agg: "EvalResult", current: Optional[float], quantile: float = 0.99) -> Optional[dict]:
+    """Novelty per true label, at the deployed threshold and at one suggested from this
+    capture's benign flows (their `quantile`). None when no flow has a novelty score."""
+    scored = [p for p in agg.predictions if p.get("novelty") is not None]
+    if not scored:
+        return None
+    benign = sorted(p["novelty"] for p in scored if p["true_label"] == BENIGN)
+    suggested = None
+    if benign:
+        idx = min(len(benign) - 1, max(0, int(round(quantile * (len(benign) - 1)))))
+        suggested = benign[idx]
+    labels = [BENIGN] + sorted({p["true_label"] for p in scored} - {BENIGN})
+    per_label = {}
+    for label in labels:
+        vals = sorted(p["novelty"] for p in scored if p["true_label"] == label)
+        if not vals:
+            continue
+        per_label[label] = {
+            "flows": len(vals),
+            "median": round(vals[len(vals) // 2], 4),
+            "above_current": (round(sum(v >= current for v in vals) / len(vals), 4)
+                              if current is not None else None),
+            "above_suggested": (round(sum(v >= suggested for v in vals) / len(vals), 4)
+                                if suggested is not None else None),
+        }
+    return {"current_threshold": current, "suggested_threshold": suggested,
+            "suggested_quantile": quantile, "benign_flows": len(benign), "per_label": per_label}
+
+
+def novelty_report_lines(summary: dict) -> List[str]:
+    cur, sug = summary["current_threshold"], summary["suggested_threshold"]
+    def fmt(v):
+        return "-" if v is None else f"{v:.4f}"
+
+    def pct(v):
+        return "-" if v is None else f"{v:.1%}"
+
+    lines = ["", "## Hopfield novelty (shadow mode)", "",
+             f"Deployed threshold: {fmt(cur)}. Suggested from this capture: {fmt(sug)} "
+             f"(q{summary['suggested_quantile']:g} of {summary['benign_flows']} benign flows). "
+             "Higher = less like any class the supervised model knows; it has no ensemble weight.", "",
+             "| Class | Flows | Median | >= deployed | >= suggested |", "|---|---|---|---|---|"]
+    for label, d in summary["per_label"].items():
+        lines.append(f"| {label} | {d['flows']} | {d['median']:.4f} | {pct(d['above_current'])} | "
+                     f"{pct(d['above_suggested'])} |")
+    lines += ["", "Only meaningful when the capture's benign traffic is representative of the "
+              "deployment, and the suggested value should come from several captures, not one."]
+    return lines
 
 
 # ── report ─────────────────────────────────────────────────────────────────
@@ -386,6 +488,9 @@ def markdown_report(agg: EvalResult, files: List[str], threshold: float) -> str:
               "| Threshold | Recall | FP rate | Precision |", "|---|---|---|---|"]
     for t, r in agg.sweep().items():
         lines.append(f"| {t} | {r['recall']:.0%} | {r['fp_rate']:.1%} | {r['precision']:.0%} |")
+    summary = novelty_summary(agg, novelty_threshold())
+    if summary:
+        lines += novelty_report_lines(summary)
     return "\n".join(lines) + "\n"
 
 
@@ -397,7 +502,12 @@ def main():
     parser.add_argument("--output", "-o", default="eval_results.json", help="Output JSON file")
     parser.add_argument("--report", help="Also write a Markdown report here")
     parser.add_argument("--threshold", type=float, help="Override ensemble threshold")
+    parser.add_argument("--flows-csv", help="Write one CSV row per scored flow here")
+    parser.add_argument("--flows-features", action="store_true",
+                        help="With --flows-csv, also write the 76 flow features (f_<name> columns)")
     args = parser.parse_args()
+    if args.flows_features and not args.flows_csv:
+        parser.error("--flows-features needs --flows-csv")
 
     from src import config
     if args.threshold:
@@ -413,19 +523,24 @@ def main():
         if not Path(pcap_path).exists():
             logger.warning("File not found: %s", pcap_path)
             continue
-        res = replay_pcap(pcap_path, labels, attacks)
+        res = replay_pcap(pcap_path, labels, attacks, keep_features=args.flows_features)
         used.append(pcap_path)
         per_file[pcap_path] = {"metrics": res.to_dict(), "per_class": res.per_class(),
-                               "predictions": res.predictions}
+                               "predictions": [{k: v for k, v in p.items() if k != "features"}
+                                               for p in res.predictions]}
         aggregate.predictions.extend(res.predictions)
 
     out = {"files": per_file, "aggregate": aggregate.to_dict(),
            "per_class": aggregate.per_class(), "threshold_sweep": aggregate.sweep(),
-           "threshold": config.ENSEMBLE_THRESHOLD, "engines": engines_available()}
+           "threshold": config.ENSEMBLE_THRESHOLD, "engines": engines_available(),
+           "novelty": novelty_summary(aggregate, novelty_threshold())}
     with open(args.output, "w") as f:
         json.dump(out, f, indent=2)
     logger.info("Results written to %s", args.output)
     logger.info("Aggregate: P=%.3f R=%.3f F1=%.3f", aggregate.precision, aggregate.recall, aggregate.f1)
+    if args.flows_csv:
+        n = write_flows_csv(aggregate.predictions, args.flows_csv, with_features=args.flows_features)
+        logger.info("Per-flow CSV (%d flows) written to %s", n, args.flows_csv)
     if args.report:
         Path(args.report).write_text(markdown_report(aggregate, used, config.ENSEMBLE_THRESHOLD))
         logger.info("Report written to %s", args.report)

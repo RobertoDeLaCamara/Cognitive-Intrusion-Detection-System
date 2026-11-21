@@ -43,6 +43,24 @@ python scripts/pcap_replay.py capture.pcap --attacks attacks.csv \
     --output results.json --report report.md
 ```
 
+### Per-flow export and the Hopfield novelty threshold
+
+`--flows-csv flows.csv` writes one row per scored flow: file, 5-tuple, start time, true label,
+ensemble score and decision, predicted type, each engine's score, the rules that fired
+(`;`-separated) and the Hopfield novelty score (empty when the FT-Transformer or its prototypes are
+not loaded). `--flows-features` adds the 76 flow features as `f_<name>` columns, for training or
+offline analysis. The JSON output never includes the features.
+
+When flows carry a novelty score, the report gets a **Hopfield novelty (shadow mode)** section:
+per true label, the median score and the share of flows at or above the deployed threshold and at
+or above a threshold suggested from the capture's own benign flows (their 99th percentile). Use it
+to calibrate `threshold` in `she_prototypes.npz` to your network, from several captures rather than
+one. On the synthetic suite the novelty score does not separate the scripted attacks from benign
+traffic (they resemble classes the model was trained on), which is one reason it stays in shadow mode.
+
+cnds-red-team produces the `--attacks` file for its own campaigns: `cnds-red-team attacks
+--campaign-id <id> -o attacks.csv`.
+
 ## 1. Synthetic suite (coverage smoke test)
 
 ```bash

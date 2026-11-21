@@ -200,3 +200,29 @@ def test_evict_oldest_when_full():
 
     fe_mod.MAX_ACTIVE_FLOWS = original
     assert extractor.active_flow_count == 2
+
+
+def test_truncated_capture_uses_on_the_wire_length():
+    """A header-only PCAP (snaplen) keeps the real size in `wirelen`; length features must use it,
+    so a replayed truncated capture gives the same vector as the full one."""
+    from scapy.all import Ether, IP, TCP, Raw, raw
+
+    def flow(truncate):
+        ex = FlowExtractor()
+        for i, (src, dst, sp, dp, size) in enumerate([
+            ("10.0.0.1", "10.0.0.2", 40000, 443, 1200),
+            ("10.0.0.2", "10.0.0.1", 443, 40000, 900),
+            ("10.0.0.1", "10.0.0.2", 40000, 443, 50),
+        ]):
+            full = Ether() / IP(src=src, dst=dst) / TCP(sport=sp, dport=dp, flags="PA") / Raw(b"x" * size)
+            pkt = Ether(raw(full)[:128]) if truncate else Ether(raw(full))
+            pkt.wirelen = len(raw(full)) if truncate else None
+            ex.process_packet(pkt, timestamp=1000.0 + i * 0.1)
+        (rec, vec), = ex.collect_all()
+        return dict(zip(FLOW_FEATURE_NAMES, vec))
+
+    full, trunc = flow(truncate=False), flow(truncate=True)
+    for name in ("totlen_fwd_pkts", "totlen_bwd_pkts", "fwd_pkt_len_max", "bwd_pkt_len_max",
+                 "pkt_len_mean"):
+        assert trunc[name] == full[name], name
+    assert full["fwd_pkt_len_max"] > 128          # the truncation would have hidden this

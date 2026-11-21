@@ -464,6 +464,8 @@ curl "http://localhost:8000/api/alerts/export?format=csv&severity=high&hours=24"
 python scripts/pcap_replay.py data/test.pcap --labels data/labels.csv --output results.json
 # or with attacker/time-window ground truth and a per-class Markdown report
 python scripts/pcap_replay.py capture.pcap --attacks attacks.csv --report report.md
+# one CSV row per flow (scores, rules, Hopfield novelty; + 76 features with --flows-features)
+python scripts/pcap_replay.py capture.pcap --attacks attacks.csv --flows-csv flows.csv
 ```
 
 See [`wiki/Evaluation.md`](wiki/Evaluation.md) for how to measure recall per attack class, what the replay does not cover, and the synthetic suite (`scripts/make_labelled_pcap.py`).

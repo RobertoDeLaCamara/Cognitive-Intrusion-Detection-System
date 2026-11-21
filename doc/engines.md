@@ -59,6 +59,40 @@ F1 on minority attacks than the legacy RF and produces the named
 If neither is available the engine self-disables and the registry falls
 back to Random Forest below.
 
+#### Hopfield novelty (shadow mode, weight 0)
+
+Alongside each prediction the engine scores how unfamiliar the flow is to the
+model, using a Simplified Hopfield Energy over the CLS embedding
+(`src/engines/hopfield_novelty.py`):
+
+```
+novelty = -1/beta * logsumexp(beta * cos(embedding, prototype_c))   over the 10 classes
+```
+
+Each prototype is the mean embedding of one class's training flows. Higher means
+further from every class the model knows. The score **does not enter the ensemble**:
+it never changes `score`, `is_anomaly`, severity or the Guardian. It only shows up in
+the detector log:
+
+- `[ALERT] ... | novelty=-0.7312` on every alert (`novelty_score` in the JSON extra);
+- `[NOVELTY-SHADOW] src=... | novelty=... | threshold=... | score=...` when a flow is
+  above the threshold but the ensemble did **not** alert, deduped per source IP like
+  alerts (`DEDUP_WINDOW_SECS`). These are the lines to review.
+
+The prototypes live in `models/unified/she_prototypes.npz` (13 KB, pickle-free,
+committed). They are fitted on the unified model's training split by
+`scripts/fit_hopfield_prototypes.py` (beta 32; threshold = 99th percentile of the
+validation scores, so ~0.1 % of benign validation flows exceed it). The file stores a
+fingerprint of the checkpoint (CLS token + head weights); if the loaded model differs,
+for example a newer MLflow version, novelty turns itself off with a warning: refit
+after every retraining. `HOPFIELD_NOVELTY_ENABLED=false` turns it off explicitly.
+
+Why shadow mode: in the scikit-hopfield validation (leave-one-attack-class-out on
+UNSW-NB15) this score separated held-out classes better than `1 - P(Benign)` (mean
+AUROC 0.960 vs 0.914), but that test is optimistic (the encoder had seen every class)
+and was not run on home-LAN traffic. Promote it to a weighted engine only if the
+`[NOVELTY-SHADOW]` lines turn out to point at real, otherwise-missed activity.
+
 ### 1b. Random Forest (fallback)
 
 **File:** `src/engines/supervised.py`

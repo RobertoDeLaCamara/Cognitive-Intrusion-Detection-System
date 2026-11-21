@@ -167,6 +167,14 @@ FT_USE_GPU          = os.getenv("FT_USE_GPU", "false").lower() == "true"
 # Transformer classifiers are typically over-confident out of the box; T=2.0 is the
 # empirically motivated default. Set to 1.0 to disable.
 FT_TEMPERATURE      = float(os.getenv("FT_TEMPERATURE", "2.0"))
+# Hopfield novelty (SHE energy over the FT-Transformer CLS embedding). Shadow mode only:
+# logged as `novelty=` on alerts and as [NOVELTY-SHADOW] lines, never weighted in the
+# ensemble. Inert when the prototype file is missing or was fitted on another model.
+# Fit it with scripts/fit_hopfield_prototypes.py.
+HOPFIELD_NOVELTY_ENABLED = os.getenv("HOPFIELD_NOVELTY_ENABLED", "true").lower() == "true"
+HOPFIELD_PROTOTYPES_PATH = os.path.join(
+    MODELS_DIR, os.getenv("HOPFIELD_PROTOTYPES_FILE", "unified/she_prototypes.npz")
+)
 MLFLOW_FT_REGISTRY_NAME = os.getenv("MLFLOW_FT_REGISTRY_NAME", "ml-ids-unified-ft-transformer")
 MLFLOW_FT_STAGE     = os.getenv("MLFLOW_FT_STAGE", "None")  # MLflow default stage if none set
 

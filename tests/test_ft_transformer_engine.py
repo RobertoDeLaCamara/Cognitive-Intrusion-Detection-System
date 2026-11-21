@@ -156,3 +156,62 @@ def test_classifies_attack_majority_non_benign(engine):
     assert not failures, (
         f"Classes mostly mislabelled as Benign: {failures}"
     )
+
+
+# ── Hopfield novelty (shadow mode) ───────────────────────────────────────────
+
+PROTOS = REPO / "models" / "unified" / "she_prototypes.npz"
+
+
+def test_embedding_path_matches_model_forward(engine):
+    """_forward_with_embedding must reproduce FTTransformer.forward exactly."""
+    rng = np.random.default_rng(0)
+    for _ in range(5):
+        x = rng.normal(size=76).astype(np.float32) * 100
+        probs_ref = engine._forward(x)
+        probs, emb = engine._forward_with_embedding(x)
+        assert np.allclose(probs, probs_ref, atol=1e-6)
+        assert emb.shape == (engine._model.head.in_features,)
+
+
+def test_predict_with_novelty_agrees_with_predict(engine):
+    x = np.zeros(76, dtype=np.float32)
+    label, conf = engine.predict(x)
+    label2, conf2, _ = engine.predict_with_novelty(x)
+    assert label2 == label
+    assert conf2 == pytest.approx(conf, abs=1e-6)
+
+
+def test_fingerprint_is_stable_hex(engine):
+    assert engine.fingerprint is not None and len(engine.fingerprint) == 64
+    int(engine.fingerprint, 16)
+
+
+@pytest.mark.skipif(not PROTOS.exists(), reason="she_prototypes.npz not fitted")
+def test_shipped_prototypes_match_this_checkpoint():
+    from src.engines.ft_transformer_engine import FTTransformerEngine
+    with torch.no_grad():
+        eng = FTTransformerEngine(
+            model_path=str(CKPT),
+            scaler_path=str(REPO / "models" / "unified" / "unified_scaler.pkl"),
+            use_gpu=False,
+            prototypes_path=str(PROTOS),
+        )
+    assert eng.novelty_scorer is not None, "prototypes were fitted on a different checkpoint"
+    _, _, novelty = eng.predict_with_novelty(np.zeros(76, dtype=np.float32))
+    assert novelty is not None and np.isfinite(novelty)
+
+
+def test_novelty_disabled_by_flag():
+    from src.engines.ft_transformer_engine import FTTransformerEngine
+    with torch.no_grad():
+        eng = FTTransformerEngine(
+            model_path=str(CKPT),
+            scaler_path=str(REPO / "models" / "unified" / "unified_scaler.pkl"),
+            use_gpu=False,
+            novelty_enabled=False,
+            prototypes_path=str(PROTOS),
+        )
+    assert eng.novelty_scorer is None
+    assert eng.fingerprint is not None
+    assert eng.predict_with_novelty(np.zeros(76, dtype=np.float32))[2] is None

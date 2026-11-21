@@ -43,6 +43,7 @@ Traffic flows through the system in this order:
 
 3. **Detection engines** (`src/engines/`): All engines are instantiated as singletons in `registry.py` and implement the `DetectionEngine` protocol from `protocol.py`. Engines gracefully degrade when model files are absent (`is_available` flag):
    - `ft_transformer_engine.py` — preferred supervised engine (unified FT-Transformer, 76 flow features, UNSW-NB15 classes); loaded from MLflow, then `models/unified/`; needs `torch`. `registry.py` picks it when its checkpoint is available
+   - `hopfield_novelty.py` — shadow-mode novelty score over the FT-Transformer CLS embedding (Simplified Hopfield Energy vs `models/unified/she_prototypes.npz`, fingerprint-bound to the checkpoint; refit with `scripts/fit_hopfield_prototypes.py` after any retraining). `EngineScores.novelty` is logged (`novelty=` on alerts, `[NOVELTY-SHADOW]` lines) and must never get an ensemble weight without a deliberate decision
    - `supervised.py` — Random Forest fallback on 76 flow features; bundled lite model at `models/rf_lite_model.joblib` works out of the box
    - `isolation_forest.py` — novelty scoring on 18 host features
    - `lstm_autoencoder.py` — sequence reconstruction error on host feature time-series per IP

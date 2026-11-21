@@ -40,6 +40,10 @@ class EngineScores:
     ti_malicious_ip: bool = False       # src or dst IP matches threat intel
     ti_malicious_ja3: bool = False      # JA3 hash matches threat intel
 
+    # Hopfield novelty of the flow's FT-Transformer embedding (shadow mode).
+    # Logged only: EnsembleScorer.score() never reads it.
+    novelty: Optional[float] = None
+
 
 @dataclass
 class EnsembleResult:

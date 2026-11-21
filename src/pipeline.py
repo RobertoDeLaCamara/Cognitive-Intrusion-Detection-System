@@ -344,9 +344,16 @@ def _threat_intel_hits(record: FlowRecord, ja3_info: Optional[dict]) -> Tuple[bo
 def _score_supervised(scores: EngineScores, flow_vec: np.ndarray, payload_features: Optional[np.ndarray]) -> None:
     if not supervised.is_available:
         return
-    result = supervised.predict(flow_vec, payload_features)
+    # Class-level lookup: only engines that really implement it (FTTransformerEngine).
+    if callable(getattr(type(supervised), "predict_with_novelty", None)):
+        result = supervised.predict_with_novelty(flow_vec, payload_features)
+        if result:
+            label, conf, scores.novelty = result
+    else:
+        result = supervised.predict(flow_vec, payload_features)
+        if result:
+            label, conf = result
     if result:
-        label, conf = result
         scores.supervised = 0.0 if is_benign(label) else conf
         scores.attack_type = label
         scores.supervised_confidence = conf
@@ -404,6 +411,8 @@ def _log_alert(record: FlowRecord, scores: EngineScores, result, triggered: List
         parts.append(f"rules={triggered}")
     if ja3_info:
         parts.append(f"ja3={ja3_info['hash']}")
+    if scores.novelty is not None:
+        parts.append(f"novelty={scores.novelty:.4f}")
 
     logger.warning("[ALERT] %s", " | ".join(parts), extra={
         "src_ip": record.src_ip,
@@ -413,7 +422,35 @@ def _log_alert(record: FlowRecord, scores: EngineScores, result, triggered: List
         "triggered_rules": triggered,
         "active_engines": result.active_engines,
         "ja3_hash": ja3_info["hash"] if ja3_info else None,
+        "novelty_score": scores.novelty,
     })
+
+
+def _log_novelty_shadow(record: FlowRecord, scores: EngineScores, result) -> None:
+    """Shadow mode: report flows the Hopfield scorer finds unfamiliar but the ensemble let through.
+
+    Log only (no alert, no DB row, no Guardian action); deduped per src_ip like alerts.
+    """
+    if scores.novelty is None:
+        return
+    scorer = getattr(supervised, "novelty_scorer", None)
+    if scorer is None or not scorer.is_novel(scores.novelty):
+        return
+    if _is_duplicate_alert((record.src_ip, "novelty-shadow")):
+        return
+    logger.warning(
+        "[NOVELTY-SHADOW] src=%s | dst=%s | novelty=%.4f | threshold=%.4f | score=%.3f | type=%s",
+        record.src_ip, record.dst_ip, scores.novelty, scorer.threshold, result.score,
+        scores.attack_type,
+        extra={
+            "src_ip": record.src_ip,
+            "dst_ip": record.dst_ip,
+            "novelty_score": scores.novelty,
+            "novelty_threshold": scorer.threshold,
+            "ensemble_score": result.score,
+            "attack_type": scores.attack_type,
+        },
+    )
 
 
 def on_flow_complete(
@@ -450,6 +487,7 @@ def on_flow_complete(
 
     result = ensemble.score(scores)
     if not result.is_anomaly:
+        _log_novelty_shadow(record, scores, result)
         return
 
     severity = severity_from_score(result.score, scores.attack_type)

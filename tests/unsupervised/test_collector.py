@@ -712,3 +712,65 @@ class TestObserveRobustness:
         inf_vec = np.full(18, float("inf"), dtype=np.float32)
         collector.observe(_make_record(), inf_vec)
         assert len(collector._buffer) == 1
+
+
+# ── BASELINE_EXCLUDE_SOURCES (red-team traffic never trains the baseline) ──
+
+
+def _excluding_collector(exclude, on_ready=None):
+    return BaselineCollector(
+        trigger=_make_trigger(min_total=10_000),
+        on_window_ready=on_ready or MagicMock(),
+        exclude_sources=exclude,
+    )
+
+
+@pytest.mark.parametrize("record, kept", [
+    (_make_record(src_ip="192.168.1.190", dst_ip="192.168.1.189"), False),  # attacker -> target
+    (_make_record(src_ip="192.168.1.189", dst_ip="192.168.1.190"), False),  # target -> attacker
+    (_make_record(src_ip="172.30.0.7", dst_ip="172.30.0.10"), False),       # inside excluded CIDR
+    (_make_record(src_ip="192.168.1.62", dst_ip="192.168.1.189"), True),    # normal LAN flow
+    (_make_record(src_ip="fe80::1", dst_ip="192.168.1.189"), True),         # other IP family
+])
+def test_excluded_hosts_never_enter_the_window(record, kept):
+    c = _excluding_collector(["192.168.1.190", "172.30.0.0/24"])
+    c.observe(record, _host_vec())
+    snap = c.snapshot()
+    assert snap.n_total == (1 if kept else 0)
+    assert snap.excluded == (0 if kept else 1)
+    assert c.excluded_count == snap.excluded
+
+
+def test_excluded_flows_do_not_count_towards_trigger_or_ips():
+    c = _excluding_collector(["10.9.9.9"])
+    for port in range(50):
+        c.observe(_make_record(src_ip="10.9.9.9", dst_port=port), _host_vec())
+    c.observe(_make_record(src_ip="192.168.1.62", dst_port=22), _host_vec())
+    snap = c.snapshot()
+    assert snap.n_total == 1
+    assert snap.n_distinct_src_ips == 1
+    assert snap.top_dst_ports == [22]          # the scan's 50 ports left no trace
+    assert snap.excluded == 50
+
+
+def test_no_exclusions_keeps_everything():
+    c = _excluding_collector([])
+    c.observe(_make_record(src_ip="192.168.1.190"), _host_vec())
+    assert c.snapshot().n_total == 1
+    assert c.snapshot().excluded == 0
+
+
+def test_invalid_entries_are_logged_and_ignored(caplog):
+    caplog.set_level(logging.ERROR, logger="src.unsupervised.collector")
+    c = _excluding_collector(["not-an-ip", " ", "192.168.1.190", "300.1.1.1"])
+    assert any("not-an-ip" in r.getMessage() for r in caplog.records)
+    assert any("300.1.1.1" in r.getMessage() for r in caplog.records)
+    c.observe(_make_record(src_ip="192.168.1.190"), _host_vec())
+    c.observe(_make_record(src_ip="192.168.1.62"), _host_vec())
+    assert c.snapshot().n_total == 1
+
+
+def test_unparseable_flow_ip_is_not_excluded():
+    c = _excluding_collector(["0.0.0.0/0"])
+    c.observe(_make_record(src_ip="garbage", dst_ip="also-garbage"), _host_vec())
+    assert c.snapshot().n_total == 1

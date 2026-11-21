@@ -585,6 +585,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `BASELINE_MIN_SRC_IPS` | `20` | Baseline training trigger: minimum distinct source IPs |
 | `BASELINE_MIN_ELAPSED_SECS` | `1800` | Baseline training trigger: minimum seconds since the window started |
 | `BASELINE_MIN_PORT_ENTROPY` | `2.5` | Baseline training trigger: minimum destination-port Shannon entropy (bits) |
+| `BASELINE_EXCLUDE_SOURCES` | *(empty)* | Comma-separated IPs/CIDRs whose flows (as source **or** destination) never enter a baseline training window: red-team attackers, your own scanners. Their flows are still scored and can still alert. The skipped count appears as `excluded=` in `baseline_progress` |
 | `BASELINE_THRESHOLD_MAX_RATIO` | `3.0` | Stability gate: a trained window is not promoted when its LSTM threshold is more than this factor above/below the median of the last accepted windows (`0` disables) |
 | `BASELINE_THRESHOLD_REF_WINDOWS` | `5` | Stability gate: how many accepted thresholds the median is taken over (in-process, reset on restart) |
 | `BASELINE_MAX_CONSECUTIVE_REJECTS` | `3` | Stability gate: after this many rejections in a row the new level is accepted as a regime change |

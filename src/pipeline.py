@@ -19,6 +19,7 @@ from .config import (
     DRIFT_ENABLED, DRIFT_WINDOW_FLOWS, DRIFT_MIN_FLOWS, DRIFT_FEATURE_Z,
     DRIFT_WARN_FRACTION, DRIFT_CRIT_FRACTION,
     BASELINE_MIN_VECTORS, BASELINE_MIN_SRC_IPS, BASELINE_MIN_ELAPSED_SECS, BASELINE_MIN_PORT_ENTROPY,
+    BASELINE_EXCLUDE_SOURCES,
 )
 from .engines.registry import supervised, iforest, lstm, baseline as baseline_engine, rules, ensemble
 from .ensemble.scorer import EngineScores, severity_from_score
@@ -106,6 +107,7 @@ def init_baseline_collector(enabled: bool = True) -> None:
             trigger=trigger,
             on_window_ready=trainer.train_window,
             enabled=enabled,
+            exclude_sources=BASELINE_EXCLUDE_SOURCES,
         )
         _window_trainer = trainer
 

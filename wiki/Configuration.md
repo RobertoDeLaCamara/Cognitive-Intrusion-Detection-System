@@ -200,6 +200,7 @@ The four `BASELINE_MIN_*` variables are the trigger thresholds; all four must ho
 | `BASELINE_MIN_SRC_IPS` | `20` | Training trigger: minimum distinct source IPs |
 | `BASELINE_MIN_ELAPSED_SECS` | `1800` | Training trigger: minimum seconds since the window started |
 | `BASELINE_MIN_PORT_ENTROPY` | `2.5` | Training trigger: minimum destination-port Shannon entropy (bits) |
+| `BASELINE_EXCLUDE_SOURCES` | *(empty)* | Comma-separated IPs/CIDRs whose flows (as source **or** destination) never enter a baseline training window: red-team attackers, your own scanners. Their flows are still scored and can still alert. The skipped count appears as `excluded=` in `baseline_progress` |
 | `BASELINE_THRESHOLD_MAX_RATIO` | `3.0` | Stability gate: a trained window is not promoted when its LSTM threshold is more than this factor above/below the median of the last accepted windows (`0` disables) |
 | `BASELINE_DUMP_DIR` | _(empty)_ | Directory where every collected window is also written as an `.npz` file for offline evaluation (`scripts/eval_baseline.py`); empty disables it |
 | `BASELINE_DUMP_KEEP` | `48` | Newest window dumps kept in `BASELINE_DUMP_DIR`; `0` keeps all |

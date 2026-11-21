@@ -5,12 +5,13 @@ trigger fires (or a hard cap is hit), the buffer is snapshotted and handed off
 to a background training thread.
 """
 
+import ipaddress
 import logging
 import threading
 import time
 from collections import Counter
 from dataclasses import dataclass
-from typing import Callable, List, Optional
+from typing import Callable, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 
@@ -47,6 +48,7 @@ class CollectorSnapshot:
     window_start_ts: float
     trigger_thresholds: dict      # {vectors, ips, time, entropy, hard_cap}
     progress_ratios: dict         # {vectors, ips, time, entropy} ∈ [0.0, 1.0]
+    excluded: int = 0             # flows skipped since start (BASELINE_EXCLUDE_SOURCES)
 
 
 class BaselineCollector:
@@ -59,8 +61,11 @@ class BaselineCollector:
         trigger: CompositeTrigger,
         on_window_ready: Callable[[List[CollectedSample], ProvenanceMetadata], None],
         enabled: bool = True,
+        exclude_sources: Iterable[str] = (),
     ):
         self._trigger = trigger
+        self._excluded_nets = _parse_networks(exclude_sources)
+        self._excluded_count = 0
         self._on_window_ready = on_window_ready
         self._enabled = enabled
 
@@ -73,6 +78,19 @@ class BaselineCollector:
         self._dropped_while_training: int = 0
         # A record the collector cannot read never reaches the training window.
         self._extract_streak = FailureStreak(logger, "BaselineCollector field extraction")
+
+    @property
+    def excluded_count(self) -> int:
+        """Flows skipped because a BASELINE_EXCLUDE_SOURCES host was on either side."""
+        with self._lock:
+            return self._excluded_count
+
+    def _is_excluded(self, ip: str) -> bool:
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return False
+        return any(addr.version == net.version and addr in net for net in self._excluded_nets)
 
     # ── hot path ────────────────────────────────────────────────────────────
     def observe(self, record, host_vec: np.ndarray) -> None:
@@ -105,6 +123,12 @@ class BaselineCollector:
             self._extract_streak.failed(exc)
             return
         self._extract_streak.ok()
+
+        # Red-team / own-scanner traffic must never become "normal" for the baseline.
+        if self._excluded_nets and (self._is_excluded(src_ip) or self._is_excluded(dst_ip)):
+            with self._lock:
+                self._excluded_count += 1
+            return
 
         sample = CollectedSample(
             host_vec=np.asarray(host_vec, dtype=np.float32),
@@ -197,6 +221,7 @@ class BaselineCollector:
             in_flight = self._training_in_flight
             dropped = self._dropped_while_training
             wstart = self._window_start_ts
+            excluded = self._excluded_count
 
         thresholds = {
             "vectors": self._trigger.min_total_vectors,
@@ -229,6 +254,7 @@ class BaselineCollector:
             window_start_ts=wstart,
             trigger_thresholds=thresholds,
             progress_ratios=ratios,
+            excluded=excluded,
         )
 
     @staticmethod
@@ -271,3 +297,21 @@ class BaselineCollector:
                 )
             with self._lock:
                 self._training_in_flight = False
+
+
+def _parse_networks(entries: Iterable[str]) -> Tuple[Union[ipaddress.IPv4Network, ipaddress.IPv6Network], ...]:
+    """IPs and CIDRs from BASELINE_EXCLUDE_SOURCES; invalid entries are logged and skipped."""
+    nets = []
+    for raw in entries:
+        entry = str(raw).strip()
+        if not entry:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            logger.error("BASELINE_EXCLUDE_SOURCES: ignoring invalid entry %r", entry)
+    if nets:
+        logger.info(
+            "Baseline collector excludes flows to/from: %s", ", ".join(str(n) for n in nets)
+        )
+    return tuple(nets)

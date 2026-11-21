@@ -252,13 +252,14 @@ def start_baseline_scrape(
                         logger.info(
                             "baseline_progress n=%d/%d ips=%d/%d "
                             "elapsed=%.0f/%.0f entropy=%.2f/%.2f "
-                            "bottleneck=%s drift=%s",
+                            "bottleneck=%s drift=%s excluded=%d",
                             snapshot.n_total, thresholds["vectors"],
                             snapshot.n_distinct_src_ips, thresholds["ips"],
                             snapshot.elapsed_sec, thresholds["time"],
                             snapshot.dst_port_entropy_bits, thresholds["entropy"],
                             worst,
                             f"{drift_score:.3f}" if drift_score is not None else "n/a",
+                            snapshot.excluded,
                         )
                 scrape_streak.ok()
             except Exception as exc:

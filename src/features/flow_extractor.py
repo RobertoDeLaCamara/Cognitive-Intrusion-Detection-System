@@ -137,7 +137,11 @@ class FlowRecord:
     _last_bwd_time: float = 0.0
 
     def add_packet(self, packet, timestamp: float, is_forward: bool) -> None:
-        pkt_len = len(packet)
+        # On-the-wire length: a PCAP captured with a snaplen (header-only) stores the original
+        # length as `wirelen` while len(packet) is only the captured part. Live capture has the
+        # whole frame, so both agree there.
+        wirelen = getattr(packet, "wirelen", None)
+        pkt_len = wirelen if isinstance(wirelen, int) and wirelen > 0 else len(packet)
         ip = packet[IP]
         hdr_len = ip.ihl * 4 if hasattr(ip, 'ihl') else 20
 

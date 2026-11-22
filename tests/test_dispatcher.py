@@ -96,3 +96,13 @@ def test_payload_rules_still_fire_on_other_tcp_flows():
     web = IP(src="10.0.0.5", dst="10.0.0.9") / TCP(sport=44300, dport=8080) / Raw(_ATTACK)
     seen = _flush([ssh, ssh, web, web])
     assert seen[("10.0.0.5", "10.0.0.9", 44300, 8080, 6)] == ["command_injection"]
+
+
+def test_midstream_html_response_does_not_flag_xss():
+    """A keep-alive flow first seen at the server's HTML reply must not match payload:xss (#126 live case)."""
+    reply = IP(src="192.168.1.89", dst="192.168.1.189") / TCP(sport=3128, dport=51000, flags="PA") \
+        / Raw(b"HTTP/1.1 200 OK\r\n\r\n<html><script src=app.js></script>")
+    request = IP(src="192.168.1.189", dst="192.168.1.89") / TCP(sport=51000, dport=3128, flags="PA") \
+        / Raw(b"GET /job/x HTTP/1.1\r\n\r\n")
+    seen = _flush([reply, request, reply])
+    assert seen == {("192.168.1.189", "192.168.1.89", 51000, 3128, 6): []}

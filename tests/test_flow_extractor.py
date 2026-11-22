@@ -226,3 +226,74 @@ def test_truncated_capture_uses_on_the_wire_length():
                  "pkt_len_mean"):
         assert trunc[name] == full[name], name
     assert full["fwd_pkt_len_max"] > 128          # the truncation would have hidden this
+
+
+# --- Direction of flows first seen mid-connection --------------------------------
+
+from scapy.all import IP as _IP, TCP as _TCP, Raw as _Raw  # noqa: E402
+
+from src.features.flow_extractor import _looks_like_service_port  # noqa: E402
+
+_CLIENT, _SERVER = "192.168.1.189", "192.168.1.89"
+
+
+def _tcp(src, dst, sport, dport, flags, load=b""):
+    pkt = _IP(src=src, dst=dst) / _TCP(sport=sport, dport=dport, flags=flags)
+    if load:
+        pkt = pkt / _Raw(load)
+    return _IP(bytes(pkt))
+
+
+def _only_record(fe):
+    records = [rec for rec, _ in fe.collect_all()]
+    assert len(records) == 1
+    return records[0]
+
+
+def test_bare_syn_keeps_first_sender_as_initiator():
+    fe = FlowExtractor()
+    assert fe.process_packet(_tcp(_CLIENT, _SERVER, 51000, 3128, "S"), timestamp=1.0) == (
+        (_CLIENT, _SERVER, 51000, 3128, 6), True)
+
+
+def test_midstream_server_reply_first_is_reoriented():
+    """Keep-alive past FLOW_TIMEOUT: the server's reply opens the new flow."""
+    fe = FlowExtractor()
+    reply = _tcp(_SERVER, _CLIENT, 3128, 51000, "PA", b"<html><script>x</script>")
+    request = _tcp(_CLIENT, _SERVER, 51000, 3128, "PA", b"GET / HTTP/1.1\r\n\r\n")
+    key = (_CLIENT, _SERVER, 51000, 3128, 6)
+    assert fe.process_packet(reply, timestamp=1.0) == (key, False)
+    assert fe.process_packet(request, timestamp=1.1) == (key, True)
+    rec = _only_record(fe)
+    assert rec.key == key
+    assert len(rec.fwd_lengths) == 1 and len(rec.bwd_lengths) == 1
+    # Only the client's request is kept as forward payload.
+    assert rec.fwd_payloads == [b"GET / HTTP/1.1\r\n\r\n"]
+
+
+def test_syn_ack_first_is_reoriented_even_with_unclear_ports():
+    fe = FlowExtractor()
+    synack = _tcp("10.0.0.9", "10.0.0.5", 40000, 45000, "SA")
+    assert fe.process_packet(synack, timestamp=1.0) == (("10.0.0.5", "10.0.0.9", 45000, 40000, 6), False)
+
+
+def test_midstream_with_ambiguous_ports_is_left_as_seen():
+    fe = FlowExtractor()
+    pkt = _tcp("10.0.0.9", "10.0.0.5", 40000, 45000, "PA", b"data")
+    assert fe.process_packet(pkt, timestamp=1.0) == (("10.0.0.9", "10.0.0.5", 40000, 45000, 6), True)
+
+
+def test_midstream_client_packet_first_is_not_flipped():
+    fe = FlowExtractor()
+    pkt = _tcp(_CLIENT, _SERVER, 51000, 443, "A")
+    assert fe.process_packet(pkt, timestamp=1.0) == ((_CLIENT, _SERVER, 51000, 443, 6), True)
+
+
+def test_service_port_heuristic():
+    assert _looks_like_service_port(443, 51000)
+    assert _looks_like_service_port(80, 2000)
+    assert _looks_like_service_port(8000, 40000)
+    assert not _looks_like_service_port(51000, 443)
+    assert not _looks_like_service_port(40000, 45000)
+    assert not _looks_like_service_port(80, 443)
+    assert not _looks_like_service_port(2000, 3000)

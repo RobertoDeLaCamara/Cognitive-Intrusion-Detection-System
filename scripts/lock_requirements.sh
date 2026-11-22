@@ -8,7 +8,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-TORCH_VERSION=2.6.0   # >= 2.6.0 fixes CVE-2025-32434
+TORCH_VERSION=2.13.0  # >= 2.10.0 fixes GHSA-63cw-57p8-fm3p (RCE via checkpoint); 2.13.0 fixes every advisory that has a fix
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 
 # uv args that reuse <lock> as preferences when UPGRADE is set; prints nothing otherwise.
@@ -38,13 +38,15 @@ lock() {  # arch platform torch-requirement [extra uv args...]
     mv "$tmp/lock-$arch.txt" "requirements-lock-$arch.txt"
 }
 
-# amd64: explicit CPU build from the PyTorch index (smaller wheel); the rest from PyPI.
-INDEX_HEADER=$'--index-url https://download.pytorch.org/whl/cpu\n--extra-index-url https://pypi.org/simple' \
-lock amd64 x86_64-manylinux_2_28 "torch==${TORCH_VERSION}+cpu" \
-    --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple \
-    --index-strategy unsafe-best-match
-# arm64: the PyPI aarch64 wheel is CPU-only.
-lock arm64 aarch64-manylinux_2_28 "torch==${TORCH_VERSION}"
+# Both arches: explicit CPU build from the PyTorch index; the rest from PyPI. amd64 for the
+# smaller wheel; arm64 because since torch 2.13 the PyPI aarch64 wheel pulls the CUDA stack
+# (nvidia-*, triton: several GB) that a Raspberry Pi cannot use.
+for spec in amd64:x86_64-manylinux_2_28 arm64:aarch64-manylinux_2_28; do
+    INDEX_HEADER=$'--index-url https://download.pytorch.org/whl/cpu\n--extra-index-url https://pypi.org/simple' \
+    lock "${spec%%:*}" "${spec#*:}" "torch==${TORCH_VERSION}+cpu" \
+        --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple \
+        --index-strategy unsafe-best-match
+done
 
 # Split each lock into torch / numeric / rest parts so no Docker layer is huge (see split_lock.py).
 python3 scripts/split_lock.py amd64 arm64

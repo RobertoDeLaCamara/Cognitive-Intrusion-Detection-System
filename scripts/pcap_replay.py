@@ -48,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.features.flow_extractor import FLOW_FEATURE_NAMES, FlowExtractor
 from src.features.host_extractor import HostExtractor
 from src.features.payload_analyzer import analyze_payload, extract_payload_features
+from src.capture.dispatcher import _is_ssh_packet
 from src.labels import is_benign
 from src.engines.registry import supervised, iforest, lstm, baseline, rules, ensemble
 from src.ensemble.scorer import EngineScores
@@ -304,6 +305,7 @@ def replay_pcap(pcap_path: str, labels=None, attacks=None, keep_features: bool =
     host_extractor = HostExtractor()
     # Payload hits belong to their own flow (as in the live pipeline), never to the whole source host.
     payload_hits: Dict[tuple, List[str]] = defaultdict(list)
+    ssh_flows: set = set()
     result = EvalResult()
     state: Dict[str, float] = {"t0": 0.0}
     started = False
@@ -337,8 +339,16 @@ def replay_pcap(pcap_path: str, labels=None, attacks=None, keep_features: bool =
             flow_ref = flow_extractor.process_packet(pkt, timestamp=ts)
             host_extractor.process_packet(pkt, timestamp=ts)
             matches = analyze_payload(pkt)
-            if matches and flow_ref:
-                payload_hits[flow_ref[0]].extend(matches)
+            # Same rules as Dispatcher.dispatch(): no payload matches on SSH flows (dropping
+            # any collected before the flow was recognised), and only forward packets count,
+            # so a server's response (e.g. an HTML page with <script>) is not read as an attack.
+            if flow_ref:
+                key = flow_ref[0]
+                if key in ssh_flows or _is_ssh_packet(key, pkt):
+                    ssh_flows.add(key)
+                    payload_hits.pop(key, None)
+                elif matches and flow_ref[1]:
+                    payload_hits[key].extend(matches)
             pkt_count += 1
             if ts - last_expire >= EXPIRE_EVERY_S:
                 score(flow_extractor.collect_expired(now=ts), ts)

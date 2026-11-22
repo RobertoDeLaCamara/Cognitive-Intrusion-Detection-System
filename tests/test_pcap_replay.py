@@ -231,3 +231,47 @@ def test_novelty_summary_absent_without_scores():
     agg = rp.EvalResult()
     agg.predictions = [_pred("BENIGN", None)]
     assert rp.novelty_summary(agg, current=None) is None
+
+
+def _replay_packets(tmp_path, pkts):
+    from scapy.all import wrpcap
+    rp = _load("pcap_replay")
+    path = tmp_path / "p.pcap"
+    wrpcap(str(path), pkts)
+    return rp.replay_pcap(str(path)).predictions
+
+
+def _tcp_exchange(sport, dport, request, response):
+    from scapy.all import IP, TCP, Raw
+    c, s = "10.0.0.2", "10.0.0.3"
+    pkts = [
+        IP(src=c, dst=s) / TCP(sport=sport, dport=dport, flags="S", seq=1),
+        IP(src=s, dst=c) / TCP(sport=dport, dport=sport, flags="SA", seq=1, ack=2),
+        IP(src=c, dst=s) / TCP(sport=sport, dport=dport, flags="PA", seq=2, ack=2) / Raw(request),
+        IP(src=s, dst=c) / TCP(sport=dport, dport=sport, flags="PA", seq=2, ack=40) / Raw(response),
+        IP(src=c, dst=s) / TCP(sport=sport, dport=dport, flags="FA", seq=40, ack=200),
+    ]
+    for i, p in enumerate(pkts):
+        p.time = 1000.0 + i * 0.01
+    return pkts
+
+
+def test_server_response_payload_is_not_an_attack(tmp_path):
+    """HTML served back to the client (<script>, <img ...>) must not fire payload:xss."""
+    pkts = _tcp_exchange(40000, 3128, b"GET http://jenkins/ HTTP/1.1\r\n\r\n",
+                         b'HTTP/1.1 200 OK\r\n\r\n<script type="text/javascript"><img src="/x">')
+    preds = _replay_packets(tmp_path, pkts)
+    assert preds and not any("payload:xss" in p["triggered_rules"] for p in preds)
+
+
+def test_client_request_payload_still_fires(tmp_path):
+    pkts = _tcp_exchange(40001, 80, b"GET /?q=<script>alert(1)</script> HTTP/1.1\r\n\r\n",
+                         b"HTTP/1.1 200 OK\r\n\r\nok")
+    preds = _replay_packets(tmp_path, pkts)
+    assert any("payload:xss" in p["triggered_rules"] for p in preds)
+
+
+def test_ssh_flow_payload_is_ignored(tmp_path):
+    pkts = _tcp_exchange(40002, 22, b"<script>alert(1)</script>", b"SSH-2.0-OpenSSH_9.6\r\n")
+    preds = _replay_packets(tmp_path, pkts)
+    assert preds and not any(r.startswith("payload:") for p in preds for r in p["triggered_rules"])

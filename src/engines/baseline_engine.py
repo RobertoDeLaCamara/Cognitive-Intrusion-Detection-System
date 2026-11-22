@@ -28,7 +28,7 @@ import joblib
 import numpy as np
 
 from .. import mlflow_registry
-from ..config import MAX_TRACKED_IPS
+from ..config import BASELINE_LOAD_RETRY_SECS, MAX_TRACKED_IPS
 from ..engines.lstm_model import LSTMAutoencoder
 from ..unsupervised.artifact_schema import (
     ARTIFACT_ROOT,
@@ -54,8 +54,9 @@ class BaselineEngine:
     available — returning None (not 0.0) is the correct "no opinion" signal.
     """
 
-    def __init__(self, model_name: str = MODEL_NAME):
+    def __init__(self, model_name: str = MODEL_NAME, retry_secs: float = BASELINE_LOAD_RETRY_SECS):
         self._model_name = model_name
+        self._retry_secs = retry_secs
 
         self._scaler = None
         self._iforest = None
@@ -77,7 +78,9 @@ class BaselineEngine:
         self._buffers: dict = defaultdict(lambda: deque(maxlen=_seq_len))
         self._max_buffers: int = MAX_TRACKED_IPS
 
-        # Attempt to load a pre-existing baseline from a previous run.
+        # Attempt to load a pre-existing baseline from a previous run. If that fails (no model
+        # yet, or MLflow unreachable), _maybe_retry_load() tries again every _retry_secs.
+        self._last_load_attempt: float = time.time()
         self._load()
 
     # ── Artifact loading ──────────────────────────────────────────────────────
@@ -216,7 +219,10 @@ class BaselineEngine:
 
         Score combination: max(s_iforest, s_lstm) — anomalous by either lens.
         """
-        if not self.is_available or host_features is None:
+        if not self.is_available:
+            self._maybe_retry_load()
+            return None
+        if host_features is None:
             return None
 
         with self._swap_lock:
@@ -275,6 +281,38 @@ class BaselineEngine:
                     "BaselineEngine: hot-reload failed — previous model remains active"
                 )
             return success
+
+    def _maybe_retry_load(self) -> None:
+        """Start a background load when the engine has no model and the retry interval passed.
+
+        Called from the scoring hot path, so it never blocks: the check is a timestamp compare,
+        and the load (MLflow query + artifact download) runs in a daemon thread. _reload_lock
+        keeps it from overlapping a post-training reload or another retry.
+        """
+        if self._retry_secs <= 0:
+            return
+        now = time.time()
+        if now - self._last_load_attempt < self._retry_secs:
+            return
+        if not self._reload_lock.acquire(blocking=False):
+            return
+        self._last_load_attempt = now
+
+        def _run():
+            try:
+                if self.is_available:  # a post-training reload won the race
+                    return
+                if self._load():
+                    logger.info("BaselineEngine: model loaded on retry (it was missing at startup)")
+                else:
+                    logger.warning(
+                        "BaselineEngine: still no baseline model (MLflow unreachable or no version "
+                        "registered); next retry in %.0f s", self._retry_secs,
+                    )
+            finally:
+                self._reload_lock.release()
+
+        threading.Thread(target=_run, name="baseline-retry-load", daemon=True).start()
 
     def get_info(self) -> dict:
         """Return a snapshot of engine state for observability endpoints."""

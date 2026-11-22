@@ -330,6 +330,10 @@ BASELINE_EXCLUDE_SOURCES = [
 BASELINE_THRESHOLD_MAX_RATIO = float(os.getenv("BASELINE_THRESHOLD_MAX_RATIO", "3.0"))
 BASELINE_THRESHOLD_REF_WINDOWS = int(os.getenv("BASELINE_THRESHOLD_REF_WINDOWS", "5"))
 BASELINE_MAX_CONSECUTIVE_REJECTS = int(os.getenv("BASELINE_MAX_CONSECUTIVE_REJECTS", "3"))
+# While the baseline engine has no model (e.g. MLflow was unreachable at startup), retry the
+# load in the background at most this often, in seconds. Without it the engine stayed off until
+# the next window was trained, which can take hours. 0 = only load at startup and after training.
+BASELINE_LOAD_RETRY_SECS = float(os.getenv("BASELINE_LOAD_RETRY_SECS", "300"))
 # Input-feature drift of the supervised model (src/monitoring/feature_drift.py)
 DRIFT_ENABLED       = os.getenv("DRIFT_ENABLED", "true").lower() == "true"
 DRIFT_WINDOW_FLOWS  = int(os.getenv("DRIFT_WINDOW_FLOWS", "5000"))     # flows per tumbling window

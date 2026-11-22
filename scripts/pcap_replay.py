@@ -210,11 +210,27 @@ class EvalResult:
             }
         return out
 
+    def benign_split(self, thr=None) -> Dict[str, dict]:
+        """False positives on benign flows, split by whether an attacker host initiated them.
+
+        An attacker host's own benign traffic (its monitoring probes, DNS...) sits next to its
+        attacks, and per-source rules such as port_scan flag it too, so it inflates the FP rate
+        of a red-team capture. "other_hosts" is the figure comparable with a deployment.
+        """
+        out = {}
+        for name, want in (("attacker_hosts", True), ("other_hosts", False)):
+            _, fp, tn, _ = self._counts(
+                flt=lambda p, w=want: p["true_label"] == BENIGN and bool(p.get("attacker_host")) == w,
+                thr=thr)
+            out[name] = {"flows": fp + tn, "flagged": fp, "fp_rate": round(fp / max(fp + tn, 1), 4)}
+        return out
+
     def sweep(self, thresholds=SWEEP) -> Dict[str, dict]:
         res = {}
         for t in thresholds:
             tp, fp, tn, fn = self._counts(thr=t)
             res[str(t)] = self._rates(tp, fp, tn, fn)
+            res[str(t)]["fp_rate_other_hosts"] = self.benign_split(thr=t)["other_hosts"]["fp_rate"]
         return res
 
     def to_dict(self) -> dict:
@@ -222,6 +238,7 @@ class EvalResult:
         d = {"total_flows": len(self.predictions), "accuracy": round(self.accuracy, 4),
              "f1": round(self.f1, 4)}
         d.update(self._rates(tp, fp, tn, fn))
+        d["benign_split"] = self.benign_split()
         return d
 
 
@@ -307,6 +324,7 @@ def replay_pcap(pcap_path: str, labels=None, attacks=None, keep_features: bool =
     payload_hits: Dict[tuple, List[str]] = defaultdict(list)
     ssh_flows: set = set()
     result = EvalResult()
+    attacker_ips = {rule.src_ip for rule in attacks or ()}
     state: Dict[str, float] = {"t0": 0.0}
     started = False
 
@@ -319,6 +337,7 @@ def replay_pcap(pcap_path: str, labels=None, attacks=None, keep_features: bool =
             pred = run_detection(record, flow_vec, host_vec, matches)
             pred["true_label"] = true_label(
                 record.key, record.start_time, state["t0"], labels, attacks)
+            pred["attacker_host"] = record.key[0] in attacker_ips
             pred["file"] = pcap_path
             if keep_features and flow_vec is not None:
                 pred["features"] = [float(x) for x in flow_vec]
@@ -364,7 +383,7 @@ def replay_pcap(pcap_path: str, labels=None, attacks=None, keep_features: bool =
 
 FLOW_CSV_FIELDS = (
     "file", "flow_key", "src_ip", "dst_ip", "src_port", "dst_port", "protocol", "start_time",
-    "true_label", "ensemble_score", "is_anomaly", "attack_type", *ENGINE_FIELDS,
+    "true_label", "attacker_host", "ensemble_score", "is_anomaly", "attack_type", *ENGINE_FIELDS,
     "triggered_rules", "novelty",
 )
 
@@ -492,12 +511,21 @@ def markdown_report(agg: EvalResult, files: List[str], threshold: float) -> str:
         fp_n = sum(p["ablation"].get(n, {"is_anomaly": p["is_anomaly"]})["is_anomaly"] for p in ben)
         tp_n = sum(p["ablation"].get(n, {"is_anomaly": p["is_anomaly"]})["is_anomaly"] for p in att)
         lines.append(f"| {n} | {fp_n}/{len(ben)} | {tp_n}/{len(att)} |")
+    split = agg.benign_split()
+    att_b, oth_b = split["attacker_hosts"], split["other_hosts"]
     lines += ["", "## Benign traffic", "",
-              f"{fp + tn} benign flows, {fp} flagged (false-positive rate {fp / max(fp + tn, 1):.1%}).", "",
-              "## Threshold sweep (score >= threshold)", "",
-              "| Threshold | Recall | FP rate | Precision |", "|---|---|---|---|"]
+              f"{fp + tn} benign flows, {fp} flagged (false-positive rate {fp / max(fp + tn, 1):.1%}).", ""]
+    if att_b["flows"]:
+        lines += [f"- Started by an attacker host (benign traffic of the attacking machines): "
+                  f"{att_b['flagged']}/{att_b['flows']} flagged ({att_b['fp_rate']:.1%}). Per-source rules "
+                  "such as port_scan flag these next to the attacks, and live dedup folds them into one alert.",
+                  f"- **Started by any other host: {oth_b['flagged']}/{oth_b['flows']} flagged "
+                  f"({oth_b['fp_rate']:.1%})** — the figure comparable with a deployment.", ""]
+    lines += ["## Threshold sweep (score >= threshold)", "",
+              "| Threshold | Recall | FP rate | FP rate (other hosts) | Precision |", "|---|---|---|---|---|"]
     for t, r in agg.sweep().items():
-        lines.append(f"| {t} | {r['recall']:.0%} | {r['fp_rate']:.1%} | {r['precision']:.0%} |")
+        lines.append(f"| {t} | {r['recall']:.0%} | {r['fp_rate']:.1%} | {r['fp_rate_other_hosts']:.1%} | "
+                     f"{r['precision']:.0%} |")
     summary = novelty_summary(agg, novelty_threshold())
     if summary:
         lines += novelty_report_lines(summary)

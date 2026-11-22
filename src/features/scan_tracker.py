@@ -14,8 +14,10 @@ Both watch only the start of TCP connections (SYN without ACK) and use capture t
 so a PCAP replay behaves like live capture.
 
 Flows are scored only when they expire (``FLOW_TIMEOUT`` after their last packet), long after the
-sliding window has moved on. A flagged key is therefore remembered as the time interval of the
-activity (``first`` .. ``last``), and a flow is a hit when it started inside that interval.
+sliding window has moved on. A flagged key is therefore remembered as the time intervals of the
+activity (``first`` .. ``last``), and a flow is a hit when it started inside one of them. A new
+crossing extends the last interval only when it comes within ``window`` of its end; a later burst
+opens a new interval, so traffic in the quiet gap between two bursts is not a hit.
 """
 
 import threading
@@ -42,7 +44,7 @@ class _DistinctTracker:
         self.max_keys = max_keys
         self.flag_ttl = flag_ttl  # must outlive FLOW_TIMEOUT so expiring flows still find the flag
         self._events: Dict[Hashable, Deque[Tuple[float, Hashable]]] = {}
-        self._flagged: Dict[Hashable, List[float]] = {}  # key -> [first_ts, last_ts]
+        self._flagged: Dict[Hashable, List[List[float]]] = {}  # key -> [[first_ts, last_ts], ...]
         self._lock = threading.Lock()
         self._last_prune = 0.0
 
@@ -60,18 +62,18 @@ class _DistinctTracker:
             while q and q[0][0] < cutoff:
                 q.popleft()
             if len({v for _, v in q}) >= self.threshold:
-                flag = self._flagged.get(key)
-                if flag is None or ts - flag[1] > self.flag_ttl:
-                    self._flagged[key] = [q[0][0], ts]
+                intervals = self._flagged.setdefault(key, [])
+                if intervals and ts - intervals[-1][1] <= self.window:
+                    intervals[-1][1] = ts
                 else:
-                    flag[1] = ts
+                    intervals.append([q[0][0], ts])
             if ts - self._last_prune > self.window:
                 self._prune(ts)
 
     def _hits(self, key: Hashable, start: float) -> List[str]:
         with self._lock:
-            flag = self._flagged.get(key)
-        if flag is not None and flag[0] <= start <= flag[1]:
+            intervals = list(self._flagged.get(key, ()))
+        if any(first <= start <= last for first, last in intervals):
             return [self.rule]
         return []
 
@@ -83,8 +85,12 @@ class _DistinctTracker:
         self._last_prune = now
         for key in [k for k, q in self._events.items() if not q or q[-1][0] < now - self.window]:
             del self._events[key]
-        for key in [k for k, f in self._flagged.items() if f[1] < now - self.flag_ttl]:
-            del self._flagged[key]
+        for key in list(self._flagged):
+            live = [iv for iv in self._flagged[key] if iv[1] >= now - self.flag_ttl]
+            if live:
+                self._flagged[key] = live
+            else:
+                del self._flagged[key]
 
 
 class ScanTracker(_DistinctTracker):

@@ -248,3 +248,33 @@ def test_dispatcher_marks_each_login_flow_of_a_brute_force():
     assert len(seen) == 30
     assert all("brute_force" in v for v in seen.values())
     assert all("port_scan" not in v for v in seen.values())
+
+
+def test_quiet_gap_between_two_scans_is_not_a_hit():
+    t = ScanTracker(port_threshold=15, window=60)
+    for i in range(15):  # scan 1 at t=100..101.4
+        t.observe(ATTACKER, TARGET, 1000 + i, 100.0 + i * 0.1)
+    for i in range(15):  # scan 2 at t=300..301.4, inside flag_ttl but far beyond the window
+        t.observe(ATTACKER, TARGET, 2000 + i, 300.0 + i * 0.1)
+    assert t.hits(ATTACKER, TARGET, 100.5) == ["port_scan"]
+    assert t.hits(ATTACKER, TARGET, 200.0) == []  # benign flow in the gap
+    assert t.hits(ATTACKER, TARGET, 300.0) == ["port_scan"]
+
+
+def test_scan_with_short_pauses_stays_one_interval():
+    t = ScanTracker(port_threshold=15, window=60)
+    for i in range(60):  # 15 ports every 30 s, never a gap as long as the window
+        t.observe(ATTACKER, TARGET, 1000 + i, 100.0 + (i // 15) * 30 + (i % 15) * 0.1)
+    assert t.hits(ATTACKER, TARGET, 150.0) == ["port_scan"]
+    assert len(t._flagged[(ATTACKER, TARGET)]) == 1
+
+
+def test_old_intervals_are_pruned_one_by_one():
+    t = ScanTracker(port_threshold=3, window=10, flag_ttl=100)
+    for base in (100.0, 180.0):
+        for i in range(3):
+            t.observe(ATTACKER, TARGET, int(base) + i, base + i * 0.1)
+    assert len(t._flagged[(ATTACKER, TARGET)]) == 2
+    t.observe("10.0.0.1", TARGET, 1, 250.0)  # prune at 250: first interval (ends 100.2) is too old
+    assert t.hits(ATTACKER, TARGET, 100.0) == []
+    assert t.hits(ATTACKER, TARGET, 180.0) == ["port_scan"]

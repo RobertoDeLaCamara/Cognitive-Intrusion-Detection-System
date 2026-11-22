@@ -279,11 +279,12 @@ FT_TEMPERATURE=1.0   # disable temperature scaling
 | File | Role |
 |---|---|
 | `src/models/ft_transformer.py` | `FTTransformer` nn.Module, `load_checkpoint`, `build_from_checkpoint`, `UNIFIED_CLASS_LABELS` |
-| `src/engines/ft_transformer_engine.py` | `FTTransformerEngine`: load (MLflow → local), scale, forward pass, temperature, `predict` / `anomaly_score` |
-| `src/config.py` | `FT_TEMPERATURE`, `FT_MODEL_PATH`, `FT_SCALER_PATH`, `FT_USE_GPU`, `MLFLOW_FT_REGISTRY_NAME` |
+| `src/engines/ft_transformer_engine.py` | `FTTransformerEngine`: load (remote NPU → MLflow → local), scale, forward pass, temperature, `predict` / `anomaly_score` / `predict_with_novelty` |
+| `src/config.py` | `FT_TEMPERATURE`, `FT_MODEL_PATH`, `FT_SCALER_PATH`, `FT_USE_GPU`, `FT_NPU_URL`, `MLFLOW_FT_REGISTRY_NAME` |
 | `models/unified/unified_ft_transformer.pt` | Checkpoint bundle: `state_dict`, `config`, `n_features`, `n_classes`, `feature_names` |
 | `models/unified/unified_scaler.pkl` | `sklearn.preprocessing.StandardScaler` fitted on the training split |
 | `models/unified/unified_metadata.json` | Hyperparameters, metrics, training history, class counts. The file in the repository is from the untuned run (`d_token=128`, test F1 macro 0.5446); the Optuna-tuned values live in the checkpoint's own `config` |
 | `scripts/smoke_test_ft_unified.py` | Reproduces test F1 macro on the held-out 15% split (~0.6194) |
-| `tests/test_ft_transformer_engine.py` | 7 integration tests: load, scale, forward, softmax, benign/attack prediction |
+| `tests/test_ft_transformer_engine.py` | Integration tests: load, scale, forward, softmax, Hopfield novelty, benign/attack prediction |
+| `tests/engines/test_ft_transformer_npu.py` | Torch-free unit tests for `FT_NPU_URL` HTTP offload, fallback, and input/output guards |
 | `doc/UNIFIED_FT_LIVE_RUNBOOK.md` | Manual end-to-end test with hping3 / nmap on live traffic |

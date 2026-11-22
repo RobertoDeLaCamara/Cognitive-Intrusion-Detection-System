@@ -13,8 +13,9 @@ Inference pipeline (matches notebooks/ft_transformer_optuna_sweep.py):
     pred = argmax(probs)
 
 Loading priority:
-    1. MLflow registry (if MLFLOW_TRACKING_URI is configured)
-    2. Local checkpoint at FT_MODEL_PATH + scaler at FT_SCALER_PATH
+    1. Remote NPU offload server (if FT_NPU_URL is configured and /health is ok)
+    2. MLflow registry (if MLFLOW_TRACKING_URI is configured)
+    3. Local checkpoint at FT_MODEL_PATH + scaler at FT_SCALER_PATH
 """
 
 from __future__ import annotations
@@ -24,9 +25,11 @@ import os
 from typing import Optional, Tuple
 
 import numpy as np
+import requests
 
 from ..config import (
     FT_MODEL_PATH,
+    FT_NPU_URL,
     FT_SCALER_PATH,
     FT_TEMPERATURE,
     FT_USE_GPU,
@@ -38,6 +41,21 @@ from ..model_integrity import load_joblib
 from .hopfield_novelty import HopfieldNoveltyScorer, model_fingerprint
 
 logger = logging.getLogger(__name__)
+
+# Matches src.models.ft_transformer.UNIFIED_CLASS_LABELS without importing torch
+# (NPU offload mode can run on hosts without PyTorch installed).
+_NPU_DEFAULT_LABELS: Tuple[str, ...] = (
+    "Benign",
+    "Analysis",
+    "Backdoor",
+    "DoS",
+    "Exploits",
+    "Fuzzers",
+    "Generic",
+    "Reconnaissance",
+    "Shellcode",
+    "Worms",
+)
 
 
 class FTTransformerEngine:
@@ -51,6 +69,7 @@ class FTTransformerEngine:
         temperature: float = FT_TEMPERATURE,
         novelty_enabled: bool = HOPFIELD_NOVELTY_ENABLED,
         prototypes_path: str = HOPFIELD_PROTOTYPES_PATH,
+        npu_url: str = FT_NPU_URL,
     ) -> None:
         self._model = None
         self._scaler = None
@@ -67,10 +86,58 @@ class FTTransformerEngine:
         self._prototypes_path = prototypes_path
         self._novelty: Optional[HopfieldNoveltyScorer] = None
         self.fingerprint: Optional[str] = None
+        self._npu_url = (npu_url or "").rstrip("/")
+        self._npu_active = False
         self._load()
 
     # ── Loading ────────────────────────────────────────────────────────────
+    def _try_npu(self) -> bool:
+        """Probe an optional remote NPU offload server before touching torch."""
+        if not self._npu_url:
+            return False
+        try:
+            r = requests.get(f"{self._npu_url}/health", timeout=1.5)
+            if r.status_code != 200:
+                logger.warning(
+                    "FTTransformerEngine: NPU health at %s returned HTTP %d (falling back to local)",
+                    self._npu_url,
+                    r.status_code,
+                )
+                return False
+            body = r.json()
+            if body.get("status") != "ok":
+                return False
+            pipelines = body.get("loaded_pipelines")
+            if isinstance(pipelines, dict) and "cnds_ft_transformer" not in pipelines:
+                logger.warning(
+                    "FTTransformerEngine: NPU at %s is up but lacks cnds_ft_transformer pipeline",
+                    self._npu_url,
+                )
+                return False
+            self._n_features = 76
+            self._labels = _NPU_DEFAULT_LABELS
+            self._benign_idx = self._labels.index("Benign")
+            self._device = "npu"
+            self._npu_active = True
+            logger.info(
+                "FTTransformerEngine ready  device=npu (%s)  features=%d  classes=%d  benign_idx=%s",
+                self._npu_url,
+                self._n_features,
+                len(self._labels),
+                self._benign_idx,
+            )
+            return True
+        except Exception as e:
+            logger.warning(
+                "FTTransformerEngine: NPU probe at %s failed (falling back to local): %s",
+                self._npu_url,
+                e,
+            )
+            return False
+
     def _load(self) -> None:
+        if self._try_npu():
+            return
         # Quick exit before any torch import: if there is no MLflow URI and no
         # local checkpoint file, the engine has nothing to load. Importing torch
         # eagerly here would interfere with tests that install a fake torch
@@ -224,7 +291,7 @@ class FTTransformerEngine:
 
     @property
     def is_available(self) -> bool:
-        return self._model is not None and self._scaler is not None
+        return self._npu_active or (self._model is not None and self._scaler is not None)
 
     def scaler_stats(self):
         """(mean, std) the model was trained with, or None. Used by the drift monitor."""
@@ -280,9 +347,15 @@ class FTTransformerEngine:
         """Like ``predict`` plus the Hopfield novelty score (None when the scorer is off).
 
         One forward pass serves both: the CLS embedding feeds the head and the scorer.
+        In remote NPU mode embeddings stay on the NPU server, so novelty is None.
         """
         if not self.is_available:
             return None
+        if self._npu_active:
+            res = self.predict(flow_features, payload_features)
+            if res is None:
+                return None
+            return res[0], res[1], None
         try:
             probs, emb = self._forward_with_embedding(flow_features)
             idx = int(probs.argmax())
@@ -301,6 +374,24 @@ class FTTransformerEngine:
     # ── Internal ───────────────────────────────────────────────────────────
     def _forward(self, flow_features: np.ndarray) -> np.ndarray:
         """Run a single-sample forward pass and return probabilities (numpy 1D)."""
+        if self._npu_active:
+            x = np.asarray(flow_features, dtype=np.float32).ravel()
+            if x.shape[0] != self._n_features:
+                raise ValueError(
+                    f"FTTransformer expects {self._n_features} features, got {x.shape[0]}"
+                )
+            x = np.nan_to_num(x, nan=0.0, posinf=1e9, neginf=-1e9)
+            resp = requests.post(
+                f"{self._npu_url}/v1/cnds/predict",
+                json={"flows": x.tolist()},
+                timeout=2.0,
+            )
+            resp.raise_for_status()
+            probs = np.asarray(resp.json()["predictions"][0]["probs"], dtype=np.float32)
+            if probs.size == 0 or not np.all(np.isfinite(probs)):
+                raise ValueError("NPU server returned non-finite probabilities")
+            return probs
+
         import torch
 
         t = self._prepare(flow_features)

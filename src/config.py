@@ -37,6 +37,11 @@ def _validate_config():
     if not (0.1 <= FT_TEMPERATURE <= 10.0):
         errors.append(f"FT_TEMPERATURE must be in [0.1, 10.0], got {FT_TEMPERATURE}")
 
+    if FT_NPU_URL and not FT_NPU_URL.startswith(("http://", "https://")):
+        errors.append(
+            f"FT_NPU_URL must start with http:// or https://, got {FT_NPU_URL!r}"
+        )
+
     if FLOW_TIMEOUT <= 0:
         errors.append(f"FLOW_TIMEOUT must be positive, got {FLOW_TIMEOUT}")
 
@@ -171,6 +176,10 @@ FT_SCALER_PATH      = os.path.join(
     MODELS_DIR, os.getenv("FT_SCALER_FILE", "unified/unified_scaler.pkl")
 )
 FT_USE_GPU          = os.getenv("FT_USE_GPU", "false").lower() == "true"
+# Optional HTTP NPU offload server (e.g. http://<host>:8090 exposing /health and
+# /v1/cnds/predict). When reachable, inference runs remotely without requiring
+# local torch; falls back to MLflow/local checkpoint if unreachable.
+FT_NPU_URL          = os.getenv("FT_NPU_URL", "").strip()
 # Temperature scaling applied to logits before softmax (T > 1 reduces over-confidence).
 # Transformer classifiers are typically over-confident out of the box; T=2.0 is the
 # empirically motivated default. Set to 1.0 to disable.

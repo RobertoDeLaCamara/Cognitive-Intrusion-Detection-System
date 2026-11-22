@@ -548,6 +548,7 @@ Copy `.env.example` to `.env` and adjust as needed.
 | `FT_MODEL_FILE` | `unified/unified_ft_transformer.pt` | FT-Transformer checkpoint (gitignored, preferred) |
 | `FT_SCALER_FILE` | `unified/unified_scaler.pkl` | StandardScaler matched to the FT checkpoint |
 | `FT_USE_GPU` | `false` | Run FT-T inference on CUDA when available |
+| `FT_NPU_URL` | _(empty)_ | Optional HTTP NPU offload server (e.g. `http://<host>:8090` exposing `/health` and `/v1/cnds/predict`); probes on startup and falls back to local PyTorch if unreachable. Hopfield novelty stays off in NPU mode |
 | `MLFLOW_FT_REGISTRY_NAME` | `ml-ids-unified-ft-transformer` | MLflow registered model name to load FT from |
 | `MLFLOW_FT_STAGE` | `None` | MLflow stage to pin (default = latest version) |
 | `IF_CONTAMINATION`, `IF_N_ESTIMATORS`, `IF_MIN_SAMPLES`, `IF_TRAINING_STATUS_FILE` | `0.05`, `200`, `100`, `/tmp/cnds_if_training_status.json` | Reserved — defined in `src/config.py` but not read; the baseline `WindowTrainer` uses its own constructor defaults (contamination 0.01, 200 estimators) |

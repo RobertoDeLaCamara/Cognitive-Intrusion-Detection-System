@@ -84,6 +84,7 @@ Variables marked _reserved_ are defined in `src/config.py` but no runtime code r
 | `FT_MODEL_FILE` | `unified/unified_ft_transformer.pt` | FT-Transformer checkpoint (preferred supervised) |
 | `FT_SCALER_FILE` | `unified/unified_scaler.pkl` | StandardScaler matched to the FT checkpoint |
 | `FT_USE_GPU` | `false` | Run FT-T inference on CUDA when available |
+| `FT_NPU_URL` | _(empty)_ | Optional HTTP NPU offload server (`http(s)://<host>:8090` exposing `/health` and `/v1/cnds/predict`); falls back to local PyTorch if unreachable. Hopfield novelty stays off in NPU mode |
 | `MLFLOW_FT_REGISTRY_NAME` | `ml-ids-unified-ft-transformer` | MLflow registered model name to load FT from |
 | `MLFLOW_FT_STAGE` | `None` | MLflow stage to pin (default = latest version) |
 | `RF_MODEL_FILE` | `rf_model.joblib` | Random Forest model filename (fallback) |

@@ -399,6 +399,7 @@ al Random Forest descrito abajo.
 | `FT_MODEL_FILE` | `unified/unified_ft_transformer.pt` | Path relativo a `MODELS_DIR` |
 | `FT_SCALER_FILE` | `unified/unified_scaler.pkl` | StandardScaler emparejado |
 | `FT_USE_GPU` | `false` | Inferencia en CUDA si disponible |
+| `FT_NPU_URL` | _(vacío)_ | Servidor HTTP opcional de offload NPU (`http://<host>:8090`, `/health` + `/v1/cnds/predict`); no requiere `torch` local y hace fallback a MLflow/local si no responde (novedad Hopfield desactivada en modo NPU) |
 | `FT_TEMPERATURE` | `2.0` | Factor de temperature scaling aplicado a logits antes de softmax (T > 1 reduce over-confidence; 1.0 desactiva). Ver [sección de calibración](#nota-sobre-temperature-scaling). |
 | `MLFLOW_FT_REGISTRY_NAME` | `ml-ids-unified-ft-transformer` | Nombre del modelo registrado en MLflow |
 | `MLFLOW_FT_STAGE` | `None` | Stage de MLflow del que se toma la versión (por defecto el stage `None`, el de las versiones recién registradas) |
@@ -1366,6 +1367,7 @@ Todos los parámetros configurables vía `.env`, con sus valores por defecto y s
 |---|---|---|---|
 | `FT_TEMPERATURE` | 2.0 | [0.1, 10.0] | Temperature scaling sobre logits antes de softmax. T > 1 reduce over-confidence; T = 1.0 desactiva. |
 | `FT_USE_GPU` | false | — | Inferencia en CUDA con autocast bfloat16 si `true` |
+| `FT_NPU_URL` | _(vacío)_ | `http(s)://...` | URL de servidor HTTP de offload NPU (`/health`, `/v1/cnds/predict`); fallback automático a PyTorch local si falla el probe |
 
 **Nota sobre dependencias Python:** `scikit-learn` está pinado a `>=1.6.1,<2.0` para proteger la compatibilidad del `StandardScaler` serializado en `unified_scaler.pkl`. Una actualización a scikit-learn 2.0+ puede invalidar el scaler existente — si se actualiza la dependencia, regenerar el scaler con el mismo conjunto de entrenamiento.
 

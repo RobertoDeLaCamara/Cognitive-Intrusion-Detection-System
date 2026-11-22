@@ -10,8 +10,15 @@ Two attacks are many tiny flows, none unusual alone, so no per-flow rule and no 
   source ports (= distinct connections; a retransmitted SYN reuses its source port and does not
   count twice) within ``window`` seconds.
 
-Both watch only the start of TCP connections (SYN without ACK) and use capture time (``packet.time``),
-so a PCAP replay behaves like live capture.
+* **DNS burst** (issue #89): one source asks one resolver for many distinct names under the
+  same parent domain (``<random>.example.com``), the shape of DNS tunneling, exfiltration and
+  DGA probing. ``DnsBurstTracker`` flags a ``(src, dst, parent)`` that sees ``qname_threshold``
+  distinct query names within ``window`` seconds. The parent is the last two labels, so normal
+  browsing (many unrelated domains, or a handful of CDN names under one parent) stays far below.
+
+The TCP trackers watch only the start of TCP connections (SYN without ACK); the DNS tracker
+watches UDP queries. All use capture time (``packet.time``), so a PCAP replay behaves like live
+capture.
 
 Flows are scored only when they expire (``FLOW_TIMEOUT`` after their last packet), long after the
 sliding window has moved on. A flagged key is therefore remembered as the time intervals of the
@@ -22,7 +29,7 @@ opens a new interval, so traffic in the quiet gap between two bursts is not a hi
 
 import threading
 from collections import deque
-from typing import Deque, Dict, FrozenSet, Hashable, Iterable, List, Tuple
+from typing import Deque, Dict, FrozenSet, Hashable, Iterable, List, Optional, Set, Tuple
 
 
 class _DistinctTracker:
@@ -76,6 +83,12 @@ class _DistinctTracker:
         if any(first <= start <= last for first, last in intervals):
             return [self.rule]
         return []
+
+    def _overlaps(self, keys: Iterable[Hashable], start: float, end: float) -> bool:
+        """True when the activity of any flagged key in *keys* overlaps ``start`` .. ``end``."""
+        with self._lock:
+            intervals = [iv for k in keys for iv in self._flagged.get(k, ())]
+        return any(first <= end and start <= last for first, last in intervals)
 
     def _evict_oldest(self) -> None:
         oldest = min(self._events, key=lambda k: self._events[k][-1][0] if self._events[k] else 0.0)
@@ -132,3 +145,54 @@ class BruteForceTracker(_DistinctTracker):
 
     def hits(self, src: str, dst: str, dport: int, start: float) -> List[str]:
         return self._hits((src, dst, dport), start)
+
+
+def parent_domain(qname: str) -> str:
+    """Last two labels of *qname*, lower-cased (``a.b.example.com.`` -> ``example.com``)."""
+    labels = [x for x in qname.lower().rstrip(".").split(".") if x]
+    return ".".join(labels[-2:])
+
+
+class DnsBurstTracker(_DistinctTracker):
+    """``dns_burst``: many distinct query names under one parent domain from one source."""
+
+    rule = "dns_burst"
+
+    def __init__(self, qname_threshold: int = 40, window: float = 10.0, allowlist: Iterable[str] = (),
+                 max_keys: int = 5000, flag_ttl: float = 600.0):
+        super().__init__(qname_threshold, window, allowlist, max_keys, flag_ttl)
+        # (src, dst) -> parents seen, so a flow (which does not know its query names) finds its flags
+        self._parents: Dict[Tuple[str, str], Set[str]] = {}
+
+    def observe(self, src: str, dst: str, qname: str, ts: float) -> None:
+        """Record a DNS query for *qname* from *src* to the resolver *dst* at capture time *ts*."""
+        name = qname.lower().rstrip(".")
+        if not name or self.threshold <= 0 or src in self.allowlist:
+            return
+        parent = parent_domain(name)
+        self._observe(src, (src, dst, parent), name, ts)
+        if (src, dst, parent) in self._flagged:
+            with self._lock:
+                self._parents.setdefault((src, dst), set()).add(parent)
+
+    def hits(self, src: str, dst: str, start: float, end: Optional[float] = None) -> List[str]:
+        """Rule names for a flow *src* -> *dst* active from *start* to *end* (capture time).
+
+        A tunnel that keeps one UDP socket is a single long flow that may have started before
+        the burst crossed the threshold, so any overlap counts, not only the start.
+        """
+        end = start if end is None else end
+        with self._lock:
+            parents = list(self._parents.get((src, dst), ()))
+        if self._overlaps([(src, dst, p) for p in parents], start, end):
+            return [self.rule]
+        return []
+
+    def _prune(self, now: float) -> None:
+        super()._prune(now)
+        for pair in list(self._parents):
+            live = {p for p in self._parents[pair] if (pair[0], pair[1], p) in self._flagged}
+            if live:
+                self._parents[pair] = live
+            else:
+                del self._parents[pair]

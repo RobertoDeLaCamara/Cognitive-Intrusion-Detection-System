@@ -332,7 +332,7 @@ def replay_pcap(pcap_path: str, labels=None, attacks=None, keep_features: bool =
         for record, flow_vec in batch:
             host_vec = host_extractor.extract_features(record.key[0], now=now)
             record.host_hits = host_extractor.host_hits(
-                record.key[0], record.key[1], record.key[3], record.start_time)
+                record.key[0], record.key[1], record.key[3], record.start_time, record.last_time)
             matches = list(set(payload_hits.get(record.key, [])))
             pred = run_detection(record, flow_vec, host_vec, matches)
             pred["true_label"] = true_label(

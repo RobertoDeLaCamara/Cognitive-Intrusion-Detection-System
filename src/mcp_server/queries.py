@@ -581,6 +581,8 @@ async def get_detection_config(db: Optional[AsyncSession] = None) -> dict:
         "rule_thresholds": {
             "icmp_flood_threshold": cfg.ICMP_FLOOD_THRESHOLD,
             "port_scan_threshold": cfg.PORT_SCAN_THRESHOLD,
+            "dns_burst_qnames": cfg.HOST_DNS_QNAMES,
+            "dns_burst_window_secs": cfg.HOST_DNS_WINDOW_SECS,
             "large_payload_bytes": cfg.LARGE_PAYLOAD_BYTES,
             "rate_spike_multiplier": cfg.RATE_SPIKE_MULTIPLIER,
         },

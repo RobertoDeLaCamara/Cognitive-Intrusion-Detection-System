@@ -93,7 +93,7 @@ False-positive rate on the benign background: 0 of 389. Reading the table:
   the same replay detected 0 of 200 scan flows. `brute_force` (issue #88) works the same way for repeated
   connections from one source to one service port (SSH here): 40 of 40 login flows, none of the benign ones
   (clients that open many connections to :443 are not watched).
-- **Behavioural attacks are not caught by the rules alone.** A DNS burst has no rule (issue #89); a port scan and an SSH brute force
+- **Behavioural attacks are not caught by the rules alone.** A DNS burst had no rule (issue #89) until `dns_burst`, which this synthetic suite has not been re-run with yet (on cnds-red-team campaign 8aee8327 it tagged 3 of 3 burst flows and no benign flow); a port scan and an SSH brute force
   used to be in this group, since each is many short flows, none unremarkable by itself. Catching them
   depends on the host-level engines (Isolation Forest, LSTM, baseline), which this replay
   does not run on a fresh checkout. Run it again with `models/` populated before drawing conclusions.

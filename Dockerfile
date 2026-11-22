@@ -16,10 +16,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends libpcap0.8 \
 
 WORKDIR /app
 
-# Dependencies come from hashed lock files (requirements.txt + torch 2.6.0, which
-# fixes CVE-2025-32434); regenerate them with scripts/lock_requirements.sh.
-#   amd64  → torch 2.6.0+cpu from the PyTorch CPU index (smaller wheel)
-#   arm64  → torch 2.6.0 from PyPI (manylinux aarch64 wheel, CPU-only)
+# Dependencies come from hashed lock files (requirements.txt + torch 2.13.0, which
+# fixes GHSA-63cw-57p8-fm3p, RCE via checkpoint files); regenerate them with
+# scripts/lock_requirements.sh.
+#   amd64  → torch 2.13.0+cpu from the PyTorch CPU index (smaller wheel)
+#   arm64  → torch 2.13.0+cpu from the PyTorch CPU index (the PyPI aarch64 wheel pulls CUDA)
 #   arm/v7 → no official wheel; install requirements.txt unlocked and
 #            FTTransformerEngine degrades to RF fallback
 #

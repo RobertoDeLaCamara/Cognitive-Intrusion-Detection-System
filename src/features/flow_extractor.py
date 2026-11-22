@@ -4,7 +4,8 @@ Reconstructs bidirectional flows from raw Scapy packets and computes
 the 76 features expected by the ML-IDS supervised model.
 
 Flow key: (src_ip, dst_ip, src_port, dst_port, protocol)
-The initiator is determined by the first packet seen.
+The initiator is the sender of the first packet seen, except for a TCP flow first seen
+mid-connection (no bare SYN): see ``_starts_from_server``.
 """
 
 import time
@@ -51,6 +52,39 @@ FLOW_FEATURE_NAMES = [
 ]
 
 FlowKey = Tuple[str, str, int, int, int]  # src_ip, dst_ip, sport, dport, proto
+
+# Lowest port of the IANA dynamic range is 49152, but Linux hands out ephemeral ports
+# from 32768, so anything from there up counts as a client port.
+EPHEMERAL_PORT_MIN = 32768
+WELL_KNOWN_PORT_MAX = 1023
+
+
+def _looks_like_service_port(port: int, other: int) -> bool:
+    """True when *port* is the server side and *other* the client side of a connection."""
+    if port <= WELL_KNOWN_PORT_MAX < other:
+        return True
+    return port < EPHEMERAL_PORT_MIN <= other
+
+
+def _starts_from_server(packet, sport: int, dport: int) -> bool:
+    """Whether the first packet of a new TCP flow was sent by the server.
+
+    A flow that opens with a bare SYN is oriented correctly by construction. A flow first
+    seen mid-connection (a keep-alive connection idle for longer than FLOW_TIMEOUT, or a
+    capture that started late) may open with the server's reply. Taking its sender as the
+    initiator inverts the flow: the response body is analysed as forward payload (HTML
+    responses matched ``payload:xss``) and every fwd/bwd feature is swapped.
+
+    A SYN-ACK always comes from the server. For any other non-SYN first packet the ports
+    decide, and when they don't tell (both high or both low) the flow is left as seen.
+    """
+    flags = int(packet[TCP].flags)
+    syn, ack = bool(flags & 0x02), bool(flags & 0x10)
+    if syn and not ack:
+        return False
+    if syn and ack:
+        return True
+    return _looks_like_service_port(sport, dport) and not _looks_like_service_port(dport, sport)
 
 
 def _l4_payload(packet, l4) -> bytes:
@@ -402,10 +436,13 @@ class FlowExtractor:
             else:
                 if len(self._flows) >= MAX_ACTIVE_FLOWS:
                     self._evict_oldest()
-                self._flows[fwd_key] = FlowRecord(key=fwd_key)
-                self._flows[fwd_key].add_packet(packet, ts, True)
+                is_forward = not (TCP in packet and _starts_from_server(packet, sport, dport))
+                key = fwd_key if is_forward else rev_key
+                self._flows[key] = FlowRecord(key=key)
+                self._flows[key].add_packet(packet, ts, is_forward)
                 import heapq
-                heapq.heappush(self._expiry_heap, (ts, fwd_key))
+                heapq.heappush(self._expiry_heap, (ts, key))
+                return key, is_forward
         return fwd_key, True
 
     def collect_expired(self, now: Optional[float] = None) -> List[Tuple[FlowRecord, np.ndarray]]:

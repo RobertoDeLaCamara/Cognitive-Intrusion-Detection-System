@@ -229,5 +229,5 @@ Access at `http://localhost:8501` when started with `docker-compose --profile da
 1. **Set `API_KEY` or `JWT_SECRET`.** The API exits at start-up without one (or `AUTH_DISABLED=true`, lab use only).
 2. **Clients must authenticate:** the dashboard uses `CNDS_API_KEY`, or `CNDS_API_USER` / `CNDS_API_PASSWORD` with JWT; `scripts/demo_seed.py` sends `API_KEY` and, with JWT, the token in `CNDS_API_TOKEN`.
 3. **Apply migrations before starting the detector:** recreate the `api` service first (it runs Alembic), then the detector.
-4. **Rebuild the image.** Dependencies are hash-pinned (`requirements-lock-*.txt`) and torch is 2.6.0.
+4. **Rebuild the image.** Dependencies are hash-pinned (`requirements-lock-*.txt`) and torch is 2.13.0+cpu.
 5. **Optional:** set `METRICS_TOKEN`, and `GUARDIAN_ALERT_SOURCES` if you relied on `/api/predict` alerts triggering the Guardian.

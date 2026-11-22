@@ -36,7 +36,7 @@ Grouped by area. `ls tests/` is the authoritative list; a module added later bel
 | Dashboard | `test_dashboard_api_client.py`, `test_dashboard_data.py`, `test_dashboard_views.py` | API client authentication, overview helpers, each view rendering against a fake API |
 | Tooling | `test_siem.py`, `test_pcap_replay.py`, `test_replay_timestamps.py` | CEF syslog forwarder, pcap replay and labelling, capture time instead of wall clock in replay |
 
-`pytest --collect-only -q` reports the current count (about 1,060 tests; without `torch` a dozen are skipped). It changes with every PR, so it is not pinned here. CI runs the suite inside the image, with `torch`, and fails below 75 % coverage of `src` (see [CI/CD Pipeline](CI-CD-Pipeline.md)).
+`pytest --collect-only -q` reports the current count (about 1,170 tests; without `torch` or dataset a dozen are skipped). It changes with every PR, so it is not pinned here. CI runs the suite inside the image, with `torch`, and fails below 75 % coverage of `src` (see [CI/CD Pipeline](CI-CD-Pipeline.md)).
 
 ## Shared Fixtures
 

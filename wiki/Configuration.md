@@ -43,7 +43,7 @@ Variables marked _reserved_ are defined in `src/config.py` but no runtime code r
 | `WEIGHT_BASELINE` | `0.15` | Unsupervised baseline engine weight |
 | `ATTACK_TYPE_WEIGHTS` | `{}` | JSON: per-attack-type engine weight overrides, keyed by the supervised label; engine keys are `supervised`, `isolation_forest`, `lstm`, `rules`, `baseline` |
 | `CALIBRATION_TEMPERATURE` | `1.0` | Platt scaling temperature (>1 softer, <1 sharper) |
-| `CRITICAL_RULES` | `payload:sql_injection,payload:command_injection,payload:log4j,payload:shellshock,payload:xss,payload:path_traversal,malicious_ja3,syn_scan,port_scan,brute_force` | Comma-separated rules that force score 1.0 / alert regardless of the blend |
+| `CRITICAL_RULES` | `payload:sql_injection,payload:command_injection,payload:log4j,payload:shellshock,payload:xss,payload:path_traversal,malicious_ja3,syn_scan,port_scan,brute_force,dns_burst` | Comma-separated rules that force score 1.0 / alert regardless of the blend |
 | `FT_TEMPERATURE` | `2.0` | FT-Transformer logit temperature; `1.0` disables |
 
 ## Rules Engine Thresholds
@@ -61,6 +61,9 @@ Variables marked _reserved_ are defined in `src/config.py` but no runtime code r
 | `HOST_BRUTE_WINDOW_SECS` | `60` | `brute_force`: sliding window in seconds |
 | `HOST_BRUTE_PORTS` | `21,22,23,445,3389,5900` | `brute_force`: service ports watched |
 | `HOST_BRUTE_ALLOWLIST` | _(empty)_ | `brute_force`: comma-separated source IPs that are never flagged (Ansible, backup jobs) |
+| `HOST_DNS_QNAMES` | `40` | `dns_burst`: distinct query names under one parent domain (last two labels) from one source to one resolver within the window; `0` disables the rule |
+| `HOST_DNS_WINDOW_SECS` | `10` | `dns_burst`: sliding window in seconds |
+| `HOST_DNS_ALLOWLIST` | _(empty)_ | `dns_burst`: comma-separated source IPs that are never flagged (a forwarding resolver, a crawler) |
 
 ## Alert Management
 
@@ -85,6 +88,8 @@ Variables marked _reserved_ are defined in `src/config.py` but no runtime code r
 | `FT_SCALER_FILE` | `unified/unified_scaler.pkl` | StandardScaler matched to the FT checkpoint |
 | `FT_USE_GPU` | `false` | Run FT-T inference on CUDA when available |
 | `FT_NPU_URL` | _(empty)_ | Optional HTTP NPU offload server (`http(s)://<host>:8090` exposing `/health` and `/v1/cnds/predict`); falls back to local PyTorch if unreachable. Hopfield novelty stays off in NPU mode |
+| `HOPFIELD_NOVELTY_ENABLED` | `true` | Shadow-mode Hopfield novelty score over FT-Transformer CLS embeddings (`novelty=` on alerts, never weighted in the ensemble); inert if prototype file is missing or mismatched |
+| `HOPFIELD_PROTOTYPES_FILE` | `unified/she_prototypes.npz` | Prototype matrix relative to `MODELS_DIR` (fit with `scripts/fit_hopfield_prototypes.py`) |
 | `MLFLOW_FT_REGISTRY_NAME` | `ml-ids-unified-ft-transformer` | MLflow registered model name to load FT from |
 | `MLFLOW_FT_STAGE` | `None` | MLflow stage to pin (default = latest version) |
 | `RF_MODEL_FILE` | `rf_model.joblib` | Random Forest model filename (fallback) |
@@ -197,6 +202,7 @@ The four `BASELINE_MIN_*` variables are the trigger thresholds; all four must ho
 | Variable | Default | Description |
 |---|---|---|
 | `BASELINE_COLLECTION_ENABLED` | `true` | Collect host vectors and train baseline models (read by `main.py`) |
+| `BASELINE_LOAD_RETRY_SECS` | `300` | Background retry interval (seconds) while the baseline engine has no loaded model (e.g. MLflow unreachable at boot); `0` disables retries |
 | `BASELINE_MIN_VECTORS` | `50000` | Training trigger: minimum feature vectors in the window |
 | `BASELINE_MIN_SRC_IPS` | `20` | Training trigger: minimum distinct source IPs |
 | `BASELINE_MIN_ELAPSED_SECS` | `1800` | Training trigger: minimum seconds since the window started |

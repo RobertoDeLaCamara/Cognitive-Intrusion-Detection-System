@@ -275,3 +275,44 @@ def test_ssh_flow_payload_is_ignored(tmp_path):
     pkts = _tcp_exchange(40002, 22, b"<script>alert(1)</script>", b"SSH-2.0-OpenSSH_9.6\r\n")
     preds = _replay_packets(tmp_path, pkts)
     assert preds and not any(r.startswith("payload:") for p in preds for r in p["triggered_rules"])
+
+
+def _bpred(label, flagged, attacker, score=None):
+    return {"true_label": label, "is_anomaly": flagged, "attacker_host": attacker,
+            "ensemble_score": score if score is not None else (0.9 if flagged else 0.1)}
+
+
+def test_benign_split_separates_attacker_hosts():
+    rp = _load("pcap_replay")
+    res = rp.EvalResult(predictions=[
+        _bpred("BENIGN", True, True), _bpred("BENIGN", True, True), _bpred("BENIGN", False, True),
+        _bpred("BENIGN", True, False), _bpred("BENIGN", False, False), _bpred("BENIGN", False, False),
+        _bpred("BENIGN", False, False), _bpred("port_scan", True, True),
+    ])
+    split = res.benign_split()
+    assert split["attacker_hosts"] == {"flows": 3, "flagged": 2, "fp_rate": 0.6667}
+    assert split["other_hosts"] == {"flows": 4, "flagged": 1, "fp_rate": 0.25}
+    assert res.to_dict()["fp_rate"] == 0.4286          # the overall figure is unchanged
+    assert res.to_dict()["benign_split"] == split
+    assert res.sweep()["0.5"]["fp_rate_other_hosts"] == 0.25
+
+
+def test_replay_marks_flows_started_by_an_attacker(replay):
+    _, result = replay
+    attackers = {p["src_ip"] for p in result.predictions if p["true_label"] != "BENIGN"}
+    assert attackers
+    for p in result.predictions:
+        assert p["attacker_host"] == (p["src_ip"] in attackers)
+
+
+def test_report_shows_fp_for_other_hosts(replay):
+    rp, result = replay
+    res = rp.EvalResult(predictions=[dict(p) for p in result.predictions])
+    benign = [p for p in res.predictions if p["true_label"] == "BENIGN"]
+    for p in benign[: len(benign) // 2]:       # pretend half the benign flows came from an attacker
+        p["attacker_host"] = True
+    split = res.benign_split()
+    report = rp.markdown_report(res, ["t.pcap"], 0.55)
+    assert f"Started by any other host: {split['other_hosts']['flagged']}/{split['other_hosts']['flows']}" in report
+    assert "Started by an attacker host" in report
+    assert "FP rate (other hosts)" in report

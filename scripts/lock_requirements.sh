@@ -1,11 +1,25 @@
 #!/usr/bin/env bash
 # Regenerate the hashed per-architecture lock files used by the Dockerfile.
 # Needs uv (https://docs.astral.sh/uv/). Run after changing requirements.txt, requirements-dashboard.txt or the torch pin.
+#
+# UPGRADE="pkg1 pkg2 ..." (e.g. for a security fix) keeps every other package at the version
+# already in the lock files and only moves the named ones (uv --upgrade-package). Without it,
+# every package is resolved from scratch to its newest allowed version.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 TORCH_VERSION=2.6.0   # >= 2.6.0 fixes CVE-2025-32434
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+
+# uv args that reuse <lock> as preferences when UPGRADE is set; prints nothing otherwise.
+# Output goes to $tmp/out-<name>.txt, which the caller prints.
+prefs() {  # name existing-lock
+    : > "$tmp/out-$1.txt"
+    if [ -n "${UPGRADE:-}" ] && [ -f "$2" ]; then
+        grep -vE '^--(extra-)?index-url' "$2" > "$tmp/out-$1.txt"
+        local p; for p in $UPGRADE; do printf -- '--upgrade-package\n%s\n' "$p"; done
+    fi
+}
 
 lock() {  # arch platform torch-requirement [extra uv args...]
     local arch=$1 platform=$2 torch=$3; shift 3
@@ -16,9 +30,12 @@ lock() {  # arch platform torch-requirement [extra uv args...]
         # pip reads these from the file, so `pip install --require-hashes -r <lock>` finds the
         # torch+cpu local-version wheel that is not on PyPI.
         [ -n "${INDEX_HEADER:-}" ] && printf '%s\n' "$INDEX_HEADER"
+        mapfile -t up < <(prefs "$arch" "requirements-lock-$arch.txt")
         uv pip compile "$tmp/in-$arch.txt" --python-version 3.11 --python-platform "$platform" \
-            --generate-hashes --no-header --no-annotate "$@"
-    } > "requirements-lock-$arch.txt"
+            --generate-hashes --no-header --no-annotate -q -o "$tmp/out-$arch.txt" "${up[@]}" "$@"
+        cat "$tmp/out-$arch.txt"
+    } > "$tmp/lock-$arch.txt"
+    mv "$tmp/lock-$arch.txt" "requirements-lock-$arch.txt"
 }
 
 # amd64: explicit CPU build from the PyTorch index (smaller wheel); the rest from PyPI.
@@ -38,9 +55,11 @@ python3 scripts/split_lock.py amd64 arm64
 # two resolutions agree; if they ever differ this fails and the file has to become per-arch.
 dashboard_lock() {  # arch platform
     grep -vE '^--(extra-)?index-url' "requirements-lock-$1.txt" > "$tmp/constraints-$1.txt"
+    mapfile -t up < <(prefs "dashboard-$1" requirements-lock-dashboard.txt)
     uv pip compile requirements-dashboard.txt -c "$tmp/constraints-$1.txt" \
         --python-version 3.11 --python-platform "$2" \
-        --generate-hashes --no-header --no-annotate > "$tmp/dashboard-$1.txt"
+        --generate-hashes --no-header --no-annotate -q -o "$tmp/out-dashboard-$1.txt" "${up[@]}"
+    cp "$tmp/out-dashboard-$1.txt" "$tmp/dashboard-$1.txt"
 }
 dashboard_lock amd64 x86_64-manylinux_2_28
 dashboard_lock arm64 aarch64-manylinux_2_28

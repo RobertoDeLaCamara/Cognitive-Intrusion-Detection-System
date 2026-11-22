@@ -17,7 +17,7 @@ ls -lh models/unified/
 #   unified_metadata.json       (≈11 KB)
 
 python -m pytest tests/test_ft_transformer_engine.py -v
-# 7 passed
+# passes (2 dataset-backed tests skip unless CNDS_TEST_DATA_DIR is set)
 ```
 
 The shared conftest disables FT auto-load in tests via `FT_MODEL_FILE`

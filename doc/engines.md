@@ -279,6 +279,18 @@ watched service port within HOST_BRUTE_WINDOW_SECS
 - `brute_force` is in the default `CRITICAL_RULES`. Like `port_scan`, it was set from a clean synthetic replay (0 of 389 benign flows flagged), not from a real capture.
 - MITRE: T1110 (Brute Force).
 
+#### Rule 2d: DNS Burst (host level)
+```
+one source asks one resolver for >= HOST_DNS_QNAMES distinct query names under one parent
+domain (last two labels) within HOST_DNS_WINDOW_SECS
+```
+- Tunneling, exfiltration and DGA probing all ask for many unique names under one domain (`<random>.example.com`). `DnsBurstTracker` (`src/features/scan_tracker.py`), fed with UDP queries (`qr=0`) to port 53 from `HostExtractor.process_packet`, counts distinct names per `(source, resolver, parent)`; names are lower-cased and the trailing dot dropped, so a repeated lookup counts once.
+- The hit goes on every DNS flow (`dport` 53) between that source and resolver whose activity overlaps the burst, not only flows that start inside it: a tunnel that keeps one UDP socket is a single long flow that may have started before the threshold was crossed.
+- Calibration: 47.9 days of AdGuard Home query log on the home LAN (31 clients, 1.35 M queries). The highest benign count was 27 distinct names under one parent in 10 s, while plain distinct names per 10 s reached 63, which is why the rule groups by parent. The smallest cnds-red-team burst was 56 names in 3.1 s. Default `HOST_DNS_QNAMES` = 40, `HOST_DNS_WINDOW_SECS` = 10 (`0` disables). Replay of campaign 8aee8327: the 3 burst flows tagged, no benign flow tagged.
+- Limits: UDP/53 only (DNS over TCP, DoH and DoT are not seen); a tunnel slower than 40 names per 10 s is not seen; the parent is the last two labels, so names under a public suffix such as `co.uk` share one parent. `HOST_DNS_ALLOWLIST` lists sources never flagged. The sensor only sees queries that cross its own interface, so to watch every client it must sit on the resolver's host or a mirror port.
+- `dns_burst` is in the default `CRITICAL_RULES`. Deployments that set `CRITICAL_RULES` in their `.env` must add it.
+- MITRE: T1071.004 (Application Layer Protocol: DNS), T1048 (Exfiltration Over Alternative Protocol).
+
 #### Rule 3: Large Payload
 ```
 max(forward packet lengths in the flow) > LARGE_PAYLOAD_BYTES

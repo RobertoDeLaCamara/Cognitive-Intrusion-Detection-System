@@ -130,6 +130,7 @@ Extracted by `src/features/payload_analyzer.py`. Per-flow numeric features from 
 | `syn_scan` | SYN flag count (with fewer than 5 forward packets that carry data) | > 20 (`PORT_SCAN_THRESHOLD`) |
 | `port_scan` | Distinct destination ports of one target started by one source (TCP SYN) within a window | >= 15 within 60 s (`HOST_SCAN_PORTS`, `HOST_SCAN_WINDOW_SECS`) |
 | `brute_force` | Distinct TCP connections from one source to one watched service port within a window | >= 15 within 60 s (`HOST_BRUTE_CONNS`, `HOST_BRUTE_WINDOW_SECS`, ports in `HOST_BRUTE_PORTS`) |
+| `dns_burst` | Distinct query names under one parent domain from one source to one resolver within a window | >= 40 within 10 s (`HOST_DNS_QNAMES`, `HOST_DNS_WINDOW_SECS`) |
 | `large_payload` | Largest forward packet (bytes) | > 10 000 (`LARGE_PAYLOAD_BYTES`) |
 | `asymmetric_upload` | Fwd/bwd byte ratio (> 10 forward packets) | > 50 (fixed) |
 | `payload:*` | 6 regex signatures (SQLi, XSS, command injection, path traversal, Log4j, Shellshock) | — |

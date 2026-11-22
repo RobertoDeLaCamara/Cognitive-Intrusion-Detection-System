@@ -33,6 +33,8 @@ _RULE_MAP: Dict[str, List[Dict[str, str]]] = {
     "syn_scan":         [{"id": "T1046", "name": "Network Service Scanning", "tactic": "Discovery"}],
     "port_scan":        [{"id": "T1046", "name": "Network Service Scanning", "tactic": "Discovery"}],
     "brute_force":      [{"id": "T1110", "name": "Brute Force", "tactic": "Credential Access"}],
+    "dns_burst":        [{"id": "T1071.004", "name": "Application Layer Protocol: DNS", "tactic": "Command and Control"},
+                         {"id": "T1048", "name": "Exfiltration Over Alternative Protocol", "tactic": "Exfiltration"}],
     "large_payload":    [{"id": "T1030", "name": "Data Transfer Size Limits", "tactic": "Exfiltration"}],
     "asymmetric_upload": [{"id": "T1041", "name": "Exfiltration Over C2 Channel", "tactic": "Exfiltration"}],
     "payload:sql_injection":    [{"id": "T1190", "name": "Exploit Public-Facing Application", "tactic": "Initial Access"}],

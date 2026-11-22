@@ -146,7 +146,7 @@ class Dispatcher:
         for record, flow_vec in expired:
             host_vec = self._host_extractor.extract_features(record.src_ip)
             record.host_hits = self._host_extractor.host_hits(
-                record.src_ip, record.dst_ip, record.key[3], record.start_time)
+                record.src_ip, record.dst_ip, record.key[3], record.start_time, record.last_time)
             with self._payload_lock:
                 payload_matches = self._payload_hits.pop(record.key, [])
                 self._ssh_flows.pop(record.key, None)
@@ -163,7 +163,7 @@ class Dispatcher:
         for record, flow_vec in self._flow_extractor.collect_all():
             host_vec = self._host_extractor.extract_features(record.src_ip)
             record.host_hits = self._host_extractor.host_hits(
-                record.src_ip, record.dst_ip, record.key[3], record.start_time)
+                record.src_ip, record.dst_ip, record.key[3], record.start_time, record.last_time)
             with self._payload_lock:
                 payload_matches = self._payload_hits.pop(record.key, [])
                 self._ssh_flows.pop(record.key, None)

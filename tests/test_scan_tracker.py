@@ -278,3 +278,136 @@ def test_old_intervals_are_pruned_one_by_one():
     t.observe("10.0.0.1", TARGET, 1, 250.0)  # prune at 250: first interval (ends 100.2) is too old
     assert t.hits(ATTACKER, TARGET, 100.0) == []
     assert t.hits(ATTACKER, TARGET, 180.0) == ["port_scan"]
+
+# ── DNS burst (issue #89) ──────────────────────────────────────────────────
+
+from scapy.all import DNS, DNSQR, UDP  # noqa: E402
+
+from src.features.scan_tracker import DnsBurstTracker, parent_domain  # noqa: E402
+
+RESOLVER = "10.0.0.53"
+
+
+def _dns_query(src, dst, qname, sport=40053, qr=0):
+    return _built(IP(src=src, dst=dst) / UDP(sport=sport, dport=53) / DNS(qr=qr, qd=DNSQR(qname=qname)))
+
+
+def test_parent_domain():
+    assert parent_domain("A.b.Example.com.") == "example.com"
+    assert parent_domain("localhost") == "localhost"
+    assert parent_domain("") == ""
+
+
+def test_many_names_under_one_parent_are_flagged():
+    t = DnsBurstTracker(qname_threshold=40, window=10)
+    for i in range(56):  # the smallest red-team burst: 56 names in ~3 s
+        t.observe(ATTACKER, RESOLVER, f"x{i:04d}abcdef.redteam-test.invalid", 100.0 + i * 0.055)
+    assert t.hits(ATTACKER, RESOLVER, 100.0) == ["dns_burst"]
+    assert t.hits(ATTACKER, RESOLVER, 102.5) == ["dns_burst"]
+
+
+def test_browsing_many_unrelated_domains_is_not_a_burst():
+    t = DnsBurstTracker(qname_threshold=40, window=10)
+    for i in range(200):  # 200 distinct names but every one under its own parent
+        t.observe(ATTACKER, RESOLVER, f"www.site{i}.com", 100.0 + i * 0.01)
+    assert t.hits(ATTACKER, RESOLVER, 100.0, 102.0) == []
+
+
+def test_repeated_name_counts_once_and_case_is_ignored():
+    t = DnsBurstTracker(qname_threshold=5, window=10)
+    for i in range(100):
+        t.observe(ATTACKER, RESOLVER, "API.example.com." if i % 2 else "api.example.com", 100.0 + i * 0.01)
+    assert t.hits(ATTACKER, RESOLVER, 100.0, 101.0) == []
+
+
+def test_slow_queries_outside_the_window_are_not_flagged():
+    t = DnsBurstTracker(qname_threshold=40, window=10)
+    for i in range(100):  # one new name every second: 11 per window at most
+        t.observe(ATTACKER, RESOLVER, f"n{i}.example.com", 100.0 + i)
+    assert t.hits(ATTACKER, RESOLVER, 100.0, 200.0) == []
+
+
+def test_dns_burst_allowlist_and_disable():
+    t = DnsBurstTracker(qname_threshold=5, window=10, allowlist=[ATTACKER])
+    off = DnsBurstTracker(qname_threshold=0, window=10)
+    for i in range(50):
+        t.observe(ATTACKER, RESOLVER, f"n{i}.example.com", 100.0 + i * 0.01)
+        off.observe(ATTACKER, RESOLVER, f"n{i}.example.com", 100.0 + i * 0.01)
+    assert t.hits(ATTACKER, RESOLVER, 100.0) == off.hits(ATTACKER, RESOLVER, 100.0) == []
+
+
+def test_long_flow_started_before_the_burst_is_a_hit_by_overlap():
+    t = DnsBurstTracker(qname_threshold=40, window=10)
+    for i in range(10):  # slow start, then a burst 60 s later on the same socket
+        t.observe(ATTACKER, RESOLVER, f"slow{i}.tunnel.example", 100.0 + i * 5)
+    for i in range(60):
+        t.observe(ATTACKER, RESOLVER, f"fast{i}.tunnel.example", 160.0 + i * 0.05)
+    assert t.hits(ATTACKER, RESOLVER, 100.0) == []  # start alone is before the burst
+    assert t.hits(ATTACKER, RESOLVER, 100.0, 163.0) == ["dns_burst"]
+    assert t.hits(ATTACKER, "10.0.0.54", 100.0, 163.0) == []  # another resolver
+
+
+def test_dns_flags_are_pruned_with_their_parents():
+    t = DnsBurstTracker(qname_threshold=5, window=10, flag_ttl=60)
+    for i in range(5):
+        t.observe(ATTACKER, RESOLVER, f"n{i}.example.com", 100.0 + i * 0.1)
+    assert t._parents
+    t.observe("10.0.0.1", RESOLVER, "late.other.org", 1000.0)  # triggers prune far later
+    assert t.hits(ATTACKER, RESOLVER, 100.0) == []
+    assert not t._parents
+
+
+def test_host_extractor_feeds_the_dns_tracker_only_with_queries():
+    h = HostExtractor()
+    for i in range(60):
+        h.process_packet(_dns_query(ATTACKER, RESOLVER, f"r{i}abc.redteam-test.invalid", sport=41000 + i),
+                         timestamp=100.0 + i * 0.05)
+    assert h.host_hits(ATTACKER, RESOLVER, 53, 100.0) == ["dns_burst"]
+    assert h.host_hits(ATTACKER, RESOLVER, 443, 100.0) == []  # only DNS flows carry it
+    resp = HostExtractor()
+    for i in range(60):  # responses (qr=1) to 53 are not queries
+        resp.process_packet(_dns_query(ATTACKER, RESOLVER, f"r{i}.example.com", qr=1), timestamp=100.0 + i * 0.05)
+    assert resp.host_hits(ATTACKER, RESOLVER, 53, 100.0) == []
+
+
+def test_dns_burst_is_critical_and_mapped():
+    from src.config import CRITICAL_RULES
+    from src.enrichment.mitre import enrich
+    assert "dns_burst" in CRITICAL_RULES
+    assert [m["id"] for m in enrich(None, ["dns_burst"])] == ["T1071.004", "T1048"]
+
+
+def test_dispatcher_marks_tunnel_flows_on_one_socket_and_on_many():
+    seen = {}
+
+    def callback(record, flow_vec, host_vec, payload_matches, payload_features, ja3_info):
+        seen[record.key] = list(record.host_hits)
+
+    d = Dispatcher(flow_callback=callback)
+    ts = 1_700_000_000.0
+    for i in range(60):  # one socket (single long flow) ...
+        p = _dns_query(ATTACKER, RESOLVER, f"s{i}abcd.redteam-test.invalid", sport=45000)
+        d._flow_extractor.process_packet(p, timestamp=ts)
+        d._host_extractor.process_packet(p, timestamp=ts)
+        ts += 0.05
+    for i in range(20):  # ... and benign lookups from another host
+        p = _dns_query("10.0.0.7", RESOLVER, f"www.site{i}.com", sport=46000)
+        d._flow_extractor.process_packet(p, timestamp=ts)
+        d._host_extractor.process_packet(p, timestamp=ts)
+        ts += 0.05
+    d.flush_all()
+    tunnel = [v for k, v in seen.items() if k[0] == ATTACKER]
+    benign = [v for k, v in seen.items() if k[0] == "10.0.0.7"]
+    assert tunnel and all("dns_burst" in v for v in tunnel)
+    assert benign and all("dns_burst" not in v for v in benign)
+
+
+def test_lookup_between_two_dns_bursts_is_not_a_hit():
+    # Replay of campaign 8aee8327: bursts ~80 s apart, Kuma's google.com probe every 15 s in between.
+    t = DnsBurstTracker(qname_threshold=40, window=10)
+    for base in (149.0, 233.0):
+        for i in range(56):
+            t.observe(ATTACKER, RESOLVER, f"b{int(base)}x{i}.redteam-test.invalid", base + i * 0.055)
+    t.observe(ATTACKER, RESOLVER, "google.com", 166.3)
+    assert t.hits(ATTACKER, RESOLVER, 166.3, 166.3) == []
+    assert t.hits(ATTACKER, RESOLVER, 149.0, 150.0) == t.hits(ATTACKER, RESOLVER, 233.5) == ["dns_burst"]

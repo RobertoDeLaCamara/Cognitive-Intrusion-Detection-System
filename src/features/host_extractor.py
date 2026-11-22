@@ -13,14 +13,15 @@ from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
-from scapy.all import IP, TCP, UDP, ICMP, Raw
+from scapy.all import DNS, DNSQR, IP, TCP, UDP, ICMP, Raw
 
 from ..config import (
     HOST_WINDOW_SIZE, MAX_TRACKED_IPS, COMMON_PORTS,
     HOST_SCAN_PORTS, HOST_SCAN_WINDOW_SECS, HOST_SCAN_ALLOWLIST,
     HOST_BRUTE_CONNS, HOST_BRUTE_WINDOW_SECS, HOST_BRUTE_PORTS, HOST_BRUTE_ALLOWLIST,
+    HOST_DNS_QNAMES, HOST_DNS_WINDOW_SECS, HOST_DNS_ALLOWLIST,
 )
-from .scan_tracker import BruteForceTracker, ScanTracker
+from .scan_tracker import BruteForceTracker, DnsBurstTracker, ScanTracker
 from .utils import byte_entropy
 from ..failure_streak import FailureStreak
 from ..unsupervised.artifact_schema import HOST_FEATURE_SCHEMA  # noqa: F401  (re-exported)
@@ -101,6 +102,7 @@ class HostExtractor:
         self.scan_tracker = ScanTracker(HOST_SCAN_PORTS, HOST_SCAN_WINDOW_SECS, HOST_SCAN_ALLOWLIST)
         self.brute_tracker = BruteForceTracker(
             HOST_BRUTE_CONNS, HOST_BRUTE_WINDOW_SECS, HOST_BRUTE_PORTS, HOST_BRUTE_ALLOWLIST)
+        self.dns_tracker = DnsBurstTracker(HOST_DNS_QNAMES, HOST_DNS_WINDOW_SECS, HOST_DNS_ALLOWLIST)
         # Without a host vector the IsolationForest, LSTM and baseline engines do not score.
         self._compute_streak = FailureStreak(logger, "Host feature extraction")
 
@@ -120,11 +122,22 @@ class HostExtractor:
             dst = packet[IP].dst
             self.scan_tracker.observe(src, dst, int(tcp.dport), ts)
             self.brute_tracker.observe(src, dst, int(tcp.dport), int(tcp.sport), ts)
+        # DNS query over UDP: input of the host-level DNS burst rule.
+        elif UDP in packet and int(packet[UDP].dport) == 53 and DNSQR in packet:
+            if DNS in packet and int(packet[DNS].qr) == 0:
+                qname = packet[DNSQR].qname
+                if isinstance(qname, bytes):
+                    qname = qname.decode("ascii", errors="replace")
+                self.dns_tracker.observe(src, packet[IP].dst, qname, ts)
         return src
 
-    def host_hits(self, src: str, dst: str, dport: int, start: float) -> List[str]:
-        """Host-level rules (port_scan, brute_force) that a flow starting at *start* belongs to."""
-        return self.scan_tracker.hits(src, dst, start) + self.brute_tracker.hits(src, dst, dport, start)
+    def host_hits(self, src: str, dst: str, dport: int, start: float,
+                  end: Optional[float] = None) -> List[str]:
+        """Host-level rules (port_scan, brute_force, dns_burst) for a flow active from *start* to *end*."""
+        hits = self.scan_tracker.hits(src, dst, start) + self.brute_tracker.hits(src, dst, dport, start)
+        if dport == 53:
+            hits += self.dns_tracker.hits(src, dst, start, end)
+        return hits
 
     def extract_features(self, ip: str, now: Optional[float] = None) -> Optional[np.ndarray]:
         """Host feature vector; *now* (default wall clock) is the end of the rate window (replay passes capture time)."""

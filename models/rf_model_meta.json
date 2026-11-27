@@ -35,10 +35,10 @@
     "9": "Worms"
   },
   "metrics": {
-    "accuracy": 0.9316,
-    "precision_t90": 0.9128,
-    "recall_t90": 0.9908,
-    "f1_t90": 0.9502,
-    "fp_rate_t90": 0.0237
+    "accuracy": 0.9256,
+    "precision_t90": 0.9113,
+    "recall_t90": 0.9987,
+    "f1_t90": 0.953,
+    "fp_rate_t90": 0.0243
   }
 }
